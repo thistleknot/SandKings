@@ -1,5 +1,68 @@
 # Sand Kings Changelog
 
+## [1.2.1] - 2026-01-23
+
+### Added
+- 3D scatter visualization now available in evolution demo mode
+- Generates both 2D slice (`sandkings_demo_2d.gif`) and 3D scatter (`sandkings_demo_3d.gif`)
+- 3D frames captured every 5 steps (configurable)
+
+## [1.2.0] - 2026-01-23
+
+### Changed - Simplified 3D Visualization
+- **Replaced clustering with direct scatter plots** (inspired by 3D Conway's Life)
+- Uses `np.argwhere()` to plot all voxels without sampling
+- **Depth-based coloring**: Stone (grayscale), Sand (YlOrBr colormap)
+- Reduced code complexity: removed 40+ lines of clustering logic
+- Faster rendering for small grids, more accurate representation
+- Colony-owned air shown with semi-transparent colored points
+
+### Removed
+- `_draw_cube_outline()` method (no longer needed)
+- `cluster_size` parameter from `generate_3d_frame()`
+
+## [1.1.1] - 2026-01-23
+
+### Fixed
+- **behavior_context initialization**: Added hasattr guard in `_update_unit_context()`
+- **colony.metrics initialization**: Initialize dict in `EnhancedSandKingsSimulation.__init__()`
+- **np.random.choice on tuples**: Replaced with `randint` + list indexing (3 locations)
+
+### Tested
+- Evolution mode: 3 rounds × 5 iterations, coverage 11.1%, fitness 110→114
+- Demo mode: 50 steps (2s), 200 steps (82s), all colonies survived
+
+## [1.1.0] - 2026-01-23
+
+### Added - Evolution & LLM Integration
+- **MapElites quality-diversity algorithm**
+  - 6×6 behavioral characterization grid (territory × aggression)
+  - Fitness = survival×1.0 + population×0.1 + territory×0.01 + kills×0.5
+  - Archive checkpoint saving every 5 rounds
+
+- **Ollama LLM integration**
+  - OllamaGPT wrapper for AsyncOpenAI (http://localhost:11434/v1)
+  - Model: granite-4.0-h-1b (configurable)
+  - Behavioral script generation and mutation
+
+- **Behavioral DSL interpreter**
+  - WHEN/THEN conditional rules with priority
+  - Conditions: near_food, near_enemy, low_health, carrying_food, in_territory, near_maw
+  - Actions: dig, attack, flee, return_food, patrol, fortify
+  - Supports AND/NOT operators
+
+- **Enhanced combat system**
+  - Cover bonuses from TUNNEL_WALL terrain
+  - Action Points from genome.aggression × 3
+  - Critical hits (2× damage on roll=6)
+  - Enemy kills tracking
+
+- **CLI interface**
+  - `--mode demo/evolve`: Single simulation or MapElites loop
+  - `--sim-steps [50,100,200,500,1000,2000]`: Configurable simulation length
+  - `--use-llm`: Enable LLM behavioral script generation
+  - `--rounds`, `--iterations`: Evolution parameters
+
 ## [1.0.0] - 2026-01-23
 
 ### Added - Foundation Release
