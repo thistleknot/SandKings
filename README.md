@@ -35,6 +35,43 @@ Everything is implemented in pure Python, with multiprocessing, making it decent
 
 The original Core War code is from https://github.com/rodrigosetti/corewar!
 
+---
+
+## 🎮 Sand Kings: 3D Colony Simulation (NEW)
+
+**Inspired by DRQ's adversarial evolution, we've built a 3D voxel-based colony simulation with GPU acceleration and evolutionary dynamics.**
+
+### Features
+- **GPU-Accelerated Physics** (PyTorch + CUDA): 8-24 it/s vs 1-2 it/s CPU
+- **Variable Colony Count**: Random 3-5 colonies per battle (not fixed)
+- **Randomized Spawns**: 10% minimum diagonal separation
+- **Morale System**: Units retreat at <10% HP (ancient warfare model)
+- **Darwinian Pressure**: Food scarcity, starvation, combat mortality
+- **Aggression > Defense**: Quick decisive battles (50% damage increase)
+- **MAP-Elites Evolution**: LLM-driven trait optimization
+- **5000-frame GIF Generation**: Incremental rendering without memory leaks
+
+### Quick Start
+```bash
+# CPU version with random colony count
+python sandkings.py --steps 300 --num-colonies 0
+
+# GPU-accelerated version
+python sandkings_gpu.py --steps 500
+
+# Evolution mode with MAP-Elites
+python sandkings_evolution.py --mode evolution --generations 50 --gpu
+```
+
+### Architecture
+- `sandkings.py` - CPU version with full simulation logic
+- `sandkings_gpu.py` - GPU-accelerated hybrid (PyTorch physics + CPU AI)
+- `sandkings_evolution.py` - MAP-Elites + LLM evolution system
+
+**See [BATTLE_SYSTEM_V2.md](BATTLE_SYSTEM_V2.md) for detailed mechanics and design philosophy.**
+
+---
+
 The important code is here:
 - [src/drq.py](src/drq.py) is for running the main DRQ algorithm.
 - [src/eval_warriors.py](src/eval_warriors.py) is for evaluating battles between two saved warriors.

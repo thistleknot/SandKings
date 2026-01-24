@@ -7,15 +7,17 @@ Inspired by GRRM's Sand Kings novella - 4 colored Maw colonies compete for terri
 
 import random
 import numpy as np
+import math
 from enum import Enum
 from dataclasses import dataclass, field
 from collections import deque
 from typing import List, Tuple, Set, Optional, Dict
-import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from PIL import Image
 import io
+import os
 from tqdm import tqdm
 
 # ============================================================================
@@ -86,8 +88,8 @@ class VoxelWorld:
                         if 1 <= x < w-1 and 1 <= y < h-1:
                             self.voxels[x, y, substrate_height:pillar_height] = VoxelType.STONE.value
         
-        # Scatter initial food nodes (reduced for resource scarcity)
-        num_food = (w * h) // 500  # Was // 100, now 5x less
+        # Scatter initial food nodes
+        num_food = (w * h) // 100
         for _ in range(num_food):
             fx = random.randint(1, w-2)
             fy = random.randint(1, h-2)
@@ -219,40 +221,29 @@ class SandKing:
     position: Tuple[int, int, int]
     unit_type: UnitType
     health: int = 10
-    max_health: int = 10
     attack: int = 2
     carrying: Optional[str] = None  # 'food', 'sand', None
     task_queue: deque = field(default_factory=deque)
-    retreating: bool = False  # Morale flag
     
     def __post_init__(self):
-        # Set stats based on unit type (AGGRESSION > DEFENSE)
+        # Set stats based on unit type
         if self.unit_type == UnitType.WORKER:
             self.health = 10
-            self.max_health = 10
             self.attack = 2
         elif self.unit_type == UnitType.SOLDIER:
-            self.health = 20  # Reduced from 25
-            self.max_health = 20
-            self.attack = 12  # Increased from 8 (aggression favored)
+            self.health = 25
+            self.attack = 8
         elif self.unit_type == UnitType.SCOUT:
             self.health = 5
-            self.max_health = 5
             self.attack = 1
     
     def move(self, new_position: Tuple[int, int, int]):
         """Move to new position"""
         self.position = new_position
     
-    def take_damage(self, damage: int, resilience: float = 0.0) -> bool:
-        """Take damage with resilience modifier, return True if killed"""
-        actual_damage = damage * (1.0 - resilience * 0.5)  # 0-50% damage reduction
-        self.health -= actual_damage
-        
-        # Morale check: retreat at 10% HP (ancient Greek tactics)
-        if self.health < self.max_health * 0.1 and not self.retreating:
-            self.retreating = True
-        
+    def take_damage(self, damage: int) -> bool:
+        """Take damage, return True if killed"""
+        self.health -= damage
         return self.health <= 0
 
 class Maw:
@@ -515,95 +506,106 @@ class Visualizer:
         return img
     
     @staticmethod
-    def generate_3d_frame(world: VoxelWorld, colonies: List[Colony]) -> Image.Image:
+    def generate_3d_frame(world: VoxelWorld, colonies: List[Colony], 
+                         cluster_size: int = 5, alpha: float = 0.1) -> Image.Image:
         """
-        Generate 3D visualization using scatter plots (like 3D Conway's Life).
-        Plots all voxels directly without clustering.
+        Generate 3D visualization with clustering to reduce points.
+        Uses outline cubes for impassable terrain (translucent).
         """
-        try:
-            fig = plt.figure(figsize=(12, 10))
-            ax = fig.add_subplot(111, projection='3d')
-            
-            w, h, d = world.dimensions
-            
-            # Get coordinates for each voxel type using np.argwhere
-            stone_coords = np.argwhere(world.voxels == VoxelType.STONE.value)
-            glass_coords = np.argwhere(world.voxels == VoxelType.GLASS.value)
-            sand_coords = np.argwhere(world.voxels == VoxelType.SAND.value)
-            food_coords = np.argwhere(world.voxels == VoxelType.FOOD.value)
-            tunnel_coords = np.argwhere(world.voxels == VoxelType.TUNNEL_WALL.value)
-            
-            # Plot terrain with depth-based coloring
-            if len(stone_coords) > 0:
-                ax.scatter(stone_coords[:, 0], stone_coords[:, 1], stone_coords[:, 2],
-                          c=stone_coords[:, 2], cmap='gray', s=2, alpha=0.4, vmin=0, vmax=d)
-            
-            if len(glass_coords) > 0:
-                ax.scatter(glass_coords[:, 0], glass_coords[:, 1], glass_coords[:, 2],
-                          c='cyan', s=2, alpha=0.3)
-            
-            if len(sand_coords) > 0:
-                ax.scatter(sand_coords[:, 0], sand_coords[:, 1], sand_coords[:, 2],
-                          c=sand_coords[:, 2], cmap='YlOrBr', s=1, alpha=0.2, vmin=0, vmax=d)
-            
-            if len(food_coords) > 0:
-                ax.scatter(food_coords[:, 0], food_coords[:, 1], food_coords[:, 2],
-                          c='lime', s=50, marker='o', alpha=0.8)
-            
-            if len(tunnel_coords) > 0:
-                ax.scatter(tunnel_coords[:, 0], tunnel_coords[:, 1], tunnel_coords[:, 2],
-                          c='brown', s=3, alpha=0.5)
-            
-            # Plot owned air (territory) colored by colony
-            for colony in colonies:
-                owned_air = np.argwhere((world.voxels == VoxelType.AIR.value) & 
-                                       (world.ownership == colony.colony_id))
-                if len(owned_air) > 0:
-                    color = np.array(colony.color) / 255.0
-                    ax.scatter(owned_air[:, 0], owned_air[:, 1], owned_air[:, 2],
-                              c=[color], s=3, alpha=0.3)
-            
-            # Draw units and Maws
-            for colony in colonies:
-                color = np.array(colony.color) / 255.0
-                
-                # Units
-                if colony.units:
-                    unit_positions = np.array([u.position for u in colony.units])
-                    ax.scatter(unit_positions[:, 0], unit_positions[:, 1], unit_positions[:, 2],
-                              c=[color], s=100, marker='^', edgecolors='black', linewidths=1)
-                
-                # Maw
-                if colony.maw.alive:
-                    mx, my, mz = colony.maw.position
-                    ax.scatter(mx, my, mz, c='gold', s=300, marker='*', 
-                              edgecolors='black', linewidths=2)
-            
-            ax.set_xlabel('X')
-            ax.set_ylabel('Y')
-            ax.set_zlabel('Z')
-            ax.set_xlim(0, w)
-            ax.set_ylim(0, h)
-            ax.set_zlim(0, d)
-            ax.set_title('Sand Kings 3D Terrarium')
-            
-            # Convert plot to image
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=100)
-            buf.seek(0)
-            img = Image.open(buf).copy()  # Copy to free buffer
-            buf.close()
-            plt.close(fig)
-            plt.close('all')  # Aggressive cleanup
-            
-            return img
+        fig = plt.figure(figsize=(12, 10))
+        ax = fig.add_subplot(111, projection='3d')
         
-        except Exception as e:
-            print(f"Warning: 3D frame generation failed: {e}")
-            # Return blank fallback image
-            img = Image.new('RGB', (1200, 1000), color='black')
-            plt.close('all')
-            return img
+        w, h, d = world.dimensions
+        
+        # Cluster voxels to reduce rendering load
+        cluster_w = max(1, w // cluster_size)
+        cluster_h = max(1, h // cluster_size)
+        cluster_d = max(1, d // cluster_size)
+        
+        # Collect clustered voxel data
+        for cx in range(cluster_w):
+            for cy in range(cluster_h):
+                for cz in range(cluster_d):
+                    # Sample center of cluster
+                    x = cx * cluster_size + cluster_size // 2
+                    y = cy * cluster_size + cluster_size // 2
+                    z = cz * cluster_size + cluster_size // 2
+                    
+                    if not world.in_bounds(x, y, z):
+                        continue
+                    
+                    voxel = VoxelType(world.voxels[x, y, z])
+                    owner = world.ownership[x, y, z]
+                    
+                    # Draw different voxel types
+                    if voxel == VoxelType.STONE or voxel == VoxelType.GLASS:
+                        # Outline cube for solid terrain
+                        Visualizer._draw_cube_outline(ax, x, y, z, cluster_size, 
+                                                     color='gray', alpha=alpha)
+                    elif voxel == VoxelType.SAND:
+                        ax.scatter(x, y, z, c='tan', s=10, alpha=0.3)
+                    elif voxel == VoxelType.FOOD:
+                        ax.scatter(x, y, z, c='green', s=50, marker='o')
+                    elif voxel == VoxelType.AIR and owner >= 0:
+                        # Owned territory - faint colony color
+                        colony = next((c for c in colonies if c.colony_id == owner), None)
+                        if colony:
+                            color = np.array(colony.color) / 255.0
+                            ax.scatter(x, y, z, c=[color], s=5, alpha=0.2)
+        
+        # Draw units and Maws
+        for colony in colonies:
+            color = np.array(colony.color) / 255.0
+            
+            # Units
+            if colony.units:
+                unit_positions = np.array([u.position for u in colony.units])
+                ax.scatter(unit_positions[:, 0], unit_positions[:, 1], unit_positions[:, 2],
+                          c=[color], s=100, marker='^', edgecolors='black', linewidths=1)
+            
+            # Maw
+            if colony.maw.alive:
+                mx, my, mz = colony.maw.position
+                ax.scatter(mx, my, mz, c='gold', s=300, marker='*', 
+                          edgecolors='black', linewidths=2)
+        
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.set_xlim(0, w)
+        ax.set_ylim(0, h)
+        ax.set_zlim(0, d)
+        ax.set_title('Sand Kings 3D Terrarium')
+        
+        # Convert plot to image
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=100)
+        buf.seek(0)
+        img = Image.open(buf)
+        plt.close(fig)
+        
+        return img
+    
+    @staticmethod
+    def _draw_cube_outline(ax, x, y, z, size, color='gray', alpha=0.1):
+        """Draw outline of a cube at position"""
+        # Define cube edges
+        s = size / 2
+        vertices = [
+            [x-s, y-s, z-s], [x+s, y-s, z-s], [x+s, y+s, z-s], [x-s, y+s, z-s],
+            [x-s, y-s, z+s], [x+s, y-s, z+s], [x+s, y+s, z+s], [x-s, y+s, z+s]
+        ]
+        
+        # Define edges connecting vertices
+        edges = [
+            [0, 1], [1, 2], [2, 3], [3, 0],  # Bottom
+            [4, 5], [5, 6], [6, 7], [7, 4],  # Top
+            [0, 4], [1, 5], [2, 6], [3, 7]   # Vertical
+        ]
+        
+        for edge in edges:
+            points = [vertices[edge[0]], vertices[edge[1]]]
+            ax.plot3D(*zip(*points), color=color, alpha=alpha, linewidth=0.5)
 
 # ============================================================================
 # MAIN SIMULATION ENGINE
@@ -619,46 +621,27 @@ class SandKingsSimulation:
         self.colonies: List[Colony] = []
         self.step_count = 0
         
-        # Initialize colonies with random count (3-5) and positions
+        # Initialize colonies at corners
         self._spawn_colonies(num_colonies)
     
-    def _spawn_colonies(self, num_colonies: int = None):
-        """Spawn Maw queens at randomized locations with min distance"""
+    def _spawn_colonies(self, num_colonies: int):
+        """Spawn Maw queens at different locations"""
         w, h, d = self.world.dimensions
         
-        # Variable colony count (3-5) if not specified or 0
-        if num_colonies is None or num_colonies == 0:
-            num_colonies = random.randint(3, 5)
-        
-        # Minimum distance = 10% of map diagonal
-        min_distance = int(0.1 * ((w**2 + h**2)**0.5))
-        
-        # Generate positions ensuring min distance
-        positions = []
-        max_attempts = 100
+        # Place Maws at corners (middle Z level)
+        positions = [
+            (w//4, h//4, d//2),
+            (3*w//4, h//4, d//2),
+            (w//4, 3*h//4, d//2),
+            (3*w//4, 3*h//4, d//2)
+        ]
         
         for i in range(num_colonies):
-            for attempt in range(max_attempts):
-                # Random position in safe zone (not edges)
-                x = random.randint(w//8, 7*w//8)
-                y = random.randint(h//8, 7*h//8)
-                z = d//2  # Mid-depth
-                
-                pos = (x, y, z)
-                
-                # Check distance to existing colonies
-                if all(((pos[0]-p[0])**2 + (pos[1]-p[1])**2)**0.5 >= min_distance 
-                       for p in positions):
-                    positions.append(pos)
-                    break
-        
-        for i in range(len(positions)):
             genome = ColonyGenome()
-            # Randomize traits (aggression-focused)
-            genome.aggression = random.uniform(0.5, 1.0)  # Favor aggression
+            # Randomize some traits
+            genome.aggression = random.random()
             genome.tunnel_preference = random.random()
             genome.expansion_rate = random.random()
-            genome.resilience = random.uniform(0.0, 0.3)  # Defense weaker
             
             colony = Colony(i, positions[i], genome)
             self.colonies.append(colony)
@@ -686,33 +669,13 @@ class SandKingsSimulation:
         # 3. Pheromone decay
         self.pheromones.step()
         
-        # 4. Food consumption and starvation (DARWINIAN PRESSURE)
+        # 4. Colony actions
         for colony in self.colonies:
             if not colony.is_alive():
                 continue
             
-            # Maintenance cost: 0.5 food per unit per step
-            maintenance_cost = len(colony.units) * 0.5
-            colony.maw.food_stored -= maintenance_cost
-            
-            # Starvation: kill units if food negative
-            if colony.maw.food_stored < 0 and colony.units:
-                units_to_kill = []
-                while colony.maw.food_stored < 0 and colony.units:
-                    dead_unit = random.choice(colony.units)
-                    units_to_kill.append(dead_unit)
-                    colony.maw.food_stored += 2  # Recover some food from dead unit
-                
-                for dead_unit in units_to_kill:
-                    colony.remove_unit(dead_unit)
-                    # Create edible corpse
-                    self.world.set_voxel(*dead_unit.position, VoxelType.CORPSE)
-            
-            # Adjust spawn threshold by expansion_rate
-            spawn_threshold = 20 / max(0.1, colony.genome.expansion_rate)
-            
             # Maw spawning decisions
-            if colony.maw.food_stored > spawn_threshold and len(colony.units) < 50:
+            if colony.maw.food_stored > 20 and len(colony.units) < 50:
                 if random.random() < colony.genome.fertility:
                     unit_type = UnitType.WORKER if random.random() < 0.7 else UnitType.SOLDIER
                     colony.spawn_unit(unit_type)
@@ -728,111 +691,66 @@ class SandKingsSimulation:
         """Simple AI for unit behavior"""
         x, y, z = unit.position
         
-        # Workers: dig and gather food/corpses
+        # Workers: dig and gather food
         if unit.unit_type == UnitType.WORKER:
-            # Look for food or corpses nearby (CORPSES NOW EDIBLE)
-            neighbors = self.world.get_neighbors_3d(unit.position, radius=2)
-            found_food = False
-            for nx, ny, nz in neighbors:
-                voxel = self.world.get_voxel(nx, ny, nz)
-                if voxel == VoxelType.FOOD or voxel == VoxelType.CORPSE:
-                    # Move toward food/corpse
-                    unit.move((nx, ny, nz))
-                    self.world.set_voxel(nx, ny, nz, VoxelType.AIR)
-                    colony.maw.eat(10)  # Both give 10 food
-                    found_food = True
-                    break
-            
-            # If no food found, tunnel
-            if not found_food and random.random() < colony.genome.tunnel_preference:
+            # Random tunneling
+            if random.random() < colony.genome.tunnel_preference:
                 direction = random.choice([(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)])
                 if self.world.tunnel(unit.position, direction, colony.colony_id):
                     unit.move((x + direction[0], y + direction[1], z + direction[2]))
                     # Leave territory pheromone
                     self.pheromones.deposit(unit.position, colony.colony_id, 
                                           PheromoneType.TERRITORY, 1.0)
+            
+            # Look for food nearby
+            neighbors = self.world.get_neighbors_3d(unit.position, radius=2)
+            for nx, ny, nz in neighbors:
+                if self.world.get_voxel(nx, ny, nz) == VoxelType.FOOD:
+                    # Move toward food
+                    unit.move((nx, ny, nz))
+                    self.world.set_voxel(nx, ny, nz, VoxelType.AIR)
+                    colony.maw.eat(10)
+                    break
         
-        # Soldiers: seek and destroy enemies (ENEMY-SEEKING AI) OR RETREAT
+        # Soldiers: patrol and attack
         elif unit.unit_type == UnitType.SOLDIER:
-            # Find closest enemy unit
-            closest_enemy = None
-            min_dist = float('inf')
-            
-            for enemy_colony in self.colonies:
-                if enemy_colony.colony_id == colony.colony_id:
-                    continue
-                for enemy in enemy_colony.units:
-                    dist = abs(enemy.position[0] - x) + abs(enemy.position[1] - y) + abs(enemy.position[2] - z)
-                    if dist < min_dist:
-                        min_dist = dist
-                        closest_enemy = enemy
-            
-            # MORALE CHECK: Retreat if wounded (<10% HP)
-            if unit.retreating and closest_enemy:
-                # Flee away from enemy
-                dx = -np.sign(closest_enemy.position[0] - x) if closest_enemy.position[0] != x else random.choice([-1, 1])
-                dy = -np.sign(closest_enemy.position[1] - y) if closest_enemy.position[1] != y else random.choice([-1, 1])
-                dz = 0  # Stay at same depth when fleeing
-                new_pos = (int(x + dx), int(y + dy), int(z + dz))
+            # Random patrol
+            if random.random() < 0.3:
+                direction = random.choice([(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)])
+                new_pos = (x + direction[0], y + direction[1], z + direction[2])
                 if (self.world.in_bounds(*new_pos) and 
                     self.world.get_voxel(*new_pos).is_tunnelable()):
                     unit.move(new_pos)
-            # If healthy and enemy within range, ATTACK
-            elif closest_enemy and min_dist < colony.genome.foraging_range:
-                if random.random() < colony.genome.aggression:
-                    # Move toward enemy
-                    dx = np.sign(closest_enemy.position[0] - x)
-                    dy = np.sign(closest_enemy.position[1] - y)
-                    dz = np.sign(closest_enemy.position[2] - z)
-                    new_pos = (int(x + dx), int(y + dy), int(z + dz))
-                    if (self.world.in_bounds(*new_pos) and 
-                        self.world.get_voxel(*new_pos).is_tunnelable()):
-                        unit.move(new_pos)
-            else:
-                # Random patrol if no enemies nearby
-                if random.random() < 0.3:
-                    direction = random.choice([(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)])
-                    new_pos = (x + direction[0], y + direction[1], z + direction[2])
-                    if (self.world.in_bounds(*new_pos) and 
-                        self.world.get_voxel(*new_pos).is_tunnelable()):
-                        unit.move(new_pos)
     
     def _resolve_conflicts(self):
-        """Resolve combat with area-of-effect (radius 1)"""
-        units_to_remove = {}  # Track units to remove after combat
+        """Resolve combat between units in same position"""
+        # Group units by position
+        position_map: Dict[Tuple[int,int,int], List[Tuple[Colony, SandKing]]] = {}
         
         for colony in self.colonies:
             for unit in colony.units:
-                # Check radius 1 for enemies (AoE COMBAT)
-                neighbors = self.world.get_neighbors_3d(unit.position, radius=1)
-                
-                for nx, ny, nz in neighbors:
-                    # Find enemy units at this position
-                    for enemy_colony in self.colonies:
-                        if enemy_colony.colony_id == colony.colony_id:
-                            continue
-                        
-                        for enemy in enemy_colony.units:
-                            if enemy.position == (nx, ny, nz):
-                                # COMBAT! Apply damage with resilience
-                                if unit.take_damage(enemy.attack, colony.genome.resilience):
-                                    if colony.colony_id not in units_to_remove:
-                                        units_to_remove[colony.colony_id] = []
-                                    units_to_remove[colony.colony_id].append(unit)
-                                
-                                if enemy.take_damage(unit.attack, enemy_colony.genome.resilience):
-                                    if enemy_colony.colony_id not in units_to_remove:
-                                        units_to_remove[enemy_colony.colony_id] = []
-                                    units_to_remove[enemy_colony.colony_id].append(enemy)
+                if unit.position not in position_map:
+                    position_map[unit.position] = []
+                position_map[unit.position].append((colony, unit))
         
-        # Remove dead units and create corpses
-        for colony_id, dead_units in units_to_remove.items():
-            colony = next((c for c in self.colonies if c.colony_id == colony_id), None)
-            if colony:
-                for unit in dead_units:
-                    if unit in colony.units:  # Check still in list
-                        colony.remove_unit(unit)
-                        self.world.set_voxel(*unit.position, VoxelType.CORPSE)
+        # Find conflicts
+        for pos, occupants in position_map.items():
+            if len(occupants) > 1:
+                # Check if different colonies
+                colony_ids = set(c.colony_id for c, u in occupants)
+                if len(colony_ids) > 1:
+                    # Combat!
+                    for i, (colony1, unit1) in enumerate(occupants):
+                        for colony2, unit2 in occupants[i+1:]:
+                            if colony1.colony_id != colony2.colony_id:
+                                # Mutual damage
+                                if unit1.take_damage(unit2.attack):
+                                    colony1.remove_unit(unit1)
+                                    # Leave corpse
+                                    self.world.set_voxel(*pos, VoxelType.CORPSE)
+                                
+                                if unit2.take_damage(unit1.attack):
+                                    colony2.remove_unit(unit2)
     
     def get_status(self) -> str:
         """Get simulation status string"""
@@ -852,28 +770,17 @@ class SandKingsSimulation:
 
 def main():
     """Run Sand Kings simulation"""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Sand Kings 3D Colony Simulation")
-    parser.add_argument('--steps', type=int, default=20, help='Number of simulation steps')
-    parser.add_argument('--num-colonies', type=int, default=0, help='Number of colonies (0=random 3-5)')
-    parser.add_argument('--width', type=int, default=80, help='World width')
-    parser.add_argument('--height', type=int, default=40, help='World height')
-    parser.add_argument('--depth', type=int, default=20, help='World depth')
-    args = parser.parse_args()
-    
     print("="*60)
     print("SAND KINGS SIMULATION")
     print("3D Voxel Terrarium with Cellular Automata")
     print("="*60)
     
     # Create simulation
-    sim = SandKingsSimulation(width=args.width, height=args.height, 
-                             depth=args.depth, num_colonies=args.num_colonies)
+    sim = SandKingsSimulation(width=80, height=40, depth=20, num_colonies=4)
     viz = Visualizer()
     
     # Run simulation and capture frames
-    num_steps = args.steps
+    num_steps = 20
     frames_2d = []
     frames_3d = []
     
@@ -891,7 +798,7 @@ def main():
         # Capture 3D frame every 5 steps (slower to render)
         if step % 5 == 0:
             print(f"\nGenerating 3D frame for step {step+1}...")
-            frame_3d = viz.generate_3d_frame(sim.world, sim.colonies)
+            frame_3d = viz.generate_3d_frame(sim.world, sim.colonies, cluster_size=5)
             frames_3d.append(frame_3d)
     
     # Save GIFs

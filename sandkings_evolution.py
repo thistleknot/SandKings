@@ -12,10 +12,15 @@ import argparse
 import hashlib
 import re
 import pickle
+import os
+import gc
+import shutil
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Tuple, Dict, Optional
 import numpy as np
 from tqdm import tqdm
+from PIL import Image
 
 # Import v1.0 base
 from sandkings import (
@@ -23,6 +28,14 @@ from sandkings import (
     Maw, Colony, PheromoneLayer, PheromoneType,
     CellularAutomata, Visualizer, SandKingsSimulation
 )
+
+# Import GPU-accelerated version
+try:
+    from sandkings_gpu import SandKingsSimulationGPU
+    GPU_AVAILABLE = True
+except ImportError as e:
+    GPU_AVAILABLE = False
+    print(f"⚠ GPU acceleration disabled: {e}")
 
 # ============================================================================
 # OLLAMA LLM INTEGRATION
@@ -560,60 +573,169 @@ class SandKingsEvolution:
 # CLI MAIN
 # ============================================================================
 
+def _build_gif_from_disk(frame_dir: Path, output_path: str, duration: int):
+    """Load frames from disk and build GIF (memory-efficient)"""
+    from PIL import Image
+    
+    frame_files = sorted(frame_dir.glob('frame_*.png'))
+    if not frame_files:
+        return
+    
+    # Load frames in chunks to avoid memory issues
+    frames = []
+    for f in frame_files:
+        frames.append(Image.open(f))
+    
+    if frames:
+        frames[0].save(output_path, save_all=True, append_images=frames[1:],
+                      duration=duration, loop=0)
+        # Explicitly close to free memory
+        for frame in frames:
+            frame.close()
+
 def main():
     parser = argparse.ArgumentParser(description="Sand Kings v1.1 Evolution")
     parser.add_argument('--mode', choices=['demo', 'evolve'], default='demo')
-    parser.add_argument('--sim-steps', choices=[50, 100, 200, 500, 1000, 2000], 
-                       type=int, default=100)
+    parser.add_argument('--sim-steps', type=int, default=100,
+                       help='Number of simulation steps (default: 100)')
     parser.add_argument('--width', type=int, default=80)
     parser.add_argument('--height', type=int, default=40)
     parser.add_argument('--depth', type=int, default=20)
     parser.add_argument('--use-llm', action='store_true')
     parser.add_argument('--rounds', type=int, default=10)
     parser.add_argument('--iterations', type=int, default=20)
+    parser.add_argument('--gpu', action='store_true', help='Use GPU acceleration (requires PyTorch + CUDA)')
     
     args = parser.parse_args()
     
     print("="*60)
-    print("SAND KINGS v1.1 - EVOLUTION")
+    print("SAND KINGS v1.3 - EVOLUTION")
     print(f"Mode: {args.mode.upper()} | Steps: {args.sim_steps}")
+    if args.gpu:
+        if GPU_AVAILABLE:
+            print("GPU: ENABLED (PyTorch + CUDA)")
+        else:
+            print("GPU: REQUESTED BUT UNAVAILABLE (falling back to CPU)")
     print("="*60)
     
     if args.mode == 'demo':
         # Single sim with visualization
-        sim = SandKingsSimulation(width=args.width, height=args.height, 
-                                  depth=args.depth, num_colonies=4)
+        if args.gpu and GPU_AVAILABLE:
+            sim = SandKingsSimulationGPU(width=args.width, height=args.height, 
+                                        depth=args.depth, num_colonies=4, device='cuda')
+        else:
+            sim = SandKingsSimulation(width=args.width, height=args.height, 
+                                     depth=args.depth, num_colonies=4)
         viz = Visualizer()
         
-        frames_2d = []
-        frames_3d = []
+        # Create temp directories for frames
+        frames_2d_dir = Path('.frames_2d_temp')
+        frames_3d_dir = Path('.frames_3d_temp')
+        frames_2d_dir.mkdir(exist_ok=True)
+        frames_3d_dir.mkdir(exist_ok=True)
+        
         print(f"\nRunning {args.sim_steps} steps...")
         
-        for step in tqdm(range(args.sim_steps)):
-            sim.step()
-            
-            # 2D slice every step
-            z_level = sim.world.depth // 2
-            frame_2d = viz.render_z_slice(sim.world, sim.colonies, z_level)
-            frames_2d.append(frame_2d)
-            
-            # 3D scatter every 5 steps
-            if step % 5 == 0:
-                frame_3d = viz.generate_3d_frame(sim.world, sim.colonies)
-                frames_3d.append(frame_3d)
+        # Build mini-GIFs every 50 steps, concatenate at end
+        batch_size = 50
+        frames_2d_batch = []
+        frames_3d_batch = []
+        gif_2d_chunks = []
+        gif_3d_chunks = []
+        chunk_idx = 0
         
-        # Save both animations
-        frames_2d[0].save('sandkings_demo_2d.gif', save_all=True, append_images=frames_2d[1:], 
-                         duration=max(50, 5000//len(frames_2d)), loop=0)
+        try:
+            for step in tqdm(range(args.sim_steps)):
+                sim.step()
+
+                # Collect 2D frame
+                z_level = sim.world.depth // 2
+                frame_2d = viz.render_z_slice(sim.world, sim.colonies, z_level)
+                frames_2d_batch.append(frame_2d)
+
+                # Collect 3D frame
+                try:
+                    frame_3d = viz.generate_3d_frame(sim.world, sim.colonies)
+                    frames_3d_batch.append(frame_3d)
+                except Exception as e:
+                    print(f"\nWarning: 3D frame failed at step {step}: {e}")
+                
+                # Every 50 steps: save batch as mini-GIF
+                if (step + 1) % batch_size == 0:
+                    if frames_2d_batch:
+                        gif_2d_chunk = frames_2d_dir / f'chunk_{chunk_idx:04d}.gif'
+                        frames_2d_batch[0].save(gif_2d_chunk, save_all=True,
+                                               append_images=frames_2d_batch[1:],
+                                               duration=50, loop=0, optimize=False)
+                        gif_2d_chunks.append(gif_2d_chunk)
+                        frames_2d_batch.clear()
+                    
+                    if frames_3d_batch:
+                        gif_3d_chunk = frames_3d_dir / f'chunk_{chunk_idx:04d}.gif'
+                        frames_3d_batch[0].save(gif_3d_chunk, save_all=True,
+                                               append_images=frames_3d_batch[1:],
+                                               duration=100, loop=0, optimize=False)
+                        gif_3d_chunks.append(gif_3d_chunk)
+                        frames_3d_batch.clear()
+                    
+                    chunk_idx += 1
+                    gc.collect()
         
-        if frames_3d:
-            frames_3d[0].save('sandkings_demo_3d.gif', save_all=True, append_images=frames_3d[1:],
-                             duration=500, loop=0)
+        except KeyboardInterrupt:
+            print("\n\nInterrupted! Saving remaining frames...")
+        except Exception as e:
+            print(f"\n\nError at step {step}: {e}")
+            print("Saving remaining frames...")
         
+        # Save any remaining frames as final chunk
+        if frames_2d_batch:
+            gif_2d_chunk = frames_2d_dir / f'chunk_{chunk_idx:04d}.gif'
+            frames_2d_batch[0].save(gif_2d_chunk, save_all=True,
+                                   append_images=frames_2d_batch[1:],
+                                   duration=50, loop=0, optimize=False)
+            gif_2d_chunks.append(gif_2d_chunk)
+        
+        if frames_3d_batch:
+            gif_3d_chunk = frames_3d_dir / f'chunk_{chunk_idx:04d}.gif'
+            frames_3d_batch[0].save(gif_3d_chunk, save_all=True,
+                                   append_images=frames_3d_batch[1:],
+                                   duration=100, loop=0, optimize=False)
+            gif_3d_chunks.append(gif_3d_chunk)
+        
+        # Concatenate all chunks into final GIFs
+        print(f"\nConcatenating {len(gif_2d_chunks)} 2D chunks and {len(gif_3d_chunks)} 3D chunks...")
+        
+        if gif_2d_chunks:
+            all_frames_2d = []
+            for chunk_path in gif_2d_chunks:
+                gif = Image.open(chunk_path)
+                for frame_idx in range(gif.n_frames):
+                    gif.seek(frame_idx)
+                    all_frames_2d.append(gif.copy())
+            all_frames_2d[0].save('sandkings_demo_2d.gif', save_all=True,
+                                 append_images=all_frames_2d[1:],
+                                 duration=50, loop=0, optimize=False)
+            print(f"✓ 2D GIF: {len(all_frames_2d)} frames")
+        
+        if gif_3d_chunks:
+            all_frames_3d = []
+            for chunk_path in gif_3d_chunks:
+                gif = Image.open(chunk_path)
+                for frame_idx in range(gif.n_frames):
+                    gif.seek(frame_idx)
+                    all_frames_3d.append(gif.copy())
+            all_frames_3d[0].save('sandkings_demo_3d.gif', save_all=True,
+                                 append_images=all_frames_3d[1:],
+                                 duration=100, loop=0, optimize=False)
+            print(f"✓ 3D GIF: {len(all_frames_3d)} frames")
+        
+        # Cleanup temp directories
+        shutil.rmtree(frames_2d_dir, ignore_errors=True)
+        shutil.rmtree(frames_3d_dir, ignore_errors=True)
+
         print(f"\n{sim.get_status()}")
         print("✓ Saved sandkings_demo_2d.gif")
-        if frames_3d:
-            print("✓ Saved sandkings_demo_3d.gif")
+        print("✓ Saved sandkings_demo_3d.gif")
     
     else:  # evolve
         evolution = SandKingsEvolution(args)
