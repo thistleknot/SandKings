@@ -53,6 +53,9 @@ The original Core War code is from https://github.com/rodrigosetti/corewar!
 
 ### Quick Start
 ```bash
+# 🧠 Neural hive minds (hierarchical neuroevolution - NEW!)
+python sandkings.py --steps 300 --num-colonies 3 --use-neural
+
 # CPU version with random colony count
 python sandkings.py --steps 300 --num-colonies 0
 
@@ -62,6 +65,16 @@ python sandkings_gpu.py --steps 500
 # Evolution mode with MAP-Elites
 python sandkings_evolution.py --mode evolution --generations 50 --gpu
 ```
+
+### Neural Hive Minds (NEW) 🧠
+**Hierarchical neuroevolution inspired by biological nervous systems:**
+- **Maw brain**: Shared encoder (slow evolution, strategic memory)
+- **Soldier layers**: Individual extensions (fast evolution via combat mating)
+- **Lamarckian folding**: Top-performing soldiers → Maw brain
+- **Network pruning**: Remove unused weights (efficiency optimization)
+- **Combat mating**: 5% chance during battles (horizontal gene transfer)
+
+**See [NEURAL_HIVE_IMPLEMENTATION.md](NEURAL_HIVE_IMPLEMENTATION.md) for full architecture details.**
 
 ### Architecture
 - `sandkings.py` - CPU version with full simulation logic

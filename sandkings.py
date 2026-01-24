@@ -17,6 +17,18 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import io
 from tqdm import tqdm
+import torch
+
+# Neural hive mind
+try:
+    from neural_hive import (
+        HiveMindBrain, SoldierLayer,
+        encode_soldier_state, decode_soldier_action
+    )
+    NEURAL_AVAILABLE = True
+except ImportError:
+    NEURAL_AVAILABLE = False
+    print("Warning: neural_hive.py not found. Neural mode disabled.")
 
 # ============================================================================
 # VOXEL TYPES & WORLD
@@ -190,9 +202,15 @@ class ColonyGenome:
     fertility: float = 0.5         # Spawn rate modifier
     resilience: float = 0.5        # Damage resistance
     
+    # Neural hive mind (Maw brain)
+    brain: Optional[HiveMindBrain] = None
+    use_neural: bool = False       # Toggle neural vs rule-based AI
+    
     def mutate(self, mutation_rate: float = 0.1):
         """Gaussian mutation of genome parameters"""
         mutated = ColonyGenome()
+        mutated.use_neural = self.use_neural
+        
         for attr in ['aggression', 'tunnel_preference', 'expansion_rate', 
                      'defense_investment', 'fertility', 'resilience']:
             current = getattr(self, attr)
@@ -201,6 +219,15 @@ class ColonyGenome:
         
         mutated.foraging_range = max(5, int(self.foraging_range + np.random.normal(0, 2)))
         mutated.swarm_threshold = max(10, int(self.swarm_threshold + np.random.normal(0, 5)))
+        
+        # Neural brain mutation (slow - only when Maw survives)
+        if self.use_neural and self.brain is not None:
+            import copy
+            mutated.brain = copy.deepcopy(self.brain)
+            mutated.brain.mutate(mutation_rate=mutation_rate * 0.5)  # Slower Maw evolution
+        elif self.use_neural:
+            mutated.brain = HiveMindBrain()
+        
         return mutated
 
 # ============================================================================
@@ -225,6 +252,9 @@ class SandKing:
     task_queue: deque = field(default_factory=deque)
     retreating: bool = False  # Morale flag
     
+    # Neural hive mind extension (soldier's personal layer)
+    brain_layer: Optional[SoldierLayer] = None
+    
     def __post_init__(self):
         # Set stats based on unit type (AGGRESSION > DEFENSE)
         if self.unit_type == UnitType.WORKER:
@@ -248,8 +278,10 @@ class SandKing:
         """Take damage with resilience modifier, return True if killed"""
         actual_damage = damage * (1.0 - resilience * 0.5)  # 0-50% damage reduction
         self.health -= actual_damage
-        
-        # Morale check: retreat at 10% HP (ancient Greek tactics)
+                # Track damage for neural layer performance
+        if self.brain_layer is not None:
+            self.brain_layer.damage_taken += actual_damage
+                # Morale check: retreat at 10% HP (ancient Greek tactics)
         if self.health < self.max_health * 0.1 and not self.retreating:
             self.retreating = True
         
@@ -272,7 +304,15 @@ class Maw:
         cost = {UnitType.WORKER: 5, UnitType.SOLDIER: 10, UnitType.SCOUT: 3}
         if self.food_stored >= cost[unit_type]:
             self.food_stored -= cost[unit_type]
-            return SandKing(self.colony_id, self.position, unit_type)
+            unit = SandKing(self.colony_id, self.position, unit_type)
+            
+            # Assign neural layer if colony uses neural AI
+            if NEURAL_AVAILABLE and hasattr(self, 'genome') and self.genome.use_neural:
+                unit.brain_layer = SoldierLayer()
+                if self.genome.brain is not None:
+                    unit.brain_layer.steps_alive = 0
+            
+            return unit
         return None
     
     def eat(self, food_amount: int):
@@ -686,7 +726,15 @@ class SandKingsSimulation:
         # 3. Pheromone decay
         self.pheromones.step()
         
-        # 4. Food consumption and starvation (DARWINIAN PRESSURE)
+        # 4. NEURAL PRUNING: Remove rarely activated weights every 50 steps
+        if NEURAL_AVAILABLE and self.step_count % 50 == 0:
+            for colony in self.colonies:
+                if colony.genome.use_neural and colony.genome.brain is not None:
+                    pruned = colony.genome.brain.prune_weights(threshold=0.01)
+                    if pruned > 0:
+                        print(f"Colony {colony.colony_id}: Pruned {pruned} weights")
+        
+        # 5. Food consumption and starvation (DARWINIAN PRESSURE)
         for colony in self.colonies:
             if not colony.is_alive():
                 continue
@@ -725,7 +773,7 @@ class SandKingsSimulation:
         self._resolve_conflicts()
     
     def _execute_unit_ai(self, unit: SandKing, colony: Colony):
-        """Simple AI for unit behavior"""
+        """Simple AI for unit behavior - NEURAL or RULE-BASED"""
         x, y, z = unit.position
         
         # Workers: dig and gather food/corpses
@@ -740,6 +788,11 @@ class SandKingsSimulation:
                     unit.move((nx, ny, nz))
                     self.world.set_voxel(nx, ny, nz, VoxelType.AIR)
                     colony.maw.eat(10)  # Both give 10 food
+                    
+                    # Track neural performance
+                    if unit.brain_layer is not None:
+                        unit.brain_layer.food_gathered += 10
+                    
                     found_food = True
                     break
             
@@ -752,54 +805,92 @@ class SandKingsSimulation:
                     self.pheromones.deposit(unit.position, colony.colony_id, 
                                           PheromoneType.TERRITORY, 1.0)
         
-        # Soldiers: seek and destroy enemies (ENEMY-SEEKING AI) OR RETREAT
+        # Soldiers: NEURAL AI or RULE-BASED
         elif unit.unit_type == UnitType.SOLDIER:
-            # Find closest enemy unit
-            closest_enemy = None
-            min_dist = float('inf')
-            
-            for enemy_colony in self.colonies:
-                if enemy_colony.colony_id == colony.colony_id:
-                    continue
-                for enemy in enemy_colony.units:
-                    dist = abs(enemy.position[0] - x) + abs(enemy.position[1] - y) + abs(enemy.position[2] - z)
-                    if dist < min_dist:
-                        min_dist = dist
-                        closest_enemy = enemy
-            
-            # MORALE CHECK: Retreat if wounded (<10% HP)
-            if unit.retreating and closest_enemy:
-                # Flee away from enemy
-                dx = -np.sign(closest_enemy.position[0] - x) if closest_enemy.position[0] != x else random.choice([-1, 1])
-                dy = -np.sign(closest_enemy.position[1] - y) if closest_enemy.position[1] != y else random.choice([-1, 1])
-                dz = 0  # Stay at same depth when fleeing
-                new_pos = (int(x + dx), int(y + dy), int(z + dz))
-                if (self.world.in_bounds(*new_pos) and 
-                    self.world.get_voxel(*new_pos).is_tunnelable()):
-                    unit.move(new_pos)
-            # If healthy and enemy within range, ATTACK
-            elif closest_enemy and min_dist < colony.genome.foraging_range:
-                if random.random() < colony.genome.aggression:
-                    # Move toward enemy
-                    dx = np.sign(closest_enemy.position[0] - x)
-                    dy = np.sign(closest_enemy.position[1] - y)
-                    dz = np.sign(closest_enemy.position[2] - z)
-                    new_pos = (int(x + dx), int(y + dy), int(z + dz))
-                    if (self.world.in_bounds(*new_pos) and 
-                        self.world.get_voxel(*new_pos).is_tunnelable()):
-                        unit.move(new_pos)
-            else:
-                # Random patrol if no enemies nearby
-                if random.random() < 0.3:
-                    direction = random.choice([(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)])
+            # NEURAL AI PATH
+            if (NEURAL_AVAILABLE and 
+                colony.genome.use_neural and 
+                colony.genome.brain is not None and 
+                unit.brain_layer is not None):
+                
+                # Gather enemy positions
+                enemy_positions = []
+                for enemy_colony in self.colonies:
+                    if enemy_colony.colony_id != colony.colony_id:
+                        enemy_positions.extend([e.position for e in enemy_colony.units])
+                
+                # Encode state
+                state_tensor = encode_soldier_state(unit, colony, self.world, enemy_positions)
+                
+                # Forward pass through Maw brain → Soldier layer
+                with torch.no_grad():
+                    encoding = colony.genome.brain(state_tensor)
+                    action_probs = unit.brain_layer(encoding)
+                
+                # Decode action
+                action_type, direction = decode_soldier_action(action_probs)
+                
+                # Execute action
+                if action_type == 'move' and direction is not None:
                     new_pos = (x + direction[0], y + direction[1], z + direction[2])
                     if (self.world.in_bounds(*new_pos) and 
                         self.world.get_voxel(*new_pos).is_tunnelable()):
                         unit.move(new_pos)
+                # Attack is handled by _resolve_conflicts
+                
+                # Update performance tracking
+                unit.brain_layer.steps_alive += 1
+                
+            # RULE-BASED AI PATH (fallback)
+            else:
+                # Find closest enemy unit
+                closest_enemy = None
+                min_dist = float('inf')
+                
+                for enemy_colony in self.colonies:
+                    if enemy_colony.colony_id == colony.colony_id:
+                        continue
+                    for enemy in enemy_colony.units:
+                        dist = abs(enemy.position[0] - x) + abs(enemy.position[1] - y) + abs(enemy.position[2] - z)
+                        if dist < min_dist:
+                            min_dist = dist
+                            closest_enemy = enemy
+                
+                # MORALE CHECK: Retreat if wounded (<10% HP)
+                if unit.retreating and closest_enemy:
+                    # Flee away from enemy
+                    dx = -np.sign(closest_enemy.position[0] - x) if closest_enemy.position[0] != x else random.choice([-1, 1])
+                    dy = -np.sign(closest_enemy.position[1] - y) if closest_enemy.position[1] != y else random.choice([-1, 1])
+                    dz = 0  # Stay at same depth when fleeing
+                    new_pos = (int(x + dx), int(y + dy), int(z + dz))
+                    if (self.world.in_bounds(*new_pos) and 
+                        self.world.get_voxel(*new_pos).is_tunnelable()):
+                        unit.move(new_pos)
+                # If healthy and enemy within range, ATTACK
+                elif closest_enemy and min_dist < colony.genome.foraging_range:
+                    if random.random() < colony.genome.aggression:
+                        # Move toward enemy
+                        dx = np.sign(closest_enemy.position[0] - x)
+                        dy = np.sign(closest_enemy.position[1] - y)
+                        dz = np.sign(closest_enemy.position[2] - z)
+                        new_pos = (int(x + dx), int(y + dy), int(z + dz))
+                        if (self.world.in_bounds(*new_pos) and 
+                            self.world.get_voxel(*new_pos).is_tunnelable()):
+                            unit.move(new_pos)
+                else:
+                    # Random patrol if no enemies nearby
+                    if random.random() < 0.3:
+                        direction = random.choice([(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)])
+                        new_pos = (x + direction[0], y + direction[1], z + direction[2])
+                        if (self.world.in_bounds(*new_pos) and 
+                            self.world.get_voxel(*new_pos).is_tunnelable()):
+                            unit.move(new_pos)
+
     
     def _resolve_conflicts(self):
-        """Resolve combat with area-of-effect (radius 1)"""
+        """Resolve combat with area-of-effect (radius 1) + NEURAL MATING"""
         units_to_remove = {}  # Track units to remove after combat
+        mating_pairs = []  # Track soldier encounters for mating
         
         for colony in self.colonies:
             for unit in colony.units:
@@ -814,16 +905,47 @@ class SandKingsSimulation:
                         
                         for enemy in enemy_colony.units:
                             if enemy.position == (nx, ny, nz):
+                                # NEURAL MATING: Soldiers exchange genetic material during combat!
+                                if (NEURAL_AVAILABLE and 
+                                    unit.unit_type == UnitType.SOLDIER and 
+                                    enemy.unit_type == UnitType.SOLDIER and
+                                    unit.brain_layer is not None and 
+                                    enemy.brain_layer is not None and
+                                    np.random.random() < 0.05):  # 5% chance during combat
+                                    mating_pairs.append((unit, enemy, colony, enemy_colony))
+                                
                                 # COMBAT! Apply damage with resilience
                                 if unit.take_damage(enemy.attack, colony.genome.resilience):
                                     if colony.colony_id not in units_to_remove:
                                         units_to_remove[colony.colony_id] = []
                                     units_to_remove[colony.colony_id].append(unit)
+                                    
+                                    # Track kill for neural performance
+                                    if enemy.brain_layer is not None:
+                                        enemy.brain_layer.kills += 1
                                 
                                 if enemy.take_damage(unit.attack, enemy_colony.genome.resilience):
                                     if enemy_colony.colony_id not in units_to_remove:
                                         units_to_remove[enemy_colony.colony_id] = []
                                     units_to_remove[enemy_colony.colony_id].append(enemy)
+                                    
+                                    # Track kill for neural performance
+                                    if unit.brain_layer is not None:
+                                        unit.brain_layer.kills += 1
+        
+        # NEURAL MATING: Create offspring layers
+        for unit1, unit2, colony1, colony2 in mating_pairs:
+            if unit1.brain_layer and unit2.brain_layer:
+                # Mate soldier layers
+                offspring_layer = unit1.brain_layer.mate(unit2.brain_layer)
+                
+                # Spawn new soldier with hybrid brain in stronger colony
+                stronger_colony = colony1 if len(colony1.units) >= len(colony2.units) else colony2
+                if stronger_colony.maw.food_stored > 10:
+                    new_soldier = stronger_colony.maw.spawn_unit(UnitType.SOLDIER)
+                    if new_soldier:
+                        new_soldier.brain_layer = offspring_layer
+                        stronger_colony.units.append(new_soldier)
         
         # Remove dead units and create corpses
         for colony_id, dead_units in units_to_remove.items():
@@ -831,8 +953,18 @@ class SandKingsSimulation:
             if colony:
                 for unit in dead_units:
                     if unit in colony.units:  # Check still in list
+                        # NEURAL FOLDING: Incorporate top performers into Maw brain
+                        if (NEURAL_AVAILABLE and 
+                            colony.genome.use_neural and 
+                            colony.genome.brain is not None and
+                            unit.brain_layer is not None and
+                            unit.unit_type == UnitType.SOLDIER):
+                            perf_score = unit.brain_layer.get_performance_score()
+                            colony.genome.brain.fold_soldier_layer(unit.brain_layer, perf_score)
+                        
                         colony.remove_unit(unit)
                         self.world.set_voxel(*unit.position, VoxelType.CORPSE)
+
     
     def get_status(self) -> str:
         """Get simulation status string"""
@@ -860,16 +992,36 @@ def main():
     parser.add_argument('--width', type=int, default=80, help='World width')
     parser.add_argument('--height', type=int, default=40, help='World height')
     parser.add_argument('--depth', type=int, default=20, help='World depth')
+    parser.add_argument('--use-neural', action='store_true', help='Use neural hive minds (requires PyTorch)')
     args = parser.parse_args()
     
     print("="*60)
     print("SAND KINGS SIMULATION")
     print("3D Voxel Terrarium with Cellular Automata")
+    if args.use_neural and NEURAL_AVAILABLE:
+        print("🧠 NEURAL HIVE MINDS ENABLED")
+        print("   Maw brain + soldier layers with mating/folding/pruning")
     print("="*60)
     
     # Create simulation
     sim = SandKingsSimulation(width=args.width, height=args.height, 
                              depth=args.depth, num_colonies=args.num_colonies)
+    
+    # Enable neural mode if requested
+    if args.use_neural:
+        if NEURAL_AVAILABLE:
+            for colony in sim.colonies:
+                colony.genome.use_neural = True
+                colony.genome.brain = HiveMindBrain()
+                # Assign neural layers to existing units
+                for unit in colony.units:
+                    if unit.unit_type == UnitType.SOLDIER:
+                        unit.brain_layer = SoldierLayer()
+                        unit.brain_layer.steps_alive = 0
+            print("✓ Neural hive minds initialized for all colonies")
+        else:
+            print("⚠ Neural mode requested but PyTorch not available. Using rule-based AI.")
+    
     viz = Visualizer()
     
     # Run simulation and capture frames
