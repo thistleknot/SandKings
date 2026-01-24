@@ -586,18 +586,34 @@ def main():
         viz = Visualizer()
         
         frames_2d = []
+        frames_3d = []
         print(f"\nRunning {args.sim_steps} steps...")
         
         for step in tqdm(range(args.sim_steps)):
             sim.step()
+            
+            # 2D slice every step
             z_level = sim.world.depth // 2
             frame_2d = viz.render_z_slice(sim.world, sim.colonies, z_level)
             frames_2d.append(frame_2d)
+            
+            # 3D scatter every 5 steps
+            if step % 5 == 0:
+                frame_3d = viz.generate_3d_frame(sim.world, sim.colonies)
+                frames_3d.append(frame_3d)
         
-        frames_2d[0].save('sandkings_demo.gif', save_all=True, append_images=frames_2d[1:], 
+        # Save both animations
+        frames_2d[0].save('sandkings_demo_2d.gif', save_all=True, append_images=frames_2d[1:], 
                          duration=max(50, 5000//len(frames_2d)), loop=0)
+        
+        if frames_3d:
+            frames_3d[0].save('sandkings_demo_3d.gif', save_all=True, append_images=frames_3d[1:],
+                             duration=500, loop=0)
+        
         print(f"\n{sim.get_status()}")
-        print("✓ Saved sandkings_demo.gif")
+        print("✓ Saved sandkings_demo_2d.gif")
+        if frames_3d:
+            print("✓ Saved sandkings_demo_3d.gif")
     
     else:  # evolve
         evolution = SandKingsEvolution(args)
