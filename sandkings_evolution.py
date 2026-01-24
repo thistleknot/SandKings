@@ -267,6 +267,11 @@ class EnhancedSandKingsSimulation(SandKingsSimulation):
     def __init__(self, *args, phenotype: Optional[SandKingsPhenotype] = None, **kwargs):
         super().__init__(*args, **kwargs)
         
+        # Initialize metrics for all colonies
+        for colony in self.colonies:
+            if not hasattr(colony, 'metrics'):
+                colony.metrics = {'territory': 0, 'population': 0, 'aggression_events': 0, 'enemy_kills': 0}
+        
         # Override colony 0 with phenotype
         if phenotype:
             self.colonies[0].genome = phenotype.genome
@@ -340,6 +345,10 @@ class EnhancedSandKingsSimulation(SandKingsSimulation):
     
     def _update_unit_context(self, unit: SandKing, colony: Colony):
         """Update unit's behavioral context"""
+        # Initialize if needed
+        if not hasattr(unit, 'behavior_context'):
+            unit.behavior_context = {}
+        
         x, y, z = unit.position
         unit.behavior_context['low_health'] = unit.health < 10
         unit.behavior_context['carrying_food'] = unit.carrying == 'food'
@@ -364,7 +373,8 @@ class EnhancedSandKingsSimulation(SandKingsSimulation):
     
     def _action_dig(self, unit: SandKing, colony: Colony):
         x, y, z = unit.position
-        direction = np.random.choice([(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)])
+        directions = [(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)]
+        direction = directions[np.random.randint(len(directions))]
         if self.world.tunnel(unit.position, direction, colony.colony_id):
             unit.move((x + direction[0], y + direction[1], z + direction[2]))
     
@@ -384,7 +394,8 @@ class EnhancedSandKingsSimulation(SandKingsSimulation):
     
     def _action_flee(self, unit: SandKing, colony: Colony):
         x, y, z = unit.position
-        flee_dir = np.random.choice([(1,0,0), (-1,0,0), (0,1,0), (0,-1,0)])
+        flee_dirs = [(1,0,0), (-1,0,0), (0,1,0), (0,-1,0)]
+        flee_dir = flee_dirs[np.random.randint(len(flee_dirs))]
         new_pos = (x + flee_dir[0], y + flee_dir[1], z + flee_dir[2])
         if self.world.in_bounds(*new_pos) and self.world.get_voxel(*new_pos).is_tunnelable():
             unit.move(new_pos)
@@ -417,7 +428,8 @@ class EnhancedSandKingsSimulation(SandKingsSimulation):
         elif unit.unit_type == UnitType.SOLDIER:
             if np.random.random() < 0.3:
                 x, y, z = unit.position
-                direction = np.random.choice([(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)])
+                directions = [(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)]
+                direction = directions[np.random.randint(len(directions))]
                 new_pos = (x + direction[0], y + direction[1], z + direction[2])
                 if self.world.in_bounds(*new_pos) and self.world.get_voxel(*new_pos).is_tunnelable():
                     unit.move(new_pos)
