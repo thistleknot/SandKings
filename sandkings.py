@@ -506,52 +506,52 @@ class Visualizer:
         return img
     
     @staticmethod
-    def generate_3d_frame(world: VoxelWorld, colonies: List[Colony], 
-                         cluster_size: int = 5, alpha: float = 0.1) -> Image.Image:
+    def generate_3d_frame(world: VoxelWorld, colonies: List[Colony]) -> Image.Image:
         """
-        Generate 3D visualization with clustering to reduce points.
-        Uses outline cubes for impassable terrain (translucent).
+        Generate 3D visualization using scatter plots (like 3D Conway's Life).
+        Plots all voxels directly without clustering.
         """
         fig = plt.figure(figsize=(12, 10))
         ax = fig.add_subplot(111, projection='3d')
         
         w, h, d = world.dimensions
         
-        # Cluster voxels to reduce rendering load
-        cluster_w = max(1, w // cluster_size)
-        cluster_h = max(1, h // cluster_size)
-        cluster_d = max(1, d // cluster_size)
+        # Get coordinates for each voxel type using np.argwhere
+        stone_coords = np.argwhere(world.voxels == VoxelType.STONE.value)
+        glass_coords = np.argwhere(world.voxels == VoxelType.GLASS.value)
+        sand_coords = np.argwhere(world.voxels == VoxelType.SAND.value)
+        food_coords = np.argwhere(world.voxels == VoxelType.FOOD.value)
+        tunnel_coords = np.argwhere(world.voxels == VoxelType.TUNNEL_WALL.value)
         
-        # Collect clustered voxel data
-        for cx in range(cluster_w):
-            for cy in range(cluster_h):
-                for cz in range(cluster_d):
-                    # Sample center of cluster
-                    x = cx * cluster_size + cluster_size // 2
-                    y = cy * cluster_size + cluster_size // 2
-                    z = cz * cluster_size + cluster_size // 2
-                    
-                    if not world.in_bounds(x, y, z):
-                        continue
-                    
-                    voxel = VoxelType(world.voxels[x, y, z])
-                    owner = world.ownership[x, y, z]
-                    
-                    # Draw different voxel types
-                    if voxel == VoxelType.STONE or voxel == VoxelType.GLASS:
-                        # Outline cube for solid terrain
-                        Visualizer._draw_cube_outline(ax, x, y, z, cluster_size, 
-                                                     color='gray', alpha=alpha)
-                    elif voxel == VoxelType.SAND:
-                        ax.scatter(x, y, z, c='tan', s=10, alpha=0.3)
-                    elif voxel == VoxelType.FOOD:
-                        ax.scatter(x, y, z, c='green', s=50, marker='o')
-                    elif voxel == VoxelType.AIR and owner >= 0:
-                        # Owned territory - faint colony color
-                        colony = next((c for c in colonies if c.colony_id == owner), None)
-                        if colony:
-                            color = np.array(colony.color) / 255.0
-                            ax.scatter(x, y, z, c=[color], s=5, alpha=0.2)
+        # Plot terrain with depth-based coloring
+        if len(stone_coords) > 0:
+            ax.scatter(stone_coords[:, 0], stone_coords[:, 1], stone_coords[:, 2],
+                      c=stone_coords[:, 2], cmap='gray', s=2, alpha=0.4, vmin=0, vmax=d)
+        
+        if len(glass_coords) > 0:
+            ax.scatter(glass_coords[:, 0], glass_coords[:, 1], glass_coords[:, 2],
+                      c='cyan', s=2, alpha=0.3)
+        
+        if len(sand_coords) > 0:
+            ax.scatter(sand_coords[:, 0], sand_coords[:, 1], sand_coords[:, 2],
+                      c=sand_coords[:, 2], cmap='YlOrBr', s=1, alpha=0.2, vmin=0, vmax=d)
+        
+        if len(food_coords) > 0:
+            ax.scatter(food_coords[:, 0], food_coords[:, 1], food_coords[:, 2],
+                      c='lime', s=50, marker='o', alpha=0.8)
+        
+        if len(tunnel_coords) > 0:
+            ax.scatter(tunnel_coords[:, 0], tunnel_coords[:, 1], tunnel_coords[:, 2],
+                      c='brown', s=3, alpha=0.5)
+        
+        # Plot owned air (territory) colored by colony
+        for colony in colonies:
+            owned_air = np.argwhere((world.voxels == VoxelType.AIR.value) & 
+                                   (world.ownership == colony.colony_id))
+            if len(owned_air) > 0:
+                color = np.array(colony.color) / 255.0
+                ax.scatter(owned_air[:, 0], owned_air[:, 1], owned_air[:, 2],
+                          c=[color], s=3, alpha=0.3)
         
         # Draw units and Maws
         for colony in colonies:
@@ -585,27 +585,6 @@ class Visualizer:
         plt.close(fig)
         
         return img
-    
-    @staticmethod
-    def _draw_cube_outline(ax, x, y, z, size, color='gray', alpha=0.1):
-        """Draw outline of a cube at position"""
-        # Define cube edges
-        s = size / 2
-        vertices = [
-            [x-s, y-s, z-s], [x+s, y-s, z-s], [x+s, y+s, z-s], [x-s, y+s, z-s],
-            [x-s, y-s, z+s], [x+s, y-s, z+s], [x+s, y+s, z+s], [x-s, y+s, z+s]
-        ]
-        
-        # Define edges connecting vertices
-        edges = [
-            [0, 1], [1, 2], [2, 3], [3, 0],  # Bottom
-            [4, 5], [5, 6], [6, 7], [7, 4],  # Top
-            [0, 4], [1, 5], [2, 6], [3, 7]   # Vertical
-        ]
-        
-        for edge in edges:
-            points = [vertices[edge[0]], vertices[edge[1]]]
-            ax.plot3D(*zip(*points), color=color, alpha=alpha, linewidth=0.5)
 
 # ============================================================================
 # MAIN SIMULATION ENGINE
@@ -798,7 +777,7 @@ def main():
         # Capture 3D frame every 5 steps (slower to render)
         if step % 5 == 0:
             print(f"\nGenerating 3D frame for step {step+1}...")
-            frame_3d = viz.generate_3d_frame(sim.world, sim.colonies, cluster_size=5)
+            frame_3d = viz.generate_3d_frame(sim.world, sim.colonies)
             frames_3d.append(frame_3d)
     
     # Save GIFs
