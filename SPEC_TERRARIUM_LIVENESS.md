@@ -29,6 +29,9 @@ to stay alive indefinitely.
 - Constant: `BOOTSTRAP_FLOOR = 10` — minimum food each living colony is
   topped up to at every feeding (the keeper's dole).
 - Constant: `STARVATION_MAX_KILLS = 2` per colony per step (was unbounded).
+- Constant: `UNIT_CAP = 30` — per-colony population cap on the normal spawn
+  gate (the bootstrap spawn T2 is exempt by construction: it fires at 0
+  units). The Enhanced evolution sim keeps its own separate cap of 50.
 - `Maw.food_stored` initial: 120 (was 200).
 - `expansion_rate` init: `uniform(0.3, 1.0)` (was `random()`), bounding the
   spawn threshold `30/rate` to [30, 100].
@@ -37,7 +40,9 @@ to stay alive indefinitely.
 - Constant: `RESPAWN_DELAY = 300` steps; `Constant: RESPAWN_FOOD = 50`;
   respawn genome mutation rate 0.15.
 - Terrain noise: numpy only (`np.random.default_rng`); `VoxelWorld` gains an
-  optional `seed` parameter (None → nondeterministic, unchanged default).
+  optional `seed` parameter. When `seed=None`, the generator is derived from
+  the global NumPy stream so `np.random.seed()` in tests makes terrain
+  reproducible; unseeded production runs stay random.
 - Compatibility: `EnhancedSandKingsSimulation` (sandkings_evolution.py)
   overrides `step()` entirely and is unaffected by new step phases; it does
   inherit the new terrain and constants (fitness scale shifts — accepted).
@@ -46,10 +51,14 @@ to stay alive indefinitely.
 
 ## 3. Functional Requirements (EARS)
 
+Requirement IDs are stable (they are cited from commits and logs); the list
+is in numeric order.
+
 - **T1** When `step_count % FEED_INTERVAL == 0`, the sim MUST place the feed
   amount N of FOOD voxels, each at the first AIR voxel directly above
-  terrain in a random interior column, and MUST raise every living colony's
-  `food_stored` to at least BOOTSTRAP_FLOOR.
+  terrain in a random interior column, MUST raise every living colony's
+  `food_stored` to at least BOOTSTRAP_FLOOR, and MUST log the feeding to
+  the event feed (see the T9 event catalog).
 - **T2** While a colony is alive with 0 units and `food_stored` ≥ the worker
   spawn cost (3), the step MUST spawn one WORKER, bypassing the spawn
   threshold and fertility roll.
@@ -57,7 +66,9 @@ to stay alive indefinitely.
   unchanged, clears any cached target); (2) step toward a cached
   `forage_target` that still holds FOOD or CORPSE; (3) scan the
   `foraging_range` box for FOOD or CORPSE and cache the nearest by Manhattan
-  distance; (4) existing tunnel-dig fallback.
+  distance; (4) existing tunnel-dig fallback. Directed movement steps
+  toward the target through AIR (walk) or SAND (tunnel); when the diagonal
+  is blocked it falls back to single-axis steps.
 - **T4** When a soldier finds no enemy unit within `foraging_range`, it MUST
   chase the nearest living enemy Maw within `foraging_range` (same
   aggression roll and movement rules). `_resolve_conflicts` MUST apply each
@@ -74,52 +85,76 @@ to stay alive indefinitely.
   and pheromone slot follow from the id); genome = a random living
   survivor's `genome.mutate(0.15)` (a fresh randomized genome when none
   survive); position MUST respect the existing 10%-diagonal minimum distance
-  from living maws; maw z = surface; `food_stored = RESPAWN_FOOD`; 3 starter
-  workers.
-- **T7** Starvation MUST kill at most STARVATION_MAX_KILLS units per colony
-  per step.
+  from living maws; the maw sits on the surface at `surface_z + 1` (clamped
+  to depth−1); `food_stored = RESPAWN_FOOD`; 3 starter workers.
+- **T7** Starvation MUST kill at most STARVATION_MAX_KILLS distinct units
+  per colony per step.
+- **T8** Terrain generation MUST produce: a 3-octave value-noise heightmap
+  with per-column surface height in `[substrate+2, 0.85·depth]`; two stone
+  strata bands (thickness 2) where band noise exceeds its threshold; cavern
+  air pockets from thresholded 3D noise, confined between substrate+1 and
+  surface−3, with SAND directly above a cavern converted to STONE (roof
+  cementing, else gravity collapses them); surface food patches plus buried
+  food pockets; glass walls and z=0 floor preserved; maws placed on the
+  surface at `surface_z + 1` (clamped to depth−1); and post-generation
+  `apply_gravity()` MUST be a no-op (settled at gen). When depth < 8,
+  caverns MUST be skipped and bands clamped so generation still succeeds
+  (20×10×5 worlds).
 - **T9** (Round B) The sim MUST keep an event feed `self.events` (deque of
-  `(step, message)`, maxlen 50) recording: keeper feedings, colony falls,
-  new arrivals, and the first step a Maw comes under siege (per siege spell —
-  re-announced only after it has regenerated to full or the besieger died
-  off; implementation MAY simplify to "when damaged at full health").
+  `(step, message)`, maxlen 50). A Maw siege is announced when a Maw is
+  damaged while at full health (one announcement per healed-and-re-besieged
+  spell). Console prints may phrase things differently; the feed text below
+  is authoritative for the HUD. `get_status()` remains the plain console
+  summary (alive colonies only); WAR/DEAD/respawn presentation is the live
+  HUD's job (SPEC_LIVE_VIEW.md R7a/R15).
+
+  **Event catalog** (emitter → exact feed text):
+  | Emitter | Feed text |
+  |---|---|
+  | `_feed_terrarium` | `Keeper scatters {placed} food` |
+  | `_apply_maw_siege_damage` | `Colony {a} besieges Colony {b}!` |
+  | `_check_maw_deaths` | `Colony {id} has fallen!` |
+  | `_respawn_colony` | `A new colony {id} arrives` |
+  | war-footing transition | `Colony {id} marches to war!` |
+  | storm start / end | `A sandstorm rises!` / `The sandstorm passes` |
+  | maw flight start | `Colony {id}'s Maw flees!` |
+  | live viewer K key | `The keeper preserves the terrarium` |
 - **T10** (Round D — war parties) `Constant: WAR_CHEST = 400`. While a
   colony's `food_stored` > WAR_CHEST it is **at war**: its spawn mix flips
-  soldier-heavy (70% soldier instead of 30%), and its soldiers' maw-siege
-  targeting ignores `foraging_range` (they march across the map). The
-  transition into war MUST log "Colony X marches to war!" to the event feed
-  (once per transition). Hysteresis: war ends only when food falls below
-  WAR_CHEST/2 (war soak showed threshold flapping without it). Maw health is
-  clamped at 0 (soak briefly showed negative HP in the HUD).
-  Rationale: the 3000-step soak showed rich colonies hoarding unboundedly
-  with zero sieges — wealth must convert into drama. The HUD shows `[WAR]`
-  on a warring colony's line.
-- **T11** (Round F — scouts) Scouts join the spawn mix: peacetime
-  0.60 worker / 0.25 soldier / 0.15 scout; at war 0.30 / 0.60 / 0.10.
-  Scout AI: (a) if an enemy unit is within SCOUT_ALARM_RANGE (5,
+  soldier-heavy (the T11 mix: 0.30 worker / 0.60 soldier / 0.10 scout,
+  vs peacetime 0.60 / 0.25 / 0.15), and its soldiers' maw-siege targeting
+  ignores `foraging_range` (they march across the map). The transition into
+  war MUST log to the event feed (once per transition). Hysteresis: war
+  ends only when food falls below WAR_CHEST/2. Maw health is clamped at 0.
+  *Rationale:* soaks showed rich colonies hoarding unboundedly with zero
+  sieges, and threshold flapping without hysteresis; wealth must convert
+  into drama.
+- **T11** (Round F — scouts) Scouts join the spawn mix per the shares in
+  T10. Scout AI: (a) if an enemy unit is within SCOUT_ALARM_RANGE (5,
   Manhattan), the scout MUST deposit a DANGER pheromone (strength 2.0)
   at its position and flee (up to 2 AIR moves away); (b) otherwise it
-  surveys — scanning 2 × foraging_range for food/corpses and appending
-  finds to `colony.known_food` (deduped, cap KNOWN_FOOD_CAP = 8) — and
-  wanders fast (up to 2 random AIR moves per step; scouts do not tunnel).
-  Workers whose own scan fails MUST pull the nearest still-valid entry
-  from `colony.known_food` (stale entries dropped on read). This closes
-  the v1.0 known limitation "Scout units defined but not spawned" and
-  feeds the DANGER overlay.
+  surveys — scanning 2 × foraging_range and caching the nearest
+  food/corpse find of the step into `colony.known_food` (deduped, cap
+  KNOWN_FOOD_CAP = 8; intel accumulates across steps) — and wanders fast
+  (up to 2 random AIR moves per step; scouts do not tunnel). Workers whose
+  own scan fails MUST pull the nearest still-valid entry from
+  `colony.known_food` (stale entries dropped on read).
+  *Rationale:* closes the v1.0 known limitation "Scout units defined but
+  not spawned" and feeds the DANGER overlay.
 - **T12** (Round G — sandstorms) `Constant: STORM_INTERVAL = 600`,
   `Constant: STORM_CHANCE = 0.5`, `Constant: STORM_DURATION = 25`,
   `Constant: STORM_COLUMNS_FRACTION = 1/50` (surface columns disturbed per
-  storm step). Every STORM_INTERVAL steps, with probability STORM_CHANCE, a
-  storm begins: `sim.storm_until = step + STORM_DURATION` and a per-storm
-  prevailing wind direction (unit x/y vector) is chosen. While a storm is
-  active, each step MUST transport sand: for ~`w·h·fraction` random interior
-  columns whose surface voxel is SAND above the substrate, the top sand
-  voxel moves to the top of the downwind neighbor column (with ±1 lateral
-  jitter), and gravity runs each storm step so drifts settle. Storms bury
-  what they cover (food/corpses under new sand stay in place — diggable).
-  Events: "A sandstorm rises!" on start and "The sandstorm passes" on end.
-  The viewer MUST render a flickering sand-haze overlay while
-  `sim.storm_until > sim.step_count` (guarded getattr).
+  storm step). Every STORM_INTERVAL steps, with probability STORM_CHANCE
+  and only while no storm is active, a storm begins: `sim.storm_until =
+  step + STORM_DURATION` and a per-storm prevailing wind direction (unit
+  x/y vector) is chosen. While a storm is active, each step MUST transport
+  sand: for ~`w·h·fraction` random interior columns whose surface voxel is
+  SAND above the substrate, the top sand voxel moves to the top of the
+  downwind neighbor column (±1 jitter on the axis perpendicular to the
+  wind), and gravity runs each storm step so drifts settle. Sand is moved,
+  never created or destroyed; whatever a drift covers stays in place,
+  buried but diggable. Start and end MUST be logged (T9 catalog). The
+  viewer renders the storm haze (SPEC_LIVE_VIEW.md R21).
 - **T13** (Round H — persistence) `save_checkpoint(sim, path) -> int` MUST
   pickle the entire simulation into a sqlite table
   `checkpoints(id, step, saved_at, state BLOB)`; `load_checkpoint(path)`
@@ -127,7 +162,7 @@ to stay alive indefinitely.
   has none. CLI: `--persist [DB]` (default path `terrarium.db`) resumes
   from the db when it exists (else starts fresh) and autosaves on exit in
   both live and GIF modes; in live mode the `K` key saves a snapshot on
-  demand and logs "The keeper preserves the terrarium". Neural init
+  demand and logs to the event feed (T9 catalog). Neural init
   (`--use-neural`) applies only to fresh sims — resumed sims keep their
   evolved brains. Round-trip MUST preserve step_count, voxels, ownership,
   colonies (units, food, maw HP), pending respawns, and the event feed.
@@ -139,42 +174,43 @@ to stay alive indefinitely.
   during evaluation. `SandKingsMapElites.get_fitness` MUST be
   outcome-based: enemies_eliminated (500) and survived (200) dominate;
   enemy_kills (2.0) next; population/territory/survival_time are
-  tie-breakers (0.1 / 0.01 / 0.05). Closes BATTLE_SYSTEM_V2 Next Step 4
-  ("time-based to outcome-based scoring").
+  tie-breakers (0.1 / 0.01 / 0.05).
+  *Rationale:* closes BATTLE_SYSTEM_V2 Next Step 4 (time-based →
+  outcome-based scoring).
 - **T15** (Round K — maw migration) `Constant: MAW_MIGRATE_HEALTH = 0.4`
   (fraction of max HP), `Constant: MAW_MIGRATE_COST = 2.0` (food per step
   of flight). While a living Maw's health < MAW_MIGRATE_HEALTH ×
   MAW_MAX_HEALTH, food ≥ cost, and an enemy unit is within
   `foraging_range`: the Maw MUST crawl one voxel per step directly away
   from the nearest enemy (through AIR, or tunneling SAND; z unchanged;
-  never into walls), paying MAW_MIGRATE_COST food per move; its new cell
-  is carved AIR with colony ownership. The first move of a flight MUST log
-  "Colony X's Maw flees!"; the flight flag clears once health recovers to
-  ≥ MAW_MIGRATE_HEALTH or no threat remains in range. Closes the roadmap
-  item "Maw migration".
-- **T8** Terrain generation MUST produce: a 3-octave value-noise heightmap
-  with per-column surface height in `[substrate+2, 0.85·depth]`; two stone
-  strata bands (thickness 2) where band noise exceeds its threshold; cavern
-  air pockets from thresholded 3D noise, confined between substrate+1 and
-  surface−3, with SAND directly above a cavern converted to STONE (roof
-  cementing, else gravity collapses them); surface food patches plus buried
-  food pockets; glass walls and z=0 floor preserved; maws placed at the
-  surface (`surface_z`); and post-generation `apply_gravity()` MUST be a
-  no-op (settled at gen). When depth < 8, caverns MUST be skipped and bands
-  clamped so generation still succeeds (20×10×5 worlds).
+  never into walls; a blocked diagonal falls back to single-axis steps;
+  an attacker sharing the Maw's cell yields a random escape direction),
+  paying MAW_MIGRATE_COST food per move; its new cell is carved AIR with
+  colony ownership. The first move of a flight MUST log to the event feed
+  (T9 catalog); the flight flag clears once health recovers to
+  ≥ MAW_MIGRATE_HEALTH or no threat remains in range.
+  *Rationale:* closes the v1.2 roadmap item "Maw migration".
+
+### Scope note — neural systems
+
+Neural mating (5% roll between adjacent enemy soldiers, offspring joining
+the larger colony when its food > 10), dead-soldier folding, and weight
+pruning also run inside `step()`/`_resolve_conflicts` but are governed by
+SPEC_NEURAL_ACTIVATION_TRACKING.md, not re-specified here.
 
 ## 4. Behavioral Spec — feeding phase (inside `step()`)
 
 ```
 When step_count % FEED_INTERVAL == 0:
-    n ← feed amount (Implementation Requirements)
+    n ← feed amount (Implementation Requirements); placed ← 0
     Loop n times:
         (x, y) ← random interior column
         z_surface ← world.surface_z(x, y)
         If z_surface + 1 < depth and voxel[x, y, z_surface + 1] is AIR:
-            set voxel[x, y, z_surface + 1] ← FOOD
+            set voxel[x, y, z_surface + 1] ← FOOD; placed += 1
     For each living colony:
         food_stored ← max(food_stored, BOOTSTRAP_FLOOR)
+    log event "Keeper scatters {placed} food"; return placed
 ```
 
 ## 5. Behavioral Spec — colony death cascade
@@ -189,7 +225,8 @@ After combat resolution, for each colony whose maw.alive turned False:
     pending_respawns[colony_id] ← step_count + RESPAWN_DELAY
 Then, for each due entry in pending_respawns:
     replace colonies[slot] in place per T6; delete the entry
-Assert: len(colonies) is constant; every colony_id occurs exactly once
+Invariant (by construction, not a runtime assert): len(colonies) is
+constant and every colony_id occurs exactly once
 ```
 
 ## 6. Acceptance (Given/When/Then)
@@ -212,8 +249,52 @@ Assert: len(colonies) is constant; every colony_id occurs exactly once
   bounds; ≥ 1 cavern AIR voxel strictly between substrate and surface;
   STONE present above the substrate line (strata); glass shell intact;
   `apply_gravity()` changes nothing. Given 20×10×5: generation succeeds.
+- (T7) Given negative food and many units, at most STARVATION_MAX_KILLS die
+  in one step — implicit in every soak's gradual declines.
+- (T9) Given a feeding step, the feed contains a `Keeper scatters` entry
+  (`test_hud_event_feed` asserts HUD projection; feed assertions run inline
+  in soaks).
+- (T10) Given food > WAR_CHEST, When a step runs, Then the colony is at war
+  and the declaration is logged once per transition; Given food dropping to
+  10, war ends (`test_war_footing_triggers_and_logs`). Given an at-war
+  soldier and a distant enemy maw, it marches beyond foraging_range
+  (`test_war_soldier_marches_beyond_foraging_range`).
+- (T11) Given a scout and lone food beyond worker range, the find enters
+  `known_food` and a worker adopts it (`test_scout_surveys_food_into_colony_intel`);
+  Given an enemy within 5, the scout deposits DANGER and flees
+  (`test_scout_alarm_deposits_danger_and_flees`); stale intel purges on read
+  (`test_stale_known_food_dropped`).
+- (T12) Given an active storm, terrain changes, total sand count is
+  conserved, and the world stays gravity-settled
+  (`test_storm_transports_sand_and_stays_settled`); rise/pass events fire
+  and the storm ends (`test_storm_lifecycle_events`).
+- (T13) Given a saved sim, load returns the latest checkpoint preserving
+  voxels/ownership/colonies/respawns/events and it keeps stepping
+  (`test_checkpoint_roundtrip`, `test_checkpoint_roundtrip_neural`).
+- (T14) Given a conqueror phenotype vs a slow survivor, the conqueror
+  scores higher (`test_outcome_fitness_dominates_time`); Given a maw at
+  1-hit HP in an Enhanced sim, elimination is terminal — no respawn
+  (`test_enhanced_sim_maw_sieges_are_terminal`).
+- (T15) Given a wounded maw with an adjacent attacker, it crawls away,
+  pays MAW_MIGRATE_COST, and logs once per flight
+  (`test_wounded_maw_flees_attacker`); healthy maws hold ground
+  (`test_healthy_maw_stays_put`).
 
 ## 7. Reconciliation Log
+
+- 2026-07-08 (spec one-over) — Audit repair: T10's stale "70% soldier" mix
+  corrected to the implemented T11 shares (0.30/0.60/0.10 at war); T6/T8
+  now state `surface_z + 1` placement; T9 gained the authoritative event
+  catalog and the simplified siege-announce rule (the regen/besieger-death
+  re-announce variant was never implemented and is dropped); T12 records
+  storm non-overlap, sand conservation, and perpendicular-axis jitter; T15
+  records the single-axis fallback and same-cell escape (added when the
+  flaky randomized-diagonal movement was fixed); UNIT_CAP = 30 specced and
+  named in code; rationale prose separated from normative clauses;
+  acceptance scenarios added for T7 and T9-T15 citing their tests; scope
+  note added deferring neural systems to SPEC_NEURAL_ACTIVATION_TRACKING.md.
+  Also: `VoxelWorld(seed=None)` now derives from the global NumPy stream so
+  seeded tests get reproducible terrain (a 1-in-5 suite flake).
 
 - 2026-07-07 (night rounds G-K) — T12 (sandstorms; non-overlap made explicit
   in code, sand conservation tested), T13 (pet-mode persistence; verified

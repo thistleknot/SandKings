@@ -12,16 +12,20 @@ Implemented hierarchical neuroevolution system where each colony has a **Maw bra
                       ↓
     ┌─────────────────┼─────────────────┐
     ↓                 ↓                 ↓
-[Soldier₁ Layer] [Soldier₂ Layer] [Soldier₃ Layer]
-  (32 → 7)         (32 → 7)         (32 → 7)
-    ↓                 ↓                 ↓
-  Actions          Actions          Actions
+[Soldier₁ Layer]  [Soldier₂ Layer]  [Soldier₃ Layer]
+ GRUCell(32,32)    GRUCell(32,32)    GRUCell(32,32)
+   ↓ hidden          ↓ hidden          ↓ hidden
+ Linear(32 → 7)    Linear(32 → 7)    Linear(32 → 7)
+   ↓ softmax         ↓ softmax         ↓ softmax
+  Actions           Actions           Actions
 ```
+
+Each soldier layer carries **recurrent memory**: the 32-dim Maw encoding feeds a `GRUCell(32, 32)` whose hidden state persists across the soldier's life (detached each step so no autograd graph accumulates), then a `Linear(32 → 7)` + softmax produces action probabilities. Hidden state starts blank (zeros) for fresh, cloned, and mated layers.
 
 ### Components
 
 #### 1. HiveMindBrain (Maw's Brain)
-**Location**: `neural_hive.py` lines 48-159
+**Location**: `HiveMindBrain` class in `neural_hive.py`
 
 **Structure**:
 - Input: 40 features (soldier state encoding)
@@ -33,21 +37,23 @@ Implemented hierarchical neuroevolution system where each colony has a **Maw bra
 - Represents long-term strategic memory
 
 **Key Features**:
-- **Activation Tracking**: Records which weights are used during forward passes
-- **Pruning**: Removes weights used < 1% of time (every 50 steps)
-- **Folding**: Incorporates high-performing soldier layers (>0.7 score) via weighted blending
-- **Performance Metrics**: Tracks battles_survived, total_kills, folded_layer_count
+- **Activation Tracking**: `HiveMindBrain.forward` records per-neuron post-ReLU firing frequency as an EMA (decay 0.99) per Linear layer
+- **Pruning**: Zeros the weight row AND bias of neurons whose firing EMA ≤ threshold (default 0.01), every 50 steps; skipped until 100 forward passes are recorded (warm-up guard)
+- **Folding**: Incorporates high-performing soldier layers (≥0.7 score) via weighted blending of the overlapping submatrix
+- **Performance Metrics**: Tracks folded_layer_count
 
 #### 2. SoldierLayer (Individual Soldier Extensions)
-**Location**: `neural_hive.py` lines 162-254
+**Location**: `SoldierLayer` class in `neural_hive.py`
 
 **Structure**:
 - Input: 32 (from Maw encoding)
-- Output: 7 actions (6 movement directions + attack)
+- Recurrent memory: `GRUCell(32, 32)` — per-soldier hidden state persists across the soldier's life, detached each step, starts blank for fresh/cloned/mated layers
+- Output head: `Linear(32 → 7)` + softmax → 7 actions (6 movement directions + attack)
 
 **Evolution Rate**: FAST
 - Mates during combat (5% chance when encountering enemies)
-- Uniform crossover + Gaussian mutation (std=0.1)
+- Uniform crossover + Gaussian mutation (std=0.15) over ALL parameters (GRU memory + output head)
+- `mate()` asserts structurally identical parents; offspring memory starts blank
 
 **Performance Tracking**:
 - `kills`: Number of enemies killed
@@ -58,28 +64,32 @@ Implemented hierarchical neuroevolution system where each colony has a **Maw bra
 
 **Performance Score**:
 ```python
-score = (
-    kills * 0.4 +           # Combat effectiveness
-    survival * 0.3 +        # Longevity
-    efficiency * 0.2 +      # Damage dealt vs taken
-    gathering * 0.1         # Resource collection
+if steps_alive == 0:
+    return 0.0
+score = np.clip(
+    kills * 0.4 +                                # Combat effectiveness
+    (steps_alive / 100) * 0.3 +                  # Longevity
+    (damage_dealt / max(1, damage_taken)) * 0.2 +  # Damage dealt vs taken
+    (food_gathered / 10) * 0.1,                  # Resource collection
+    0.0, 1.0
 )
 ```
 
 #### 3. State Encoding
-**Location**: `neural_hive.py` lines 257-314
+**Location**: `encode_soldier_state()` in `neural_hive.py`
 
 **40 Features**:
-- Position (x, y, z): 3 features
+- Position (x, y, z, normalized): 3 features
+- Maw position (relative): 3 features
 - Health fraction: 1 feature
 - Retreat flag: 1 feature
 - Closest enemy direction (unit vector): 3 features
 - Closest enemy distance (normalized): 1 feature
-- 3×3×3 voxel neighborhood: 27 features (one-hot for each voxel type)
+- 3×3×3 voxel neighborhood: 27 features (scalar voxel-type values, `float(voxel.value)` — not one-hot)
 - Colony food (normalized): 1 feature
 
 #### 4. Action Decoding
-**Location**: `neural_hive.py` lines 317-327
+**Location**: `decode_soldier_action()` in `neural_hive.py`
 
 **7 Actions**:
 - 0-5: Movement (±x, ±y, ±z)
@@ -88,7 +98,7 @@ score = (
 ## Integration Points
 
 ### Colony Spawning
-**Location**: `sandkings.py` lines 302-316
+**Location**: `Maw.spawn_unit` in `sandkings.py`
 
 When `use_neural=True`, new soldiers get assigned a `SoldierLayer`:
 ```python
@@ -98,13 +108,13 @@ if NEURAL_AVAILABLE and hasattr(self, 'genome') and self.genome.use_neural:
 ```
 
 ### Combat Resolution
-**Location**: `sandkings.py` lines 882-942
+**Location**: `_resolve_conflicts` in `sandkings.py`
 
 **Three neural events during combat**:
 
 1. **Mating** (5% chance):
    - Soldiers exchange genetic material during combat
-   - Creates offspring layer via uniform crossover
+   - Creates offspring layer via uniform crossover + mutation across ALL parameters (GRU memory + output head); offspring memory starts blank
    - Spawns new soldier with hybrid brain in stronger colony
 
 2. **Kill Tracking**:
@@ -113,14 +123,14 @@ if NEURAL_AVAILABLE and hasattr(self, 'genome') and self.genome.use_neural:
 
 3. **Folding on Death**:
    - When soldier dies, check performance score
-   - If score > 0.7, blend layer into Maw encoder (10% weighted)
+   - If score ≥ 0.7, blend the overlapping submatrix of the layer into Maw encoder (alpha = 0.1 × score)
    - Implements Lamarckian inheritance (acquired traits → germline)
 
 ### AI Execution
-**Location**: `sandkings.py` lines 767-846
+**Location**: soldier branch of `_execute_unit_ai` in `sandkings.py`
 
 **Two AI paths**:
-1. **Neural**: Forward pass through Maw → Soldier → Action
+1. **Neural**: Forward pass through Maw → Soldier → Action. The Maw forward also records per-neuron activation stats as a side effect, and the soldier layer routes the encoding through its GRU memory before the output head.
 2. **Rule-based**: Fallback enemy-seeking behavior
 
 **Neural execution**:
@@ -132,12 +142,13 @@ action_type, direction = decode_soldier_action(action_probs)
 ```
 
 ### Pruning
-**Location**: `sandkings.py` lines 728-733
+**Location**: `SandKingsSimulation.step()` in `sandkings.py`
 
 Every 50 steps:
 ```python
 pruned = colony.genome.brain.prune_weights(threshold=0.01)
-# Zeros weights used < 1% of time
+# Zeros the weight row and bias of neurons whose firing EMA <= 0.01
+# (no-op until 100 forward passes have been recorded)
 ```
 
 ## Usage
@@ -184,12 +195,17 @@ for colony in sim.colonies:
 ### Lamarckian Folding
 **Key insight**: Successful tactics feed back into strategic memory
 
-When soldier performs well (score > 0.7):
+When soldier performs well (score ≥ 0.7):
 ```python
-# Blend soldier's output layer into Maw's encoder
+# Blend soldier's output head into the overlapping region of the
+# Maw encoder's final Linear (soldier is 7×32, encoder is 32×64)
 alpha = 0.1 * performance_score
-maw_weights = (1 - alpha) * maw_weights + alpha * soldier_weights
+rows, cols = min(7, 32), min(32, 64)  # overlapping submatrix
+maw.weight[:rows, :cols] = (1 - alpha) * maw.weight[:rows, :cols] + alpha * soldier.weight[:rows, :cols]
+maw.bias[:rows]          = (1 - alpha) * maw.bias[:rows]          + alpha * soldier.bias[:rows]
 ```
+
+Only the overlapping submatrix is blended — the earlier full-tensor blend was dimensionally impossible (7×32 vs 32×64) and crashed whenever a dying soldier scored ≥ 0.7 (spec N9).
 
 This creates **vertical inheritance** where acquired traits can influence the germline (Maw brain).
 
@@ -201,8 +217,9 @@ This creates **vertical inheritance** where acquired traits can influence the ge
 
 ### Network Pruning
 **Efficiency optimization**:
-- Track which neurons fire during forward passes
-- Remove weights used < 1% of time
+- Track per-neuron post-ReLU firing frequency as an EMA (decay 0.99) per Linear layer during forward passes
+- Zero the weight row AND bias of neurons whose firing EMA ≤ 0.01
+- Warm-up guard: pruning is skipped until 100 forward passes are recorded
 - Prevents bloat, maintains computational efficiency
 - Analogous to synaptic pruning in biological brains
 
@@ -211,22 +228,18 @@ This creates **vertical inheritance** where acquired traits can influence the ge
 ### Individual Soldier Fitness
 ```python
 def get_performance_score(self) -> float:
-    survival = min(1.0, self.steps_alive / 100.0)
-    efficiency = self.damage_dealt / max(1.0, self.damage_taken)
-    efficiency_norm = min(1.0, efficiency / 10.0)
-    gathering = min(1.0, self.food_gathered / 50.0)
-    
-    return (
-        self.kills * 0.4 +
-        survival * 0.3 +
-        efficiency_norm * 0.2 +
-        gathering * 0.1
-    )
+    if self.steps_alive == 0:
+        return 0.0
+
+    kill_score = self.kills * 0.4
+    survival_score = (self.steps_alive / 100.0) * 0.3
+    efficiency_score = (self.damage_dealt / max(1, self.damage_taken)) * 0.2
+    gather_score = (self.food_gathered / 10.0) * 0.1
+
+    return np.clip(kill_score + survival_score + efficiency_score + gather_score, 0.0, 1.0)
 ```
 
 ### Colony-Level Intelligence
-- **battles_survived**: Maw longevity
-- **total_kills**: Aggregate combat success
 - **folded_layer_count**: Number of successful soldiers incorporated
 
 ## Comparison: Neural vs Rule-Based
@@ -236,7 +249,7 @@ def get_performance_score(self) -> float:
 | Decision Making | Hardcoded if/else | Learned weights |
 | Evolution | Scalar parameters (aggression, etc.) | Neural network weights |
 | Adaptation | Random mutation | Mating + folding + pruning |
-| Memory | None | Maw brain encodes experience |
+| Memory | None | Maw brain encodes experience + per-soldier GRU hidden state |
 | Inheritance | Vertical only | Vertical (folding) + horizontal (mating) |
 | Complexity | Simple | Complex but biologically inspired |
 
@@ -273,13 +286,15 @@ Simulation complete!
 
 ## Future Enhancements
 
+### Implemented
+1. **Memory**: ✅ Shipped as a per-soldier GRU (`GRUCell` in `SoldierLayer`) — one gate fewer than LSTM, same temporal reach at this scale (governed by spec N10)
+
 ### Potential Improvements
 1. **Co-evolution**: Neural food-finding for workers
-2. **Memory**: Add LSTM layers for temporal patterns
-3. **Communication**: Soldier-to-soldier neural messaging
-4. **Speciation**: Divergent neural architectures per colony
-5. **Meta-learning**: Maw learns learning rate for soldiers
-6. **GPU Acceleration**: Port neural forward passes to sandkings_gpu.py
+2. **Communication**: Soldier-to-soldier neural messaging
+3. **Speciation**: Divergent neural architectures per colony
+4. **Meta-learning**: Maw learns learning rate for soldiers
+5. **GPU Acceleration**: Port neural forward passes to sandkings_gpu.py
 
 ### Research Questions
 - Does folding create emergent strategies?
@@ -322,22 +337,22 @@ This creates a **hierarchical, adaptive intelligence** that can respond to threa
 
 ## Files Modified
 
-1. **neural_hive.py** (NEW, 376 lines):
-   - `ActivationStats`: Tracks neuron usage
+1. **neural_hive.py** (NEW):
+   - `ActivationStats`: Per-neuron firing-frequency EMA
    - `HiveMindBrain`: Maw's shared encoder
-   - `SoldierLayer`: Individual soldier extensions
+   - `SoldierLayer`: Individual soldier extensions (GRU memory + output head)
    - `encode_soldier_state()`: State → tensor
    - `decode_soldier_action()`: Tensor → action
 
-2. **sandkings.py** (1066 lines):
-   - Lines 1-31: Added torch import, neural imports
-   - Lines 193-232: `ColonyGenome.brain` field
-   - Lines 244-263: `SandKing.brain_layer` field
-   - Lines 302-316: Spawn neural layers for new soldiers
-   - Lines 728-733: Periodic pruning
-   - Lines 767-846: Neural AI execution path
-   - Lines 882-942: Combat mating + folding
-   - Lines 985-1047: `--use-neural` CLI flag
+2. **sandkings.py**:
+   - Module header: torch import, neural imports
+   - `ColonyGenome`: `brain` field, slow brain mutation in `mutate()`
+   - `SandKing`: `brain_layer` field
+   - `Maw.spawn_unit`: Spawn neural layers for new soldiers
+   - `SandKingsSimulation.step()`: Periodic pruning
+   - `_execute_unit_ai`: Neural AI execution path (soldier branch)
+   - `_resolve_conflicts`: Combat mating + folding
+   - `main()`: `--use-neural` CLI flag
 
 ## Conclusion
 
