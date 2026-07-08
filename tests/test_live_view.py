@@ -207,6 +207,44 @@ def test_hud_respawn_countdown():
     assert f"Colony {dead.colony_id}: DEAD (respawn in 42)" in joined
 
 
+def test_hud_event_feed():
+    from collections import deque
+    sim = make_sim()
+    sim.events = deque([(i, f"event number {i}") for i in range(10)], maxlen=50)
+    lines = build_hud_lines(sim, sps=5.0, paused=False, z_level=2, capturing=False)
+    joined = "\n".join(lines)
+    for i in range(6, 10):
+        assert f"[{i}] event number {i}" in joined, "last EVENT_LINES entries shown"
+    assert "[5]" not in joined, "older events dropped"
+
+
+def test_pheromone_overlay_array():
+    from live_view import pheromone_overlay_array
+    from sandkings import PheromoneType
+    sim = make_sim()
+    colony = sim.colonies[0]
+    pos = (4, 4, 2)
+    sim.pheromones.deposit(pos, colony.colony_id, PheromoneType.DANGER, 1.0)
+    glow = pheromone_overlay_array(sim.pheromones, sim.colonies, 2, PheromoneType.DANGER)
+    assert glow.shape == (sim.world.width, sim.world.height, 3)
+    assert glow[4, 4].sum() > 0, "deposited cell glows"
+    assert glow[10, 8].sum() == 0, "untouched cell dark"
+
+
+def test_p_key_cycles_overlay():
+    import pygame
+    from live_view import PHEROMONE_OVERLAYS
+    sim = make_sim()
+    viewer = LiveViewer(sim, max_steps=1)
+    assert PHEROMONE_OVERLAYS[viewer.overlay_index] is None
+    seen = []
+    for _ in range(len(PHEROMONE_OVERLAYS)):
+        viewer._handle_event(make_keydown(pygame.K_p))
+        seen.append(PHEROMONE_OVERLAYS[viewer.overlay_index])
+    assert seen[-1] is None, "cycle wraps back to off"
+    assert len([s for s in seen if s is not None]) == len(PHEROMONE_OVERLAYS) - 1
+
+
 def test_full_loop_headless_auto_exit():
     sim = make_sim()
     viewer = LiveViewer(sim, steps_per_second=60.0, max_steps=5)

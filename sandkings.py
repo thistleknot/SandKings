@@ -768,6 +768,7 @@ class SandKingsSimulation:
         self.colonies: List[Colony] = []
         self.step_count = 0
         self.pending_respawns: Dict[int, int] = {}  # colony_id -> due step
+        self.events: deque = deque(maxlen=50)  # (step, message) drama feed (SPEC T9)
         
         # Initialize colonies with random count (3-5) and positions
         self._spawn_colonies(num_colonies)
@@ -891,6 +892,10 @@ class SandKingsSimulation:
         self._check_maw_deaths()
         self._process_respawns()
 
+    def _log_event(self, message: str):
+        """Append to the drama feed shown in the live HUD (SPEC T9)."""
+        self.events.append((self.step_count, message))
+
     def _feed_terrarium(self) -> int:
         """Scatter FOOD on the surface and floor colony reserves (SPEC T1).
 
@@ -912,6 +917,7 @@ class SandKingsSimulation:
         for colony in self.colonies:
             if colony.is_alive():
                 colony.maw.food_stored = max(colony.maw.food_stored, BOOTSTRAP_FLOOR)
+        self._log_event(f"Keeper scatters {placed} food")
         return placed
 
     def _find_food_target(self, position: Tuple[int, int, int],
@@ -990,6 +996,7 @@ class SandKingsSimulation:
             self.world.ownership[self.world.ownership == colony.colony_id] = -1
             self.pheromones.trails[:, :, :, colony.colony_id, :] = 0.0
             self.pending_respawns[colony.colony_id] = self.step_count + RESPAWN_DELAY
+            self._log_event(f"Colony {colony.colony_id} has fallen!")
             print(f"💀 Colony {colony.colony_id} has fallen! A new colony arrives in {RESPAWN_DELAY} steps")
 
     def _process_respawns(self):
@@ -1040,6 +1047,7 @@ class SandKingsSimulation:
         self.world.set_voxel(*pos, VoxelType.AIR, colony_id=colony_id)
         for _ in range(3):
             colony.spawn_unit(UnitType.WORKER)
+        self._log_event(f"A new colony {colony_id} arrives")
         print(f"🏜️ A new colony {colony_id} has arrived!")
 
     def _execute_unit_ai(self, unit: SandKing, colony: Colony):
@@ -1241,6 +1249,9 @@ class SandKingsSimulation:
                 for enemy in enemy_colony.units:
                     ex, ey, ez = enemy.position
                     if max(abs(ex - mx), abs(ey - my), abs(ez - mz)) <= 1:
+                        if colony.maw.health >= MAW_MAX_HEALTH:  # first blood of a siege
+                            self._log_event(f"Colony {enemy_colony.colony_id} besieges"
+                                            f" Colony {colony.colony_id}!")
                         colony.maw.take_damage(enemy.attack)
 
         # NEURAL MATING: Create offspring layers

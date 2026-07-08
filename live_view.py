@@ -16,7 +16,8 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pygame
 
-from sandkings import Colony, SandKingsSimulation, UnitType, VoxelType, VoxelWorld
+from sandkings import (MAW_MAX_HEALTH, Colony, PheromoneType, SandKingsSimulation,
+                       UnitType, VoxelType, VoxelWorld)
 
 
 class ViewMode(Enum):
@@ -38,6 +39,10 @@ VOID_COLOR = (10, 10, 12)  # column with no terrain down to z=0
 MAW_COLOR = (255, 255, 0)
 HUD_BG = (12, 12, 16)
 HUD_FG = (220, 220, 220)
+EVENT_LINES = 4            # drama-feed entries shown in the HUD (spec R15)
+PHEROMONE_OVERLAYS = (None, PheromoneType.FOOD_TRAIL, PheromoneType.TERRITORY,
+                      PheromoneType.DANGER)  # P-key cycle (spec R17)
+PHEROMONE_BRIGHTNESS = 140  # additive glow ceiling per channel
 
 
 def build_voxel_palette() -> np.ndarray:
@@ -117,6 +122,25 @@ def unit_visible_depth(world: VoxelWorld, position: Tuple[int, int, int],
     return z_level - z
 
 
+def pheromone_overlay_array(pheromones, colonies: List[Colony], z_level: int,
+                            ptype: PheromoneType) -> np.ndarray:
+    """(w, h, 3) uint8 additive glow of one pheromone type at a z-slice.
+
+    Per cell, each colony contributes its color scaled by trail intensity
+    (clipped to [0, 1]); contributions are max-combined so overlapping
+    territories stay readable.
+    """
+    w, h = pheromones.trails.shape[0], pheromones.trails.shape[1]
+    overlay = np.zeros((w, h, 3), dtype=np.float32)
+    for colony in colonies:
+        intensity = np.clip(
+            pheromones.trails[:, :, z_level, colony.colony_id, ptype.value], 0.0, 1.0)
+        glow = intensity[..., None] * (np.array(colony.color, dtype=np.float32)
+                                       / 255.0) * PHEROMONE_BRIGHTNESS
+        overlay = np.maximum(overlay, glow)
+    return overlay.astype(np.uint8)
+
+
 def unit_draw_color(colony_color: Tuple[int, int, int],
                     retreating: bool) -> Tuple[Tuple[int, int, int], Tuple[int, int, int]]:
     """(fill, border) for a unit marker; retreating units dim + magenta border."""
@@ -131,13 +155,15 @@ def unit_draw_color(colony_color: Tuple[int, int, int],
 
 def build_hud_lines(sim: SandKingsSimulation, sps: float, paused: bool,
                     z_level: int, capturing: bool,
-                    view_mode: ViewMode = ViewMode.TOPDOWN) -> List[str]:
-    """HUD text: global state plus per-living-colony caste/food/health/retreat."""
+                    view_mode: ViewMode = ViewMode.TOPDOWN,
+                    overlay: Optional[PheromoneType] = None) -> List[str]:
+    """HUD text: global state, per-colony stats, and the recent drama feed."""
     lines = [
         f"Step {sim.step_count}",
         f"{'PAUSED' if paused else 'RUNNING'} @ {sps:.1f} steps/s",
         f"{view_mode.name}  z={z_level}/{sim.world.depth - 1}",
-        f"Capture: {'ON' if capturing else 'off'}",
+        f"Capture: {'ON' if capturing else 'off'}"
+        + (f"  Pher: {overlay.name}" if overlay else ""),
         "",
     ]
     for colony in sim.colonies:
@@ -159,8 +185,13 @@ def build_hud_lines(sim: SandKingsSimulation, sps: float, paused: bool,
         lines.append(f"  W:{castes[UnitType.WORKER]} S:{castes[UnitType.SOLDIER]}"
                      f" Sc:{castes[UnitType.SCOUT]} retreat:{retreating}")
         lines.append(f"  food:{colony.maw.food_stored:.0f} maw:{colony.maw.health:.0f}")
+    events = list(getattr(sim, 'events', []))[-EVENT_LINES:]
+    if events:
+        lines.append("")
+        for step, message in events:
+            lines.append(f"[{step}] {message}"[:38])
     lines += ["", "SPACE pause  S step", "+/- speed  </> or UP/DN z",
-              "TAB view  G capture  ESC quit"]
+              "TAB view  P pheromones", "G capture  ESC quit"]
     return lines
 
 
@@ -226,6 +257,7 @@ class LiveViewer:
         self.view_mode = ViewMode.TOPDOWN
         self.z_level = sim.world.depth - 1  # surface view (spec R14)
         self.capturing = False
+        self.overlay_index = 0  # index into PHEROMONE_OVERLAYS (spec R17)
         self.captured_frames: List[np.ndarray] = []
         self.running = False
         self._screen = None
@@ -298,6 +330,8 @@ class LiveViewer:
                                   else ViewMode.TOPDOWN)
             elif key == pygame.K_g:
                 self.capturing = not self.capturing
+            elif key == pygame.K_p:
+                self.overlay_index = (self.overlay_index + 1) % len(PHEROMONE_OVERLAYS)
 
     def _render(self) -> None:
         cell = self.cell_size
@@ -312,6 +346,14 @@ class LiveViewer:
         surf = pygame.transform.scale(surf, (w * cell, h * cell))
         self._screen.fill(HUD_BG)
         self._screen.blit(surf, (0, 0))
+
+        overlay_type = PHEROMONE_OVERLAYS[self.overlay_index]
+        if overlay_type is not None:
+            glow = pheromone_overlay_array(self.sim.pheromones, self.sim.colonies,
+                                           self.z_level, overlay_type)
+            glow_surf = pygame.transform.scale(
+                pygame.surfarray.make_surface(glow), (w * cell, h * cell))
+            self._screen.blit(glow_surf, (0, 0), special_flags=pygame.BLEND_ADD)
 
         for colony in self.sim.colonies:
             for unit in colony.units:
@@ -333,11 +375,21 @@ class LiveViewer:
                                        cell * 2, cell * 2)
                     pygame.draw.rect(self._screen, fill, rect)
                     pygame.draw.rect(self._screen, (0, 0, 0), rect, 2)
+                    # Siege health bar (spec R16): only shown when damaged
+                    hp_frac = colony.maw.health / MAW_MAX_HEALTH
+                    if hp_frac < 1.0:
+                        bar = pygame.Rect(rect.x, rect.y - 5, rect.width, 3)
+                        pygame.draw.rect(self._screen, (80, 0, 0), bar)
+                        fg = pygame.Rect(rect.x, rect.y - 5,
+                                         max(1, int(rect.width * hp_frac)), 3)
+                        pygame.draw.rect(self._screen,
+                                         (int(255 * (1 - hp_frac)), int(220 * hp_frac), 0), fg)
 
         hud_x = w * cell + 12
         for i, line in enumerate(build_hud_lines(self.sim, self.pacer.steps_per_second,
                                                  self.paused, self.z_level, self.capturing,
-                                                 self.view_mode)):
+                                                 self.view_mode,
+                                                 PHEROMONE_OVERLAYS[self.overlay_index])):
             text = self._font.render(line, True, HUD_FG)
             self._screen.blit(text, (hud_x, 10 + i * 18))
 
