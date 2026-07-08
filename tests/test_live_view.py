@@ -275,7 +275,7 @@ def test_hud_entries_colors_and_hp_bar():
     by_text = {text: color for text, color in entries}
     assert by_text[f"Colony {wounded.colony_id}"] == hud_text_color(wounded.color)
     maw_line = next(t for t in by_text if t.startswith("  food:") and "[" in t)
-    assert "█" in maw_line and "░" in maw_line, "damaged maw shows text hp bar"
+    assert "=" in maw_line and "." in maw_line, "damaged maw shows text hp bar"
     assert by_text["[1] Keeper scatters 40 food"] == event_tint("Keeper")
     assert by_text["[2] Colony 1 besieges Colony 0!"] == event_tint("besieges")
 

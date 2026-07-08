@@ -212,9 +212,10 @@ def event_tint(message: str) -> Tuple[int, int, int]:
 
 
 def hp_bar(fraction: float, width: int = 8) -> str:
-    """Text health bar like [███░░░░░]."""
+    """Text health bar like [====....] (full-height block glyphs overflow
+    the HUD's 18px line box and bleed into neighboring lines)."""
     filled = int(round(max(0.0, min(1.0, fraction)) * width))
-    return "[" + "█" * filled + "░" * (width - filled) + "]"
+    return "[" + "=" * filled + "." * (width - filled) + "]"
 
 
 def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
