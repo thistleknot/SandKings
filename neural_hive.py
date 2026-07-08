@@ -79,8 +79,6 @@ class HiveMindBrain(nn.Module):
         }
         
         # Performance tracking
-        self.battles_survived = 0
-        self.total_kills = 0
         self.folded_layer_count = 0
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -258,11 +256,16 @@ class SoldierLayer(nn.Module):
         )
         
         # Crossover: uniform mask + Gaussian mutation over ALL parameters
-        # (memory and output alike, spec N10)
+        # (memory and output alike, spec N10). zip() relies on identical
+        # parameter registration order across instances; guard the count so
+        # a future architecture divergence fails loudly, not silently.
+        self_params = list(self.named_parameters())
+        other_params = list(other.named_parameters())
+        assert len(self_params) == len(other_params), \
+            "mate() requires structurally identical SoldierLayers"
         with torch.no_grad():
             for (_, child_p), (_, self_p), (_, other_p) in zip(
-                    child.named_parameters(), self.named_parameters(),
-                    other.named_parameters()):
+                    child.named_parameters(), self_params, other_params):
                 mask = torch.rand_like(self_p) > 0.5
                 child_p.data = torch.where(mask, self_p.data, other_p.data)
                 child_p.data += torch.randn_like(child_p) * mutation_rate

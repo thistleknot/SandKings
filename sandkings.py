@@ -44,6 +44,7 @@ TARGET_POP = 18              # sustainable units per colony (feed sizing)
 HARVEST_YIELD = 15           # food per FOOD/CORPSE voxel harvested
 BOOTSTRAP_FLOOR = 10         # minimum colony food after each feeding
 STARVATION_MAX_KILLS = 2     # starvation deaths per colony per step
+UNIT_CAP = 30                # max units per colony (spawn gate)
 MAW_MAX_HEALTH = 500
 MAW_REGEN = 0.5              # HP per step while unbesieged
 RESPAWN_DELAY = 300          # steps a fallen colony slot stays empty
@@ -911,8 +912,8 @@ class SandKingsSimulation:
             # BOOTSTRAP: a colony with no units always fields a worker (SPEC T2)
             if not colony.units and colony.maw.food_stored >= 3:
                 colony.spawn_unit(UnitType.WORKER)
-            # Maw spawning decisions (reduced max units); war flips the mix
-            elif colony.maw.food_stored > spawn_threshold and len(colony.units) < 30:
+            # Maw spawning decisions; war flips the mix
+            elif colony.maw.food_stored > spawn_threshold and len(colony.units) < UNIT_CAP:
                 if random.random() < colony.genome.fertility:
                     roll = random.random()
                     if colony.at_war:  # SPEC T11 mix: 0.30 W / 0.60 S / 0.10 C
