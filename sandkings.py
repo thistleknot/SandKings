@@ -51,6 +51,8 @@ RESPAWN_FOOD = 50            # starting food for an arriving colony
 WAR_CHEST = 400              # food hoard that sends a colony to war (SPEC T10)
 SCOUT_ALARM_RANGE = 5        # Manhattan distance that triggers a scout alarm (SPEC T11)
 KNOWN_FOOD_CAP = 8           # shared food-intel entries per colony (SPEC T11)
+MAW_MIGRATE_HEALTH = 0.4     # HP fraction below which a Maw flees (SPEC T15)
+MAW_MIGRATE_COST = 2.0       # food per step of Maw flight
 STORM_INTERVAL = 600         # steps between storm rolls (SPEC T12)
 STORM_CHANCE = 0.5           # probability a roll spawns a storm
 STORM_DURATION = 25          # steps a storm blows
@@ -404,6 +406,7 @@ class Maw:
         self.food_stored = 120
         self.spawn_queue = deque()
         self.alive = True
+        self.fleeing = False  # set while migrating away from attackers (SPEC T15)
     
     def spawn_unit(self, unit_type: UnitType) -> Optional[SandKing]:
         """Spawn worker/soldier, costs food"""
@@ -927,7 +930,8 @@ class SandKingsSimulation:
         # 6. Combat resolution
         self._resolve_conflicts()
 
-        # 7. Maw regen, colony collapse, and new arrivals (SPEC T4-T6)
+        # 7. Maw migration, regen, colony collapse, and new arrivals (SPEC T4-T6, T15)
+        self._migrate_threatened_maws()
         self._apply_maw_regen()
         self._check_maw_deaths()
         self._process_respawns()
@@ -1067,6 +1071,53 @@ class SandKingsSimulation:
                             self._log_event(f"Colony {enemy_colony.colony_id} besieges"
                                             f" Colony {colony.colony_id}!")
                         colony.maw.take_damage(enemy.attack)
+
+    def _migrate_threatened_maws(self):
+        """Wounded Maws crawl away from their attackers (SPEC T15).
+
+        One voxel per step directly away from the nearest enemy unit in
+        range, tunneling sand if needed, at MAW_MIGRATE_COST food per move.
+        """
+        for colony in self.colonies:
+            maw = colony.maw
+            if not maw.alive:
+                continue
+            if maw.health >= MAW_MAX_HEALTH * MAW_MIGRATE_HEALTH:
+                maw.fleeing = False
+                continue
+            if maw.food_stored < MAW_MIGRATE_COST:
+                continue
+
+            mx, my, mz = maw.position
+            threat, threat_dist = None, float('inf')
+            for enemy_colony in self.colonies:
+                if enemy_colony.colony_id == colony.colony_id:
+                    continue
+                for enemy in enemy_colony.units:
+                    dist = (abs(enemy.position[0] - mx) + abs(enemy.position[1] - my)
+                            + abs(enemy.position[2] - mz))
+                    if dist < threat_dist:
+                        threat_dist, threat = dist, enemy
+            if threat is None or threat_dist > colony.genome.foraging_range:
+                maw.fleeing = False
+                continue
+
+            dx = int(-np.sign(threat.position[0] - mx)) or random.choice([-1, 1])
+            dy = int(-np.sign(threat.position[1] - my)) or random.choice([-1, 1])
+            w, h, d = self.world.dimensions
+            new_pos = (mx + dx, my + dy, mz)
+            if not (1 <= new_pos[0] < w - 1 and 1 <= new_pos[1] < h - 1):
+                continue
+            voxel = self.world.get_voxel(*new_pos)
+            if not voxel.is_tunnelable():
+                continue
+
+            if not getattr(maw, 'fleeing', False):
+                maw.fleeing = True
+                self._log_event(f"Colony {colony.colony_id}'s Maw flees!")
+            self.world.set_voxel(*new_pos, VoxelType.AIR, colony_id=colony.colony_id)
+            maw.position = new_pos
+            maw.food_stored -= MAW_MIGRATE_COST
 
     def _apply_maw_regen(self):
         """Maws heal MAW_REGEN per step while no enemy unit is adjacent (SPEC T4)."""

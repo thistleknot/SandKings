@@ -141,6 +141,17 @@ to stay alive indefinitely.
   enemy_kills (2.0) next; population/territory/survival_time are
   tie-breakers (0.1 / 0.01 / 0.05). Closes BATTLE_SYSTEM_V2 Next Step 4
   ("time-based to outcome-based scoring").
+- **T15** (Round K — maw migration) `Constant: MAW_MIGRATE_HEALTH = 0.4`
+  (fraction of max HP), `Constant: MAW_MIGRATE_COST = 2.0` (food per step
+  of flight). While a living Maw's health < MAW_MIGRATE_HEALTH ×
+  MAW_MAX_HEALTH, food ≥ cost, and an enemy unit is within
+  `foraging_range`: the Maw MUST crawl one voxel per step directly away
+  from the nearest enemy (through AIR, or tunneling SAND; z unchanged;
+  never into walls), paying MAW_MIGRATE_COST food per move; its new cell
+  is carved AIR with colony ownership. The first move of a flight MUST log
+  "Colony X's Maw flees!"; the flight flag clears once health recovers to
+  ≥ MAW_MIGRATE_HEALTH or no threat remains in range. Closes the roadmap
+  item "Maw migration".
 - **T8** Terrain generation MUST produce: a 3-octave value-noise heightmap
   with per-column surface height in `[substrate+2, 0.85·depth]`; two stone
   strata bands (thickness 2) where band noise exceeds its threshold; cavern

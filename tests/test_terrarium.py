@@ -443,6 +443,49 @@ def test_enhanced_sim_maw_sieges_are_terminal():
     assert not sim.colonies[1].is_alive(), "no respawn during evaluation"
 
 
+# --- Maw migration (T15) ---
+
+def test_wounded_maw_flees_attacker():
+    from sandkings import MAW_MAX_HEALTH, MAW_MIGRATE_COST, MAW_MIGRATE_HEALTH
+
+    sim = make_sim(seed=41)
+    colony, enemy_colony = sim.colonies[0], sim.colonies[1]
+    for c in sim.colonies:
+        c.units.clear()
+    maw = colony.maw
+    mx, my, mz = maw.position
+    enemy = SandKing(enemy_colony.colony_id, (mx + 2, my, mz), UnitType.SOLDIER)
+    enemy_colony.units.append(enemy)
+    maw.health = MAW_MAX_HEALTH * MAW_MIGRATE_HEALTH - 1
+    food_before = maw.food_stored
+
+    sim._migrate_threatened_maws()
+    assert maw.position != (mx, my, mz), "wounded maw must crawl"
+    assert maw.position[0] < mx, "away from the attacker"
+    assert maw.food_stored == food_before - MAW_MIGRATE_COST
+    assert maw.fleeing
+    assert any("Maw flees" in m for _, m in sim.events)
+    n_events = sum(1 for _, m in sim.events if "Maw flees" in m)
+    sim._migrate_threatened_maws()  # second crawl: no duplicate event
+    assert sum(1 for _, m in sim.events if "Maw flees" in m) == n_events
+
+    # threat removed: flight ends
+    enemy_colony.units.clear()
+    sim._migrate_threatened_maws()
+    assert not maw.fleeing
+
+
+def test_healthy_maw_stays_put():
+    sim = make_sim(seed=42)
+    colony, enemy_colony = sim.colonies[0], sim.colonies[1]
+    maw = colony.maw
+    mx, my, mz = maw.position
+    enemy_colony.units.append(
+        SandKing(enemy_colony.colony_id, (mx + 1, my, mz), UnitType.SOLDIER))
+    sim._migrate_threatened_maws()
+    assert maw.position == (mx, my, mz), "healthy maws hold their ground"
+
+
 # --- Vectorized CA parity (perf fix must preserve semantics) ---
 
 def _territory_spread_reference(world, colonies):
