@@ -65,6 +65,16 @@ Status: draft → implement → reconcile (see Reconciliation Log at bottom).
   SPS_MAX); `-`/`,` speed ÷1.5 (clamp SPS_MIN); UP/DOWN z-level ±1 (clamp
   [0, depth-1]); TAB toggle view mode (R12); `S` single step (paused only);
   `G` toggle frame capture; ESC or window close quits.
+- **R8a** DF-style z-navigation: comma/period WITH Shift or Ctrl held —
+  i.e. `<` = z+1 (up toward surface, matching DF's `<`) and `>` = z−1 —
+  MUST change z_level (clamped) and MUST NOT change speed. The modifier
+  check runs before the speed branch; `event.unicode` `'<'`/`'>'` MUST also
+  be honored for layouts with dedicated keys. Unmodified comma/period keep
+  their R8 speed roles; UP/DOWN keep working.
+- **R7a** A dead colony whose respawn is scheduled MUST show
+  `DEAD (respawn in N)` in the HUD, where N is the steps remaining, read via
+  a guarded `getattr(sim, 'pending_respawns', {})` so sims without the
+  liveness feature still render.
 - **R9** (MAY — stretch) `P` cycles a pheromone overlay off → FOOD_TRAIL →
   DANGER; alpha-blended heatmap. Not required for acceptance.
 - **R12** The viewer MUST offer two view modes toggled by TAB:
