@@ -997,7 +997,7 @@ class SandKingsSimulation:
             self.pheromones.trails[:, :, :, colony.colony_id, :] = 0.0
             self.pending_respawns[colony.colony_id] = self.step_count + RESPAWN_DELAY
             self._log_event(f"Colony {colony.colony_id} has fallen!")
-            print(f"💀 Colony {colony.colony_id} has fallen! A new colony arrives in {RESPAWN_DELAY} steps")
+            print(f"[x] Colony {colony.colony_id} has fallen! A new colony arrives in {RESPAWN_DELAY} steps")
 
     def _process_respawns(self):
         """Replace fallen colony slots whose respawn is due (SPEC T6)."""
@@ -1048,7 +1048,7 @@ class SandKingsSimulation:
         for _ in range(3):
             colony.spawn_unit(UnitType.WORKER)
         self._log_event(f"A new colony {colony_id} arrives")
-        print(f"🏜️ A new colony {colony_id} has arrived!")
+        print(f"[+] A new colony {colony_id} has arrived!")
 
     def _execute_unit_ai(self, unit: SandKing, colony: Colony):
         """Simple AI for unit behavior - NEURAL or RULE-BASED"""
