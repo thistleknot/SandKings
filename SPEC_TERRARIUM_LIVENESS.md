@@ -131,6 +131,16 @@ to stay alive indefinitely.
   (`--use-neural`) applies only to fresh sims — resumed sims keep their
   evolved brains. Round-trip MUST preserve step_count, voxels, ownership,
   colonies (units, food, maw HP), pending respawns, and the event feed.
+- **T14** (Round J — outcome fitness) The maw-siege damage pass MUST live in
+  `SandKingsSimulation._apply_maw_siege_damage()` so both the base
+  `_resolve_conflicts` and `EnhancedSandKingsSimulation.step` share it.
+  The Enhanced (evolution) step MUST run siege damage, maw regen, and the
+  death cascade — but never `_process_respawns`, so elimination is terminal
+  during evaluation. `SandKingsMapElites.get_fitness` MUST be
+  outcome-based: enemies_eliminated (500) and survived (200) dominate;
+  enemy_kills (2.0) next; population/territory/survival_time are
+  tie-breakers (0.1 / 0.01 / 0.05). Closes BATTLE_SYSTEM_V2 Next Step 4
+  ("time-based to outcome-based scoring").
 - **T8** Terrain generation MUST produce: a 3-octave value-noise heightmap
   with per-column surface height in `[substrate+2, 0.85·depth]`; two stone
   strata bands (thickness 2) where band noise exceeds its threshold; cavern

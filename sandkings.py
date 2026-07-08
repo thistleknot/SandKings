@@ -1047,6 +1047,27 @@ class SandKingsSimulation:
                 return True
         return False
 
+    def _apply_maw_siege_damage(self):
+        """Units adjacent to an enemy Maw damage it (SPEC T4/T14).
+
+        Shared by the base combat resolution and the evolution sim's step
+        so eliminations are real outcomes in both.
+        """
+        for colony in self.colonies:
+            if not colony.maw.alive:
+                continue
+            mx, my, mz = colony.maw.position
+            for enemy_colony in self.colonies:
+                if enemy_colony.colony_id == colony.colony_id:
+                    continue
+                for enemy in enemy_colony.units:
+                    ex, ey, ez = enemy.position
+                    if max(abs(ex - mx), abs(ey - my), abs(ez - mz)) <= 1:
+                        if colony.maw.health >= MAW_MAX_HEALTH:  # first blood of a siege
+                            self._log_event(f"Colony {enemy_colony.colony_id} besieges"
+                                            f" Colony {colony.colony_id}!")
+                        colony.maw.take_damage(enemy.attack)
+
     def _apply_maw_regen(self):
         """Maws heal MAW_REGEN per step while no enemy unit is adjacent (SPEC T4)."""
         for colony in self.colonies:
@@ -1365,20 +1386,7 @@ class SandKingsSimulation:
                                         unit.brain_layer.kills += 1
         
         # MAW SIEGE: units adjacent to an enemy Maw damage it (SPEC T4)
-        for colony in self.colonies:
-            if not colony.maw.alive:
-                continue
-            mx, my, mz = colony.maw.position
-            for enemy_colony in self.colonies:
-                if enemy_colony.colony_id == colony.colony_id:
-                    continue
-                for enemy in enemy_colony.units:
-                    ex, ey, ez = enemy.position
-                    if max(abs(ex - mx), abs(ey - my), abs(ez - mz)) <= 1:
-                        if colony.maw.health >= MAW_MAX_HEALTH:  # first blood of a siege
-                            self._log_event(f"Colony {enemy_colony.colony_id} besieges"
-                                            f" Colony {colony.colony_id}!")
-                        colony.maw.take_damage(enemy.attack)
+        self._apply_maw_siege_damage()
 
         # NEURAL MATING: Create offspring layers
         for unit1, unit2, colony1, colony2 in mating_pairs:

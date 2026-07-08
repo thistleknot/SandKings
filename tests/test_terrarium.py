@@ -403,6 +403,46 @@ def test_checkpoint_roundtrip_neural():
         loaded.step()
 
 
+# --- Outcome fitness in evolution sims (T14) ---
+
+def test_outcome_fitness_dominates_time():
+    from sandkings_evolution import SandKingsMapElites, SandKingsPhenotype
+
+    me = SandKingsMapElites()
+    slow_survivor = SandKingsPhenotype(genome=ColonyGenome())
+    slow_survivor.outputs = {'survival_time': 2000, 'survived': 1.0,
+                             'enemies_eliminated': 0, 'enemy_kills': 0,
+                             'population_peak': 50, 'territory_size': 500}
+    conqueror = SandKingsPhenotype(genome=ColonyGenome())
+    conqueror.outputs = {'survival_time': 300, 'survived': 1.0,
+                         'enemies_eliminated': 2, 'enemy_kills': 10,
+                         'population_peak': 20, 'territory_size': 100}
+    assert me.get_fitness(conqueror) > me.get_fitness(slow_survivor), \
+        "eliminating enemies must beat merely lasting longer"
+
+
+def test_enhanced_sim_maw_sieges_are_terminal():
+    from sandkings_evolution import EnhancedSandKingsSimulation
+
+    random.seed(31)
+    np.random.seed(31)
+    sim = EnhancedSandKingsSimulation(width=40, height=30, depth=12, num_colonies=3)
+    attacker, victim = sim.colonies[0], sim.colonies[1]
+    mx, my, mz = victim.maw.position
+    soldier = SandKing(attacker.colony_id, (mx + 1, my, mz), UnitType.SOLDIER)
+    attacker.units.append(soldier)
+    victim.maw.health = soldier.attack  # one hit from falling
+    sim._apply_maw_siege_damage()
+    sim._check_maw_deaths()
+    assert not victim.is_alive(), "enhanced sims can eliminate colonies now"
+    assert victim.colony_id in sim.pending_respawns
+    # evaluation never processes respawns: elimination is terminal
+    sim.step_count += 10_000
+    for _ in range(3):
+        sim.step()
+    assert not sim.colonies[1].is_alive(), "no respawn during evaluation"
+
+
 # --- Vectorized CA parity (perf fix must preserve semantics) ---
 
 def _territory_spread_reference(world, colonies):

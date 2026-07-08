@@ -184,19 +184,28 @@ python sandkings_evolution.py --mode demo --sim-steps 500 --gpu --num-colonies 0
 
 1. ✅ **Variable battles:** 3-5 colonies per run (not always 4)
 2. ✅ **Spatial diversity:** Colonies spawn at random positions
-3. ⏳ **Decisive outcomes:** Units retreat at 10% HP → morale collapse → clear winners
-4. ⏳ **Quick resolution:** Increased damage + weak defense → battles under 200 steps
-5. ⏳ **Emergent routing:** Retreating units flee → cascading panic → colony elimination
+3. ✅ **Decisive outcomes:** Maw sieges (SPEC_TERRARIUM_LIVENESS.md T4) make
+   colony elimination real — war soak: 4 falls in 3000 steps
+4. ✅ **Quick resolution:** war parties + sieges resolve conflicts in bursts;
+   sieges last ~10-40 steps of adjacency (Maw 500 HP vs squad attack)
+5. ✅ **Emergent routing:** observed in soaks — besieged colonies lose units,
+   retreat, and collapse into corpse feasts
 
 ---
 
 ## Next Steps
 
-1. **Test long runs (500-1000 steps)** - Verify morale system creates decisive outcomes
-2. **Check battle duration** - Should see colonies eliminated through morale collapse
+1. ✅ **Test long runs (500-1000 steps)** - Done via 2500-3000-step soaks
+   (SPEC_TERRARIUM_LIVENESS.md reconciliation log): populations oscillate,
+   colonies fall and are replaced
+2. ✅ **Check battle duration** - War soak: 12 sieges / 4 falls in 3000 steps;
+   elimination happens through sieges rather than pure morale collapse
 3. ✅ **Visualize retreats** - Done: the live viewer (`python sandkings.py --live`) renders retreating units at 40% brightness with a magenta border (`live_view.py`, SPEC_LIVE_VIEW.md R5)
-4. **Fix fitness function** - Change from time-based to outcome-based scoring
-5. **Reduce max steps** - If battles are decisive, reduce from 500 → 200 for evolution
+4. ✅ **Fix fitness function** - Done: outcome-based scoring
+   (enemies_eliminated 500 / survived 200 dominate; time is a 0.05
+   tie-breaker) — `SandKingsMapElites.get_fitness`, SPEC T14
+5. **Reduce max steps** - Optional now that outcomes are decisive: pass
+   `--sim-steps 200` to evolution runs; default left unchanged
 
 ---
 

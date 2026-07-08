@@ -191,11 +191,15 @@ class SandKingsMapElites:
         return (bc_territory, bc_aggression)
     
     def get_fitness(self, phenotype: SandKingsPhenotype) -> float:
+        """Outcome-based scoring (SPEC T14): eliminations and survival
+        dominate; time/size metrics are tie-breakers only."""
         w = phenotype.outputs
-        return (w.get('survival_time', 0) * 1.0 + 
+        return (w.get('enemies_eliminated', 0) * 500.0 +
+                w.get('survived', 0) * 200.0 +
+                w.get('enemy_kills', 0) * 2.0 +
                 w.get('population_peak', 0) * 0.1 +
                 w.get('territory_size', 0) * 0.01 +
-                w.get('enemy_kills', 0) * 0.5)
+                w.get('survival_time', 0) * 0.05)
     
     def get_best(self) -> Optional[SandKingsPhenotype]:
         if not self.archive:
@@ -326,7 +330,13 @@ class EnhancedSandKingsSimulation(SandKingsSimulation):
         
         # Combat
         self._enhanced_combat()
-        
+
+        # Maw sieges make eliminations real outcomes in evaluation too
+        # (SPEC T14); respawns are never processed here, so death is terminal
+        self._apply_maw_siege_damage()
+        self._apply_maw_regen()
+        self._check_maw_deaths()
+
         # Collect metrics
         for colony in self.colonies:
             colony.metrics['territory'] = np.sum(self.world.ownership == colony.colony_id)
@@ -552,6 +562,8 @@ class SandKingsEvolution:
         
         phenotype.outputs = {
             'survival_time': step,
+            'survived': float(sim.colonies[0].is_alive()),
+            'enemies_eliminated': sum(1 for c in sim.colonies[1:] if not c.is_alive()),
             'territory_size': max(territory_history) if territory_history else 0,
             'population_peak': max(population_history) if population_history else 0,
             'aggression_events': sim.colonies[0].metrics.get('aggression_events', 0),
