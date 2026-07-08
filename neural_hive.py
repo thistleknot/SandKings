@@ -23,26 +23,33 @@ from dataclasses import dataclass, field
 import copy
 
 
+ACTIVATION_EMA_DECAY = 0.99   # ~100-pass smoothing horizon
+PRUNE_WARMUP_PASSES = 100     # no pruning until this many forwards recorded
+
+
 @dataclass
 class ActivationStats:
-    """Track which weights are actually used"""
-    activation_counts: torch.Tensor = None
+    """Per-neuron firing-frequency EMA backing weight pruning.
+
+    update() expects a 1D per-neuron fired-fraction (batch mean of
+    post-ReLU activation > 0). get_usage_ratio() returns the EMA, or a
+    0-dim zero tensor before any data (callers treat dim()==0 as no-data).
+    """
+    ema: torch.Tensor = None
     total_forward_passes: int = 0
-    
-    def update(self, activations: torch.Tensor):
-        """Record which neurons fired"""
-        if self.activation_counts is None:
-            self.activation_counts = torch.zeros_like(activations)
-        
-        # Track non-zero activations
-        self.activation_counts += (activations.abs() > 1e-6).float()
+
+    def update(self, fired_fraction: torch.Tensor):
+        """Fold one forward pass's per-neuron firing fraction into the EMA"""
+        if self.ema is None:
+            self.ema = torch.zeros_like(fired_fraction)
+        self.ema = ACTIVATION_EMA_DECAY * self.ema + (1 - ACTIVATION_EMA_DECAY) * fired_fraction
         self.total_forward_passes += 1
-    
+
     def get_usage_ratio(self) -> torch.Tensor:
-        """Get % of time each weight was active"""
-        if self.activation_counts is None or self.total_forward_passes == 0:
+        """Per-neuron firing EMA in [0, 1]"""
+        if self.ema is None or self.total_forward_passes == 0:
             return torch.tensor(0.0)  # Return scalar zero if no data
-        return self.activation_counts / self.total_forward_passes
+        return self.ema
 
 
 class HiveMindBrain(nn.Module):
@@ -64,10 +71,12 @@ class HiveMindBrain(nn.Module):
             nn.ReLU()
         )
         
-        # Track activation patterns for pruning
-        self.activation_stats = {}
-        for name, param in self.named_parameters():
-            self.activation_stats[name] = ActivationStats()
+        # Track activation patterns for pruning, keyed per Linear layer
+        self.activation_stats = {
+            f'encoder.{i}': ActivationStats()
+            for i, layer in enumerate(self.encoder)
+            if isinstance(layer, nn.Linear)
+        }
         
         # Performance tracking
         self.battles_survived = 0
@@ -75,52 +84,56 @@ class HiveMindBrain(nn.Module):
         self.folded_layer_count = 0
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Encode sensory input to shared representation + track activations"""
-        # Pass through encoder
-        encoding = self.encoder(x)
-        
-        # Track activations for pruning
-        with torch.no_grad():
-            for name, param in self.named_parameters():
-                if 'weight' in name:
-                    # Track which weights contributed to this forward pass
-                    activation_mask = (param.abs() > 1e-6).float()
-                    self.activation_stats[name].update(activation_mask)
-        
-        return encoding
-        # Track activations for pruning
+        """Encode sensory input to shared representation + track activations.
+
+        Accepts (input_dim,) or (batch, input_dim); records per-neuron
+        post-ReLU firing fractions into activation_stats without altering
+        the returned encoding.
+        """
+        squeeze = x.dim() == 1
+        h = x.unsqueeze(0) if squeeze else x
+
         for i, layer in enumerate(self.encoder):
-            if isinstance(layer, nn.Linear):
-                layer_name = f'encoder.{i}'
-                if layer_name in self.activation_stats:
-                    # Track post-activation values
-                    with torch.no_grad():
-                        activation = encoding if i == len(self.encoder) - 1 else self.encoder[:i+1](x)
-                        self.activation_stats[layer_name].update(activation)
-        
-        return encoding
-    
-    def prune_weights(self, threshold: float = 0.01):
-        """Remove weights that are rarely activated"""
-        pruned_count = 0
-        
-        for name, param in self.named_parameters():
-            if 'weight' in name and name in self.activation_stats:
-                usage = self.activation_stats[name].get_usage_ratio()
-                
-                # Skip if no tracking data yet (scalar zero)
-                if usage.dim() == 0:
-                    continue
-                
-                # Create mask: keep weights used > threshold% of time
-                mask = usage > threshold
-                
-                # Zero out rarely used weights
+            h = layer(h)
+            if isinstance(layer, nn.ReLU):
+                # h is the post-ReLU output of the Linear at encoder[i-1]
                 with torch.no_grad():
-                    param.data *= mask.float()
-                
-                pruned_count += (~mask).sum().item()
-        
+                    fired = (h > 0).float().mean(dim=0)
+                    self.activation_stats[f'encoder.{i-1}'].update(fired)
+
+        return h.squeeze(0) if squeeze else h
+
+    def prune_weights(self, threshold: float = 0.01):
+        """Zero the weight rows and biases of neurons that rarely fire.
+
+        A neuron is dead when its firing EMA <= threshold. Layers with fewer
+        than PRUNE_WARMUP_PASSES recorded forwards are skipped so early EMA
+        noise cannot prune live neurons. Returns the count of newly zeroed
+        weight elements.
+        """
+        pruned_count = 0
+
+        for i, layer in enumerate(self.encoder):
+            if not isinstance(layer, nn.Linear):
+                continue
+            stats = self.activation_stats[f'encoder.{i}']
+            if stats.total_forward_passes < PRUNE_WARMUP_PASSES:
+                continue
+            usage = stats.get_usage_ratio()
+            if usage.dim() == 0:
+                continue
+
+            dead = usage <= threshold  # per-output-neuron mask
+            if not dead.any():
+                continue
+
+            with torch.no_grad():
+                newly_zeroed = (layer.weight.data[dead] != 0).sum().item()
+                layer.weight.data[dead] = 0.0
+                if layer.bias is not None:
+                    layer.bias.data[dead] = 0.0
+            pruned_count += newly_zeroed
+
         return pruned_count
     
     def fold_soldier_layer(self, soldier_layer: 'SoldierLayer', performance_score: float):
@@ -133,24 +146,29 @@ class HiveMindBrain(nn.Module):
             return False
         
         # Blend soldier's output layer back into encoder's final layer
-        # This is like Lamarckian evolution - acquired traits passed up
+        # This is like Lamarckian evolution - acquired traits passed up.
+        # Shapes differ (soldier 7x32 vs encoder 32x64), so only the
+        # overlapping submatrix is blended (spec N9).
         with torch.no_grad():
             encoder_final_layer = self.encoder[-2]  # Last linear layer before ReLU
             soldier_output_layer = soldier_layer.output
-            
+
             # Weighted blend: 90% encoder, 10% soldier (conservative folding)
             alpha = 0.1 * performance_score  # Scale by performance
-            
-            # Fold soldier weights into encoder
-            encoder_final_layer.weight.data = (
-                (1 - alpha) * encoder_final_layer.weight.data +
-                alpha * soldier_output_layer.weight.data[:encoder_final_layer.out_features, :]
+
+            rows = min(soldier_output_layer.out_features, encoder_final_layer.out_features)
+            cols = min(soldier_output_layer.in_features, encoder_final_layer.in_features)
+
+            # Fold soldier weights into the overlapping region of the encoder
+            encoder_final_layer.weight.data[:rows, :cols] = (
+                (1 - alpha) * encoder_final_layer.weight.data[:rows, :cols] +
+                alpha * soldier_output_layer.weight.data[:rows, :cols]
             )
-            
+
             if encoder_final_layer.bias is not None and soldier_output_layer.bias is not None:
-                encoder_final_layer.bias.data = (
-                    (1 - alpha) * encoder_final_layer.bias.data +
-                    alpha * soldier_output_layer.bias.data[:encoder_final_layer.out_features]
+                encoder_final_layer.bias.data[:rows] = (
+                    (1 - alpha) * encoder_final_layer.bias.data[:rows] +
+                    alpha * soldier_output_layer.bias.data[:rows]
                 )
         
         self.folded_layer_count += 1

@@ -49,6 +49,14 @@ firing frequency so pruning does what the docs claim.
 - **N8** `get_usage_ratio()` MUST return the per-neuron EMA tensor, or a
   0-dim zero tensor when no passes have been recorded (callers already treat
   `dim() == 0` as "no data").
+- **N9** (defect found during acceptance testing, pre-existing) When
+  `fold_soldier_layer` blends a soldier layer (7×32) into the encoder's final
+  Linear (32×64), it MUST blend only the overlapping submatrix
+  `weight[:rows, :cols]` where `rows = min(soldier.out, encoder.out)` and
+  `cols = min(soldier.in, encoder.in)` (biases: `[:rows]`). The original code
+  attempted a full-tensor blend, which is dimensionally impossible and raised
+  RuntimeError whenever a dying soldier scored ≥ 0.7. Gate (score ≥ 0.7),
+  alpha (0.1 × score), and `folded_layer_count` semantics are unchanged.
 
 ## 4. Behavioral Spec — `forward`
 
