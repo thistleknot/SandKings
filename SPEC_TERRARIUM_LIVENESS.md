@@ -78,6 +78,11 @@ to stay alive indefinitely.
   workers.
 - **T7** Starvation MUST kill at most STARVATION_MAX_KILLS units per colony
   per step.
+- **T9** (Round B) The sim MUST keep an event feed `self.events` (deque of
+  `(step, message)`, maxlen 50) recording: keeper feedings, colony falls,
+  new arrivals, and the first step a Maw comes under siege (per siege spell —
+  re-announced only after it has regenerated to full or the besieger died
+  off; implementation MAY simplify to "when damaged at full health").
 - **T8** Terrain generation MUST produce: a 3-octave value-noise heightmap
   with per-column surface height in `[substrate+2, 0.85·depth]`; two stone
   strata bands (thickness 2) where band noise exceeds its threshold; cavern
@@ -141,4 +146,19 @@ Assert: len(colonies) is constant; every colony_id occurs exactly once
 
 ## 7. Reconciliation Log
 
-- (fill in after implementation)
+- 2026-07-07 — Implemented as specced, with notes:
+  - Maws sit ON the surface (`surface_z + 1`, clamped to depth−1) rather than
+    buried at mid-depth; visible in TOPDOWN immediately.
+  - Terrain noise uses one generic `value_noise(shape, cells, rng)` for both
+    2D and 3D instead of separate helpers; `box_blur` wraps at edges (fine
+    for noise).
+  - Starvation now samples distinct units (fixes a pre-existing bug where
+    `random.choice` in a loop could pick the same unit twice, double-crediting
+    the +2 salvage).
+  - The worker's directed-forage move counts as its action for the step (no
+    random dig on top of it).
+  - Soldier maw-siege movement reuses `_step_toward` (walks air, tunnels
+    sand), so sieges can dig to a buried maw.
+  - Acceptance: 9/9 terrarium tests, 14/14 viewer tests, 6/6 neural tests,
+    3000-step soak (colonies alive-or-pending throughout, populations
+    oscillating, falls + arrivals observed).

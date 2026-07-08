@@ -142,7 +142,12 @@ def build_hud_lines(sim: SandKingsSimulation, sps: float, paused: bool,
     ]
     for colony in sim.colonies:
         if not colony.is_alive():
-            lines.append(f"Colony {colony.colony_id}: DEAD")
+            due = getattr(sim, 'pending_respawns', {}).get(colony.colony_id)
+            if due is not None:
+                lines.append(f"Colony {colony.colony_id}: DEAD"
+                             f" (respawn in {max(0, due - sim.step_count)})")
+            else:
+                lines.append(f"Colony {colony.colony_id}: DEAD")
             continue
         castes = {t: 0 for t in UnitType}
         retreating = 0
@@ -154,7 +159,7 @@ def build_hud_lines(sim: SandKingsSimulation, sps: float, paused: bool,
         lines.append(f"  W:{castes[UnitType.WORKER]} S:{castes[UnitType.SOLDIER]}"
                      f" Sc:{castes[UnitType.SCOUT]} retreat:{retreating}")
         lines.append(f"  food:{colony.maw.food_stored:.0f} maw:{colony.maw.health:.0f}")
-    lines += ["", "SPACE pause  S step", "+/- speed  UP/DN z-level",
+    lines += ["", "SPACE pause  S step", "+/- speed  </> or UP/DN z",
               "TAB view  G capture  ESC quit"]
     return lines
 
@@ -272,6 +277,14 @@ class LiveViewer:
                 self.paused = not self.paused
             elif key == pygame.K_s and self.paused:
                 self.pacer.request_single_step()
+            # DF-style z-navigation (spec R8a): '<' rises, '>' descends.
+            # Must be checked before the speed branch, which shares , and .
+            elif event.unicode == '<' or (key == pygame.K_COMMA and
+                                          event.mod & (pygame.KMOD_CTRL | pygame.KMOD_SHIFT)):
+                self.z_level = min(self.sim.world.depth - 1, self.z_level + 1)
+            elif event.unicode == '>' or (key == pygame.K_PERIOD and
+                                          event.mod & (pygame.KMOD_CTRL | pygame.KMOD_SHIFT)):
+                self.z_level = max(0, self.z_level - 1)
             elif key in (pygame.K_PLUS, pygame.K_EQUALS, pygame.K_PERIOD, pygame.K_KP_PLUS):
                 self.pacer.faster()
             elif key in (pygame.K_MINUS, pygame.K_COMMA, pygame.K_KP_MINUS):

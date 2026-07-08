@@ -95,6 +95,19 @@ Status: draft → implement → reconcile (see Reconciliation Log at bottom).
   [0, depth−1]). Initial z_level is depth−1 in TOPDOWN (surface view),
   which also serves SLICE after a TAB switch. The HUD MUST name the
   active view mode.
+- **R15** (Round B) The HUD MUST show the last EVENT_LINES (4) entries of
+  `sim.events` (guarded `getattr` — sims without the feed render without it)
+  as `[step] message`, most recent last.
+- **R16** (Round B) A living Maw whose health < MAW_MAX_HEALTH MUST render a
+  health bar directly above its marker: background dark red, foreground
+  green→red proportional fill, one cell wide × 3px. Full-health maws show
+  no bar (ambient calm reads clean).
+- **R17** (Round B, upgrades R9 from MAY to MUST) `P` cycles a pheromone
+  overlay: off → FOOD_TRAIL → TERRITORY → DANGER → off. The overlay
+  alpha-blends per-cell colony-colored intensity (max across colonies of the
+  selected type at the current z in SLICE mode; max over z ≤ z_level visible
+  column in TOPDOWN is NOT required — z-slice sampling at the current level
+  is acceptable in both modes). HUD names the active overlay.
 - **R10** (MAY — stretch) While capture is on, each rendered frame is stored;
   on quit, frames save to `sandkings_live.gif`.
 - **R11** The Maw MUST render as a yellow (255,255,0) square with black border,

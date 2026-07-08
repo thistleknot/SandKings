@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.0] - 2026-07-07
+
+### Added - Perpetual Terrarium (SPEC_TERRARIUM_LIVENESS.md)
+- **Keeper feeding**: every 100 steps food scatters onto the surface, sized to
+  sustain ~18 units/colony; each living colony's reserve is floored at 10
+- **Worker foraging AI**: workers scan their foraging range for food/corpses,
+  cache a target, and walk/tunnel toward it (was: random radius-2 encounters)
+- **Maw sieges**: soldiers with no enemy units in range besiege the nearest
+  enemy Maw; adjacent units damage it (Maw HP 100 → 500, regens 0.5/step
+  while unbesieged). Colonies can now actually fall
+- **Colony collapse + arrival**: a fallen colony becomes a corpse feast
+  (units + 3x3 burst), its territory and pheromones clear, and 300 steps
+  later a new colony arrives in the same slot with a mutated survivor genome
+- **Bootstrap revival**: a living colony with 0 units always fields a worker
+  when it can afford one — the frozen dead state is gone
+- **DF-style strata terrain**: 3-octave value-noise dune heightmap, stone
+  strata bands, roof-cemented caverns, surface food patches + buried pockets;
+  maws spawn on the surface; world is gravity-settled at generation
+- **DF z-keys**: `<` rises / `>` descends (Shift or Ctrl + comma/period),
+  HUD shows respawn countdowns for fallen colonies
+- **Tests**: `tests/test_terrarium.py` (9 acceptance tests) + viewer key tests
+
+### Changed
+- Economy rebalance: maintenance 1.0 → 0.1 food/unit/step, starting food
+  200 → 120, starvation capped at 2 deaths/colony/step, expansion_rate
+  init bounded so spawn thresholds stay in [30, 100]
+
+### Fixed
+- Starvation could pick the same unit twice in one step (double salvage)
+
 ## [2.1.0] - 2026-07-07
 
 ### Added - Live Terrarium Viewer

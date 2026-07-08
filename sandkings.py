@@ -34,6 +34,19 @@ except ImportError:
 # VOXEL TYPES & WORLD
 # ============================================================================
 
+# Terrarium liveness constants (SPEC_TERRARIUM_LIVENESS.md)
+MAINTENANCE_COST = 0.1       # food per unit per step
+FEED_INTERVAL = 100          # steps between keeper feedings
+TARGET_POP = 18              # sustainable units per colony (feed sizing)
+HARVEST_YIELD = 15           # food per FOOD/CORPSE voxel harvested
+BOOTSTRAP_FLOOR = 10         # minimum colony food after each feeding
+STARVATION_MAX_KILLS = 2     # starvation deaths per colony per step
+MAW_MAX_HEALTH = 500
+MAW_REGEN = 0.5              # HP per step while unbesieged
+RESPAWN_DELAY = 300          # steps a fallen colony slot stays empty
+RESPAWN_FOOD = 50            # starting food for an arriving colony
+
+
 class VoxelType(Enum):
     AIR = 0
     SAND = 1           # Tunnelable, movable
@@ -49,63 +62,145 @@ class VoxelType(Enum):
     def is_solid(self):
         return self in (VoxelType.STONE, VoxelType.GLASS, VoxelType.TUNNEL_WALL)
 
+def box_blur(field: np.ndarray, passes: int = 2) -> np.ndarray:
+    """Neighbor-mean smoothing via np.roll (wraps at edges); 2D or 3D fields."""
+    for _ in range(passes):
+        acc = field.copy()
+        count = 1
+        for axis in range(field.ndim):
+            acc = acc + np.roll(field, 1, axis) + np.roll(field, -1, axis)
+            count += 2
+        field = acc / count
+    return field
+
+
+def value_noise(shape: Tuple[int, ...], cells: int, rng: np.random.Generator,
+                octaves: int = 3) -> np.ndarray:
+    """Multi-octave value noise in [0, 1] for a 2D or 3D shape (numpy only).
+
+    Each octave draws a coarse random grid (cells * 2^octave per axis,
+    capped at the axis size), upsamples by repetition, box-blurs, and sums
+    with halving amplitude.
+    """
+    total = np.zeros(shape, dtype=np.float32)
+    amplitude, total_amp = 1.0, 0.0
+    for octave in range(octaves):
+        coarse_shape = [max(1, min(s, cells * (2 ** octave))) for s in shape]
+        coarse = rng.random(coarse_shape).astype(np.float32)
+        fine = coarse
+        for axis, (s, cs) in enumerate(zip(shape, coarse_shape)):
+            fine = np.repeat(fine, -(-s // cs), axis=axis)
+        fine = box_blur(fine[tuple(slice(0, s) for s in shape)], passes=2)
+        total += amplitude * fine
+        total_amp += amplitude
+        amplitude *= 0.5
+    total /= total_amp
+    tmin, tmax = float(total.min()), float(total.max())
+    if tmax > tmin:
+        total = (total - tmin) / (tmax - tmin)
+    return total
+
+
 class VoxelWorld:
     """800x400x200 3D voxel terrarium with physics"""
-    
-    def __init__(self, width=80, height=40, depth=20):  # Start smaller for testing
+
+    def __init__(self, width=80, height=40, depth=20, seed: Optional[int] = None):
         self.dimensions = (width, height, depth)
         self.width, self.height, self.depth = width, height, depth
-        
+        self.rng = np.random.default_rng(seed)
+
         # Core voxel data
         self.voxels = np.full(self.dimensions, VoxelType.AIR.value, dtype=np.uint8)
         self.ownership = np.full(self.dimensions, -1, dtype=np.int8)  # -1 = unowned
         self.stability = np.ones(self.dimensions, dtype=np.float32)
-        
+
         # Initialize terrain
         self._generate_terrain()
     
     def _generate_terrain(self):
-        """Create base terrarium with sand, walls, and substrate"""
+        """DF-style strata terrain: dune heightmap, stone bands, caverns, food.
+
+        Spec: SPEC_TERRARIUM_LIVENESS.md T8. Guarantees: glass shell intact,
+        surface heights in [substrate+2, 0.85*depth], cavern roofs cemented
+        to STONE, world gravity-settled on return (apply_gravity is a no-op).
+        Degrades at depth < 8 (caverns skipped, bands clamped).
+        """
         w, h, d = self.dimensions
-        
-        # Glass walls (terrarium boundaries)
+        rng = self.rng
+        zs = np.arange(d)[None, None, :]
+
+        # Stone substrate (bottom 20%)
+        substrate_height = d // 5
+        self.voxels[:, :, :substrate_height] = VoxelType.STONE.value
+
+        # Dune heightmap: per-column surface height from 3-octave value noise
+        h_min = substrate_height + 2
+        h_max = max(h_min + 1, int(d * 0.85))
+        heightmap = value_noise((w, h), cells=6, rng=rng)
+        surface = (h_min + heightmap * (h_max - h_min)).astype(int)
+
+        # Fill sand up to each column's surface
+        sand_mask = (zs >= substrate_height) & (zs < surface[:, :, None])
+        self.voxels[sand_mask] = VoxelType.SAND.value
+
+        # Stone strata: two noise-thresholded bands, thickness 2
+        for band_base in (substrate_height + 2, int(d * 0.45)):
+            band_mask = value_noise((w, h), cells=8, rng=rng) > 0.55
+            for z in range(band_base, min(band_base + 2, d)):
+                layer = self.voxels[:, :, z]
+                layer[band_mask & (layer == VoxelType.SAND.value)] = VoxelType.STONE.value
+
+        # Caverns: 3D-noise air pockets inside the sand body, roofs cemented
+        # so gravity cannot collapse them column by column
+        if d >= 8:
+            cave_noise = value_noise((w, h, d), cells=5, rng=rng)
+            depth_ok = (zs >= substrate_height + 1) & (zs < np.maximum(surface[:, :, None] - 3, 0))
+            cavern = ((cave_noise > np.quantile(cave_noise, 0.92)) & depth_ok &
+                      (self.voxels == VoxelType.SAND.value))
+            self.voxels[cavern] = VoxelType.AIR.value
+            above_cavern = np.roll(cavern, 1, axis=2)
+            above_cavern[:, :, 0] = False
+            roof = above_cavern & (self.voxels == VoxelType.SAND.value)
+            self.voxels[roof] = VoxelType.STONE.value
+
+        # Glass walls + floor (applied last so they always win)
         self.voxels[0, :, :] = VoxelType.GLASS.value
         self.voxels[-1, :, :] = VoxelType.GLASS.value
         self.voxels[:, 0, :] = VoxelType.GLASS.value
         self.voxels[:, -1, :] = VoxelType.GLASS.value
         self.voxels[:, :, 0] = VoxelType.GLASS.value
-        
-        # Stone substrate (bottom 20%)
-        substrate_height = d // 5
-        self.voxels[:, :, :substrate_height] = VoxelType.STONE.value
-        
-        # Fill with sand (above substrate)
-        sand_top = int(d * 0.7)
-        self.voxels[1:-1, 1:-1, substrate_height:sand_top] = VoxelType.SAND.value
-        
-        # Add some stone pillars/obstacles
-        num_pillars = random.randint(3, 6)
-        for _ in range(num_pillars):
-            px = random.randint(w//4, 3*w//4)
-            py = random.randint(h//4, 3*h//4)
-            pillar_height = random.randint(substrate_height, d//2)
-            pillar_radius = random.randint(2, 4)
-            
-            for dx in range(-pillar_radius, pillar_radius+1):
-                for dy in range(-pillar_radius, pillar_radius+1):
-                    if dx*dx + dy*dy <= pillar_radius*pillar_radius:
-                        x, y = px + dx, py + dy
-                        if 1 <= x < w-1 and 1 <= y < h-1:
-                            self.voxels[x, y, substrate_height:pillar_height] = VoxelType.STONE.value
-        
-        # Scatter initial food nodes (reduced for resource scarcity)
-        num_food = (w * h) // 500  # Was // 100, now 5x less
-        for _ in range(num_food):
-            fx = random.randint(1, w-2)
-            fy = random.randint(1, h-2)
-            fz = random.randint(sand_top, d-2)
-            self.voxels[fx, fy, fz] = VoxelType.FOOD.value
-    
+
+        # Surface food patches
+        for _ in range(4):
+            px, py = int(rng.integers(2, w - 2)), int(rng.integers(2, h - 2))
+            for _ in range(int(rng.integers(4, 7))):
+                fx = int(np.clip(px + rng.integers(-3, 4), 1, w - 2))
+                fy = int(np.clip(py + rng.integers(-3, 4), 1, h - 2))
+                fz = self.surface_z(fx, fy) + 1
+                if fz < d and self.voxels[fx, fy, fz] == VoxelType.AIR.value:
+                    self.voxels[fx, fy, fz] = VoxelType.FOOD.value
+
+        # Buried food pockets
+        for _ in range((w * h) // 400):
+            fx, fy = int(rng.integers(1, w - 1)), int(rng.integers(1, h - 1))
+            top = self.surface_z(fx, fy)
+            if top > substrate_height + 1:
+                fz = int(rng.integers(substrate_height + 1, top))
+                for _ in range(int(rng.integers(1, 4))):
+                    bx = int(np.clip(fx + rng.integers(-1, 2), 1, w - 2))
+                    by = int(np.clip(fy + rng.integers(-1, 2), 1, h - 2))
+                    if self.voxels[bx, by, fz] == VoxelType.SAND.value:
+                        self.voxels[bx, by, fz] = VoxelType.FOOD.value
+
+        # Settle any loose sand so post-gen gravity is a no-op
+        for _ in range(3):
+            self.apply_gravity()
+
+    def surface_z(self, x: int, y: int) -> int:
+        """Highest non-AIR z in a column (glass floor guarantees >= 0)."""
+        nonair = np.nonzero(self.voxels[x, y, :] != VoxelType.AIR.value)[0]
+        return int(nonair[-1]) if len(nonair) else 0
+
     def in_bounds(self, x, y, z):
         """Check if coordinates are within world bounds"""
         return (0 <= x < self.width and 
@@ -251,6 +346,7 @@ class SandKing:
     carrying: Optional[str] = None  # 'food', 'sand', None
     task_queue: deque = field(default_factory=deque)
     retreating: bool = False  # Morale flag
+    forage_target: Optional[Tuple[int, int, int]] = None  # Cached food/corpse goal
     
     # Neural hive mind extension (soldier's personal layer)
     brain_layer: Optional[SoldierLayer] = None
@@ -294,8 +390,8 @@ class Maw:
         self.colony_id = colony_id
         self.position = position
         self.genome = genome
-        self.health = 100
-        self.food_stored = 200  # Higher starting food
+        self.health = MAW_MAX_HEALTH
+        self.food_stored = 120
         self.spawn_queue = deque()
         self.alive = True
     
@@ -437,42 +533,51 @@ class CellularAutomata:
     @staticmethod
     def apply_territory_spread(world: VoxelWorld, colonies: List[Colony]):
         """
-        Territory expansion rules (Conway-inspired):
-        - Empty owned space spawns new ownership if 3+ adjacent owned cells (Birth)
-        - Owned cell loses ownership if <2 or >5 adjacent owned cells (Death)
+        Territory expansion rules (Conway-inspired), vectorized:
+        - Birth: unowned AIR with 3+ adjacent same-colony cells joins the colony
+        - Death: owned cell with <2 or >5 same-colony neighbors is released
+
+        Neighbor counts come from 26 shifted sums with zeroed wrap borders
+        (equivalent to the bounds-checked 26-neighborhood, ~100x faster than
+        per-voxel iteration on large territories).
         """
         new_ownership = world.ownership.copy()
-        
+        air = world.voxels == VoxelType.AIR.value
+
         for colony in colonies:
             if not colony.is_alive():
                 continue
-            
-            # Find all territory cells
-            territory_coords = np.where(world.ownership == colony.colony_id)
-            
-            for i in range(len(territory_coords[0])):
-                x = territory_coords[0][i]
-                y = territory_coords[1][i]
-                z = territory_coords[2][i]
-                pos = (x, y, z)
-                
-                neighbors = world.get_neighbors_3d(pos, radius=1)
-                colony_neighbors = sum(1 for n in neighbors 
-                                     if world.ownership[n] == colony.colony_id)
-                
-                # Death rule: too few or too many neighbors
-                if colony_neighbors < 2 or colony_neighbors > 5:
-                    new_ownership[x, y, z] = -1
-                
-                # Birth rule: check empty neighbors
-                for nx, ny, nz in neighbors:
-                    if (world.ownership[nx, ny, nz] == -1 and 
-                        world.get_voxel(nx, ny, nz) == VoxelType.AIR):
-                        neighbor_count = sum(1 for nn in world.get_neighbors_3d((nx, ny, nz))
-                                           if world.ownership[nn] == colony.colony_id)
-                        if neighbor_count >= 3:
-                            new_ownership[nx, ny, nz] = colony.colony_id
-        
+            owned = world.ownership == colony.colony_id
+            if not owned.any():
+                continue
+
+            counts = np.zeros(world.ownership.shape, dtype=np.int8)
+            owned_i8 = owned.astype(np.int8)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        if dx == dy == dz == 0:
+                            continue
+                        shifted = np.roll(owned_i8, (dx, dy, dz), axis=(0, 1, 2))
+                        if dx == 1:
+                            shifted[0, :, :] = 0
+                        elif dx == -1:
+                            shifted[-1, :, :] = 0
+                        if dy == 1:
+                            shifted[:, 0, :] = 0
+                        elif dy == -1:
+                            shifted[:, -1, :] = 0
+                        if dz == 1:
+                            shifted[:, :, 0] = 0
+                        elif dz == -1:
+                            shifted[:, :, -1] = 0
+                        counts += shifted
+
+            death = owned & ((counts < 2) | (counts > 5))
+            new_ownership[death] = -1
+            birth = (world.ownership == -1) & air & (counts >= 3)
+            new_ownership[birth] = colony.colony_id
+
         world.ownership = new_ownership
 
 # ============================================================================
@@ -662,6 +767,7 @@ class SandKingsSimulation:
         self.automata = CellularAutomata()
         self.colonies: List[Colony] = []
         self.step_count = 0
+        self.pending_respawns: Dict[int, int] = {}  # colony_id -> due step
         
         # Initialize colonies with random count (3-5) and positions
         self._spawn_colonies(num_colonies)
@@ -683,11 +789,11 @@ class SandKingsSimulation:
         
         for i in range(num_colonies):
             for attempt in range(max_attempts):
-                # Random position in safe zone (not edges)
+                # Random position in safe zone (not edges), on the surface
                 x = random.randint(w//8, 7*w//8)
                 y = random.randint(h//8, 7*h//8)
-                z = d//2  # Mid-depth
-                
+                z = min(self.world.surface_z(x, y) + 1, d - 1)
+
                 pos = (x, y, z)
                 
                 # Check distance to existing colonies
@@ -701,7 +807,7 @@ class SandKingsSimulation:
             # Randomize traits (aggression-focused)
             genome.aggression = random.uniform(0.5, 1.0)  # Favor aggression
             genome.tunnel_preference = random.random()
-            genome.expansion_rate = random.random()
+            genome.expansion_rate = random.uniform(0.3, 1.0)  # Spawn threshold bounded [30, 100]
             genome.resilience = random.uniform(0.0, 0.3)  # Defense weaker
             
             colony = Colony(i, positions[i], genome)
@@ -729,7 +835,11 @@ class SandKingsSimulation:
         
         # 3. Pheromone decay
         self.pheromones.step()
-        
+
+        # 3b. KEEPER FEEDING: scatter food on the surface (SPEC T1)
+        if self.step_count % FEED_INTERVAL == 0:
+            self._feed_terrarium()
+
         # 4. NEURAL PRUNING: Remove rarely activated weights every 50 steps
         if NEURAL_AVAILABLE and self.step_count % 50 == 0:
             for colony in self.colonies:
@@ -743,28 +853,28 @@ class SandKingsSimulation:
             if not colony.is_alive():
                 continue
             
-            # Maintenance cost: 1.0 food per unit per step (balanced pressure)
-            maintenance_cost = len(colony.units) * 1.0
-            colony.maw.food_stored -= maintenance_cost
-            
-            # Starvation: kill units if food negative
+            # Maintenance cost (SPEC constants)
+            colony.maw.food_stored -= len(colony.units) * MAINTENANCE_COST
+
+            # Starvation: capped per step so decline is gradual (SPEC T7)
             if colony.maw.food_stored < 0 and colony.units:
-                units_to_kill = []
-                while colony.maw.food_stored < 0 and colony.units:
-                    dead_unit = random.choice(colony.units)
-                    units_to_kill.append(dead_unit)
-                    colony.maw.food_stored += 2  # Recover some food from dead unit
-                
+                units_to_kill = random.sample(
+                    colony.units,
+                    min(STARVATION_MAX_KILLS, len(colony.units)))
                 for dead_unit in units_to_kill:
+                    colony.maw.food_stored += 2  # Recover some food from dead unit
                     colony.remove_unit(dead_unit)
                     # Create edible corpse
                     self.world.set_voxel(*dead_unit.position, VoxelType.CORPSE)
-            
+
             # Adjust spawn threshold by expansion_rate
             spawn_threshold = 30 / max(0.1, colony.genome.expansion_rate)
-            
+
+            # BOOTSTRAP: a colony with no units always fields a worker (SPEC T2)
+            if not colony.units and colony.maw.food_stored >= 3:
+                colony.spawn_unit(UnitType.WORKER)
             # Maw spawning decisions (reduced max units)
-            if colony.maw.food_stored > spawn_threshold and len(colony.units) < 30:
+            elif colony.maw.food_stored > spawn_threshold and len(colony.units) < 30:
                 if random.random() < colony.genome.fertility:
                     unit_type = UnitType.WORKER if random.random() < 0.7 else UnitType.SOLDIER
                     colony.spawn_unit(unit_type)
@@ -773,40 +883,209 @@ class SandKingsSimulation:
             for unit in colony.units[:]:  # Copy list to allow removal
                 self._execute_unit_ai(unit, colony)
         
-        # 5. Combat resolution
+        # 6. Combat resolution
         self._resolve_conflicts()
-    
+
+        # 7. Maw regen, colony collapse, and new arrivals (SPEC T4-T6)
+        self._apply_maw_regen()
+        self._check_maw_deaths()
+        self._process_respawns()
+
+    def _feed_terrarium(self) -> int:
+        """Scatter FOOD on the surface and floor colony reserves (SPEC T1).
+
+        Feed amount balances TARGET_POP units per colony against maintenance
+        over one interval. Returns the number of voxels actually placed.
+        """
+        w, h, d = self.world.dimensions
+        n = round(TARGET_POP * len(self.colonies) * MAINTENANCE_COST
+                  * FEED_INTERVAL / HARVEST_YIELD)
+        n = max(4 * len(self.colonies), min(n, (w * h) // 40))
+        placed = 0
+        for _ in range(n):
+            x = random.randint(1, w - 2)
+            y = random.randint(1, h - 2)
+            z = self.world.surface_z(x, y) + 1
+            if z < d and self.world.voxels[x, y, z] == VoxelType.AIR.value:
+                self.world.voxels[x, y, z] = VoxelType.FOOD.value
+                placed += 1
+        for colony in self.colonies:
+            if colony.is_alive():
+                colony.maw.food_stored = max(colony.maw.food_stored, BOOTSTRAP_FLOOR)
+        return placed
+
+    def _find_food_target(self, position: Tuple[int, int, int],
+                          radius: int) -> Optional[Tuple[int, int, int]]:
+        """Nearest FOOD/CORPSE voxel within a clipped box, by Manhattan distance."""
+        x, y, z = position
+        w, h, d = self.world.dimensions
+        x0, x1 = max(0, x - radius), min(w, x + radius + 1)
+        y0, y1 = max(0, y - radius), min(h, y + radius + 1)
+        z0, z1 = max(0, z - radius), min(d, z + radius + 1)
+        box = self.world.voxels[x0:x1, y0:y1, z0:z1]
+        hits = np.argwhere((box == VoxelType.FOOD.value) | (box == VoxelType.CORPSE.value))
+        if len(hits) == 0:
+            return None
+        coords = hits + np.array([x0, y0, z0])
+        best = coords[int(np.argmin(np.abs(coords - np.array(position)).sum(axis=1)))]
+        return (int(best[0]), int(best[1]), int(best[2]))
+
+    def _step_toward(self, unit: SandKing, target: Tuple[int, int, int],
+                     colony: Colony) -> bool:
+        """Move one voxel toward target through AIR (walk) or SAND (tunnel).
+
+        Falls back to single-axis sidesteps when the diagonal is blocked.
+        Returns True if the unit moved.
+        """
+        x, y, z = unit.position
+        dx = int(np.sign(target[0] - x))
+        dy = int(np.sign(target[1] - y))
+        dz = int(np.sign(target[2] - z))
+        candidates = [(dx, dy, dz), (dx, 0, 0), (0, dy, 0), (0, 0, dz)]
+        for step_dir in candidates:
+            if step_dir == (0, 0, 0):
+                continue
+            new_pos = (x + step_dir[0], y + step_dir[1], z + step_dir[2])
+            if not self.world.in_bounds(*new_pos):
+                continue
+            voxel = self.world.get_voxel(*new_pos)
+            if voxel == VoxelType.AIR:
+                unit.move(new_pos)
+                return True
+            if voxel == VoxelType.SAND and self.world.tunnel(
+                    unit.position, step_dir, colony.colony_id):
+                unit.move(new_pos)
+                return True
+        return False
+
+    def _apply_maw_regen(self):
+        """Maws heal MAW_REGEN per step while no enemy unit is adjacent (SPEC T4)."""
+        for colony in self.colonies:
+            if not colony.maw.alive or colony.maw.health >= MAW_MAX_HEALTH:
+                continue
+            mx, my, mz = colony.maw.position
+            besieged = any(
+                max(abs(u.position[0] - mx), abs(u.position[1] - my),
+                    abs(u.position[2] - mz)) <= 1
+                for c in self.colonies if c.colony_id != colony.colony_id
+                for u in c.units)
+            if not besieged:
+                colony.maw.health = min(MAW_MAX_HEALTH, colony.maw.health + MAW_REGEN)
+
+    def _check_maw_deaths(self):
+        """Collapse fallen colonies into a corpse feast and schedule arrivals (SPEC T5)."""
+        for colony in self.colonies:
+            if colony.maw.alive or colony.colony_id in self.pending_respawns:
+                continue
+            for unit in colony.units:
+                self.world.set_voxel(*unit.position, VoxelType.CORPSE)
+            colony.units.clear()
+            mx, my, mz = colony.maw.position
+            for dx in range(-1, 2):
+                for dy in range(-1, 2):
+                    x, y = mx + dx, my + dy
+                    if self.world.in_bounds(x, y, mz) and VoxelType(
+                            self.world.voxels[x, y, mz]) not in (VoxelType.GLASS, VoxelType.STONE):
+                        self.world.voxels[x, y, mz] = VoxelType.CORPSE.value
+            self.world.ownership[self.world.ownership == colony.colony_id] = -1
+            self.pheromones.trails[:, :, :, colony.colony_id, :] = 0.0
+            self.pending_respawns[colony.colony_id] = self.step_count + RESPAWN_DELAY
+            print(f"💀 Colony {colony.colony_id} has fallen! A new colony arrives in {RESPAWN_DELAY} steps")
+
+    def _process_respawns(self):
+        """Replace fallen colony slots whose respawn is due (SPEC T6)."""
+        due = [cid for cid, when in self.pending_respawns.items()
+               if self.step_count >= when]
+        for colony_id in due:
+            self._respawn_colony(colony_id)
+            del self.pending_respawns[colony_id]
+
+    def _respawn_colony(self, colony_id: int):
+        """Fill a dead colony's slot in place with a fresh arrival (SPEC T6).
+
+        Same colony_id keeps the color and pheromone channel; genome comes
+        from a mutated random survivor (fresh randomized genome if none).
+        """
+        w, h, d = self.world.dimensions
+        survivors = [c for c in self.colonies if c.is_alive()]
+        if survivors:
+            genome = random.choice(survivors).genome.mutate(0.15)
+        else:
+            genome = ColonyGenome()
+            genome.aggression = random.uniform(0.5, 1.0)
+            genome.tunnel_preference = random.random()
+            genome.expansion_rate = random.uniform(0.3, 1.0)
+            genome.resilience = random.uniform(0.0, 0.3)
+
+        min_distance = int(0.1 * ((w**2 + h**2)**0.5))
+        living_maws = [c.maw.position for c in survivors]
+        pos = None
+        for _ in range(100):
+            x = random.randint(w // 8, 7 * w // 8)
+            y = random.randint(h // 8, 7 * h // 8)
+            candidate = (x, y, min(self.world.surface_z(x, y) + 1, d - 1))
+            if all(((candidate[0] - p[0])**2 + (candidate[1] - p[1])**2)**0.5 >= min_distance
+                   for p in living_maws):
+                pos = candidate
+                break
+        if pos is None:  # crowded map: place anywhere in the safe zone
+            x = random.randint(w // 8, 7 * w // 8)
+            y = random.randint(h // 8, 7 * h // 8)
+            pos = (x, y, min(self.world.surface_z(x, y) + 1, d - 1))
+
+        index = next(i for i, c in enumerate(self.colonies) if c.colony_id == colony_id)
+        colony = Colony(colony_id, pos, genome)
+        colony.maw.food_stored = RESPAWN_FOOD
+        self.colonies[index] = colony
+        self.world.set_voxel(*pos, VoxelType.AIR, colony_id=colony_id)
+        for _ in range(3):
+            colony.spawn_unit(UnitType.WORKER)
+        print(f"🏜️ A new colony {colony_id} has arrived!")
+
     def _execute_unit_ai(self, unit: SandKing, colony: Colony):
         """Simple AI for unit behavior - NEURAL or RULE-BASED"""
         x, y, z = unit.position
         
-        # Workers: dig and gather food/corpses
+        # Workers: gather food/corpses with directed foraging (SPEC T3)
         if unit.unit_type == UnitType.WORKER:
-            # Look for food or corpses nearby (CORPSES NOW EDIBLE)
+            # (1) Radius-2 grab (CORPSES EDIBLE)
             neighbors = self.world.get_neighbors_3d(unit.position, radius=2)
-            found_food = False
+            acted = False
             for nx, ny, nz in neighbors:
                 voxel = self.world.get_voxel(nx, ny, nz)
                 if voxel == VoxelType.FOOD or voxel == VoxelType.CORPSE:
-                    # Move toward food/corpse
                     unit.move((nx, ny, nz))
                     self.world.set_voxel(nx, ny, nz, VoxelType.AIR)
-                    colony.maw.eat(15)  # Both give 15 food
-                    
+                    colony.maw.eat(HARVEST_YIELD)
+                    unit.forage_target = None
+
                     # Track neural performance
                     if unit.brain_layer is not None:
                         unit.brain_layer.food_gathered += 10
-                    
-                    found_food = True
+
+                    acted = True
                     break
-            
-            # If no food found, tunnel
-            if not found_food and random.random() < colony.genome.tunnel_preference:
+
+            # (2)+(3) Walk toward a known food target, scanning when needed
+            if not acted:
+                target = unit.forage_target
+                if target is not None and self.world.get_voxel(*target) not in (
+                        VoxelType.FOOD, VoxelType.CORPSE):
+                    target = unit.forage_target = None  # stale: someone ate it
+                if target is None:
+                    target = self._find_food_target(unit.position,
+                                                    colony.genome.foraging_range)
+                    unit.forage_target = target
+                if target is not None:
+                    acted = self._step_toward(unit, target, colony)
+
+            # (4) No food known: random dig
+            if not acted and random.random() < colony.genome.tunnel_preference:
                 direction = random.choice([(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)])
                 if self.world.tunnel(unit.position, direction, colony.colony_id):
                     unit.move((x + direction[0], y + direction[1], z + direction[2]))
                     # Leave territory pheromone
-                    self.pheromones.deposit(unit.position, colony.colony_id, 
+                    self.pheromones.deposit(unit.position, colony.colony_id,
                                           PheromoneType.TERRITORY, 1.0)
         
         # Soldiers: NEURAL AI or RULE-BASED
@@ -878,15 +1157,29 @@ class SandKingsSimulation:
                         dy = np.sign(closest_enemy.position[1] - y)
                         dz = np.sign(closest_enemy.position[2] - z)
                         new_pos = (int(x + dx), int(y + dy), int(z + dz))
-                        if (self.world.in_bounds(*new_pos) and 
+                        if (self.world.in_bounds(*new_pos) and
                             self.world.get_voxel(*new_pos).is_tunnelable()):
                             unit.move(new_pos)
                 else:
-                    # Random patrol if no enemies nearby
-                    if random.random() < 0.3:
+                    # No enemy unit in range: SIEGE the nearest enemy Maw (SPEC T4)
+                    closest_maw, maw_dist = None, float('inf')
+                    for enemy_colony in self.colonies:
+                        if enemy_colony.colony_id == colony.colony_id or not enemy_colony.is_alive():
+                            continue
+                        m = enemy_colony.maw.position
+                        dist = abs(m[0] - x) + abs(m[1] - y) + abs(m[2] - z)
+                        if dist < maw_dist:
+                            maw_dist, closest_maw = dist, enemy_colony.maw
+
+                    if (closest_maw is not None and maw_dist < colony.genome.foraging_range
+                            and random.random() < colony.genome.aggression):
+                        if not self._step_toward(unit, closest_maw.position, colony):
+                            pass  # boxed in this step; siege pressure resumes next step
+                    # Random patrol if nothing in range
+                    elif random.random() < 0.3:
                         direction = random.choice([(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)])
                         new_pos = (x + direction[0], y + direction[1], z + direction[2])
-                        if (self.world.in_bounds(*new_pos) and 
+                        if (self.world.in_bounds(*new_pos) and
                             self.world.get_voxel(*new_pos).is_tunnelable()):
                             unit.move(new_pos)
 
@@ -937,6 +1230,19 @@ class SandKingsSimulation:
                                     if unit.brain_layer is not None:
                                         unit.brain_layer.kills += 1
         
+        # MAW SIEGE: units adjacent to an enemy Maw damage it (SPEC T4)
+        for colony in self.colonies:
+            if not colony.maw.alive:
+                continue
+            mx, my, mz = colony.maw.position
+            for enemy_colony in self.colonies:
+                if enemy_colony.colony_id == colony.colony_id:
+                    continue
+                for enemy in enemy_colony.units:
+                    ex, ey, ez = enemy.position
+                    if max(abs(ex - mx), abs(ey - my), abs(ez - mz)) <= 1:
+                        colony.maw.take_damage(enemy.attack)
+
         # NEURAL MATING: Create offspring layers
         for unit1, unit2, colony1, colony2 in mating_pairs:
             if unit1.brain_layer and unit2.brain_layer:

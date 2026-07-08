@@ -165,6 +165,48 @@ def test_pacer_speed_clamps():
     assert pacer.steps_per_second == 0.5
 
 
+def make_keydown(key, mod=0, unicode=""):
+    import pygame
+    return pygame.event.Event(pygame.KEYDOWN, key=key, mod=mod, unicode=unicode)
+
+
+def test_df_z_keys():
+    import pygame
+    sim = make_sim()
+    viewer = LiveViewer(sim, max_steps=1)
+    top = sim.world.depth - 1
+    assert viewer.z_level == top, "starts at surface"
+
+    # '>' descends (shift+period unicode, and ctrl+period)
+    viewer._handle_event(make_keydown(pygame.K_PERIOD, mod=pygame.KMOD_LSHIFT, unicode=">"))
+    assert viewer.z_level == top - 1
+    viewer._handle_event(make_keydown(pygame.K_PERIOD, mod=pygame.KMOD_LCTRL))
+    assert viewer.z_level == top - 2
+
+    # '<' rises (DF up), clamped at the top
+    viewer._handle_event(make_keydown(pygame.K_COMMA, mod=pygame.KMOD_LSHIFT, unicode="<"))
+    viewer._handle_event(make_keydown(pygame.K_COMMA, mod=pygame.KMOD_LCTRL))
+    viewer._handle_event(make_keydown(pygame.K_COMMA, mod=pygame.KMOD_LCTRL))
+    assert viewer.z_level == top, "clamped at depth-1"
+
+    # unmodified comma/period still control speed, not z
+    sps = viewer.pacer.steps_per_second
+    viewer._handle_event(make_keydown(pygame.K_PERIOD, unicode="."))
+    assert viewer.pacer.steps_per_second > sps and viewer.z_level == top
+    viewer._handle_event(make_keydown(pygame.K_COMMA, unicode=","))
+    assert viewer.pacer.steps_per_second == sps and viewer.z_level == top
+
+
+def test_hud_respawn_countdown():
+    sim = make_sim()
+    dead = sim.colonies[0]
+    dead.maw.alive = False
+    sim.pending_respawns = {dead.colony_id: sim.step_count + 42}
+    lines = build_hud_lines(sim, sps=5.0, paused=False, z_level=2, capturing=False)
+    joined = "\n".join(lines)
+    assert f"Colony {dead.colony_id}: DEAD (respawn in 42)" in joined
+
+
 def test_full_loop_headless_auto_exit():
     sim = make_sim()
     viewer = LiveViewer(sim, steps_per_second=60.0, max_steps=5)

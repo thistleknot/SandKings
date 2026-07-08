@@ -57,9 +57,14 @@ python sandkings.py --live --use-neural --sps 10
 #
 # Live controls:
 #   SPACE pause/resume   S single-step (paused)   +/- speed
-#   UP/DOWN z-level      TAB view mode            G toggle GIF capture
-#   ESC quit
+#   < / > z-level (DF-style, Shift or Ctrl + , / .)   UP/DOWN also works
+#   TAB view mode        G toggle GIF capture     ESC quit
 # Retreating units render dimmed with a magenta border.
+# Dead colonies show a respawn countdown in the HUD.
+
+# The terrarium is perpetual: the keeper scatters food every 100 steps,
+# workers forage toward it, soldiers besiege enemy Maws, fallen colonies
+# become corpse feasts, and a new colony arrives in the empty slot.
 ```
 
 ## Architecture
