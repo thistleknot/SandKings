@@ -128,13 +128,13 @@ class StepPacer:
         self._accumulator_ms -= owed * ms_per_step
         return owed
 
-    def faster(self):
+    def faster(self) -> None:
         self.steps_per_second = min(SPS_MAX, self.steps_per_second * 1.5)
 
-    def slower(self):
+    def slower(self) -> None:
         self.steps_per_second = max(SPS_MIN, self.steps_per_second / 1.5)
 
-    def request_single_step(self):
+    def request_single_step(self) -> None:
         self._single_step_pending = True
 
 
@@ -159,7 +159,7 @@ class LiveViewer:
         self.paused = False
         self.z_level = sim.world.depth // 2
         self.capturing = False
-        self.captured_frames: list = []
+        self.captured_frames: List[np.ndarray] = []
         self.running = False
         self._screen = None
         self._font = None
