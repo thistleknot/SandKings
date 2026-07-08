@@ -654,6 +654,10 @@ class SandKingsSimulation:
     
     def __init__(self, width=80, height=40, depth=20, num_colonies=4):
         self.world = VoxelWorld(width, height, depth)
+        # Resolve random colony count here so the pheromone layer's
+        # per-colony axis matches the colonies actually spawned
+        if num_colonies is None or num_colonies == 0:
+            num_colonies = random.randint(3, 5)
         self.pheromones = PheromoneLayer(self.world.dimensions, num_colonies)
         self.automata = CellularAutomata()
         self.colonies: List[Colony] = []
@@ -987,7 +991,12 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Sand Kings 3D Colony Simulation")
-    parser.add_argument('--steps', type=int, default=20, help='Number of simulation steps')
+    parser.add_argument('--steps', type=int, default=None,
+                        help='Simulation steps (GIF mode default 20; live mode default: run until quit)')
+    parser.add_argument('--live', action='store_true',
+                        help='Open a real-time pygame viewer instead of rendering GIFs')
+    parser.add_argument('--sps', type=float, default=5.0,
+                        help='Live mode: initial simulation steps per second')
     parser.add_argument('--num-colonies', type=int, default=0, help='Number of colonies (0=random 3-5)')
     parser.add_argument('--width', type=int, default=80, help='World width')
     parser.add_argument('--height', type=int, default=40, help='World height')
@@ -1022,10 +1031,21 @@ def main():
         else:
             print("⚠ Neural mode requested but PyTorch not available. Using rule-based AI.")
     
+    if args.live:
+        # When run as a script this module is '__main__'; alias it so
+        # live_view's `from sandkings import ...` binds to these same
+        # classes instead of re-importing a duplicate module
+        import sys
+        sys.modules.setdefault('sandkings', sys.modules[__name__])
+        from live_view import run_live
+        run_live(sim, max_steps=args.steps, steps_per_second=args.sps)
+        print("\n" + sim.get_status())
+        return
+
     viz = Visualizer()
-    
+
     # Run simulation and capture frames
-    num_steps = args.steps
+    num_steps = args.steps if args.steps is not None else 20
     frames_2d = []
     frames_3d = []
     
