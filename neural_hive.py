@@ -199,24 +199,39 @@ class SoldierLayer(nn.Module):
     
     def __init__(self, encoding_dim: int = 32, action_dim: int = 7):
         super().__init__()
-        
+
+        # Recurrent memory: temporal patterns within one soldier's life (N10)
+        self.memory = nn.GRUCell(encoding_dim, encoding_dim)
+        self.hidden: Optional[torch.Tensor] = None  # runtime state, not a Parameter
+
         # Single output layer (soldier's "personality")
         self.output = nn.Linear(encoding_dim, action_dim)
-        
+
         # Performance tracking
         self.kills = 0
         self.damage_dealt = 0
         self.damage_taken = 0
         self.steps_alive = 0
         self.food_gathered = 0
-        
+
         # Genetic lineage
         self.generation = 0
         self.parent_ids = []
-    
+
     def forward(self, encoding: torch.Tensor) -> torch.Tensor:
-        """Map shared encoding to action probabilities"""
-        return torch.softmax(self.output(encoding), dim=-1)
+        """Map shared encoding through recurrent memory to action probabilities.
+
+        Hidden state persists across calls (one soldier's life) and is
+        detached each step so no autograd graph accumulates.
+        """
+        squeeze = encoding.dim() == 1
+        h_in = encoding.unsqueeze(0) if squeeze else encoding
+        if self.hidden is None or self.hidden.shape != h_in.shape:
+            self.hidden = torch.zeros_like(h_in)
+        self.hidden = self.memory(h_in, self.hidden).detach()
+        logits = self.output(self.hidden)
+        probs = torch.softmax(logits, dim=-1)
+        return probs.squeeze(0) if squeeze else probs
     
     def get_performance_score(self) -> float:
         """Calculate soldier effectiveness (for folding decisions)"""
@@ -242,51 +257,29 @@ class SoldierLayer(nn.Module):
             action_dim=self.output.out_features
         )
         
-        # Crossover: blend parent weights
+        # Crossover: uniform mask + Gaussian mutation over ALL parameters
+        # (memory and output alike, spec N10)
         with torch.no_grad():
-            # Uniform crossover mask
-            mask = torch.rand_like(self.output.weight) > 0.5
-            
-            child.output.weight.data = torch.where(
-                mask,
-                self.output.weight.data,
-                other.output.weight.data
-            )
-            
-            if self.output.bias is not None:
-                bias_mask = torch.rand_like(self.output.bias) > 0.5
-                child.output.bias.data = torch.where(
-                    bias_mask,
-                    self.output.bias.data,
-                    other.output.bias.data
-                )
-            
-            # Mutation
-            noise = torch.randn_like(child.output.weight) * mutation_rate
-            child.output.weight.data += noise
-            
-            if child.output.bias is not None:
-                bias_noise = torch.randn_like(child.output.bias) * mutation_rate
-                child.output.bias.data += bias_noise
-        
-        # Genetic tracking
+            for (_, child_p), (_, self_p), (_, other_p) in zip(
+                    child.named_parameters(), self.named_parameters(),
+                    other.named_parameters()):
+                mask = torch.rand_like(self_p) > 0.5
+                child_p.data = torch.where(mask, self_p.data, other_p.data)
+                child_p.data += torch.randn_like(child_p) * mutation_rate
+
+        # Genetic tracking; memory starts blank (hidden = None from __init__)
         child.generation = max(self.generation, other.generation) + 1
         child.parent_ids = [id(self), id(other)]
-        
+
         return child
-    
+
     def clone(self) -> 'SoldierLayer':
-        """Asexual reproduction (for Maw spawning)"""
+        """Asexual reproduction (for Maw spawning); memory starts blank"""
         child = SoldierLayer(
             encoding_dim=self.output.in_features,
             action_dim=self.output.out_features
         )
-        
-        with torch.no_grad():
-            child.output.weight.data = self.output.weight.data.clone()
-            if self.output.bias is not None:
-                child.output.bias.data = self.output.bias.data.clone()
-        
+        child.load_state_dict(self.state_dict())
         child.generation = self.generation
         return child
 

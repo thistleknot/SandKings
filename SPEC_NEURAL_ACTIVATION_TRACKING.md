@@ -58,6 +58,23 @@ firing frequency so pruning does what the docs claim.
   RuntimeError whenever a dying soldier scored ≥ 0.7. Gate (score ≥ 0.7),
   alpha (0.1 × score), and `folded_layer_count` semantics are unchanged.
 
+## 3b. N10 — Soldier memory (Round I)
+
+- **N10** `SoldierLayer` MUST maintain per-soldier recurrent memory: a
+  `GRUCell(encoding_dim -> encoding_dim)` between the shared Maw encoding
+  and the output head. The hidden state persists across steps within a
+  soldier's life, is detached every step (no autograd graph growth),
+  starts at zeros for fresh, cloned, and mated layers, and MUST survive
+  pickle and deepcopy. `mate()` MUST apply the uniform-crossover +
+  Gaussian-mutation scheme to ALL parameters (memory and output);
+  `clone()` copies the full `state_dict`. `fold_soldier_layer` (N9) keeps
+  reading only the output head — memory is per-soldier identity and dies
+  with the soldier. `forward` MUST accept `(encoding_dim,)` and
+  `(1, encoding_dim)` inputs as before. This implements the
+  NEURAL_HIVE_IMPLEMENTATION.md future-work item "Memory: temporal
+  patterns" (GRU chosen over LSTM: one gate fewer, same temporal reach at
+  this scale).
+
 ## 4. Behavioral Spec — `forward`
 
 ```

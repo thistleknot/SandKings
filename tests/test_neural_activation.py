@@ -106,6 +106,48 @@ def test_fold_soldier_layer_still_works():
     assert brain.folded_layer_count == 1
 
 
+def test_soldier_memory_shapes_and_temporal_effect():
+    from neural_hive import SoldierLayer
+
+    torch.manual_seed(3)
+    soldier = SoldierLayer()
+    encoding = torch.randn(32)
+    out1 = soldier.forward(encoding)
+    out2 = soldier.forward(encoding)  # same input, evolved hidden state
+    assert out1.shape == (7,)
+    assert not torch.allclose(out1, out2), "memory must make behavior temporal"
+    assert soldier.hidden is not None and not soldier.hidden.requires_grad
+    batch = soldier.forward(encoding.unsqueeze(0))
+    assert batch.shape == (1, 7)
+
+
+def test_soldier_memory_resets_on_clone_and_mate():
+    from neural_hive import SoldierLayer
+
+    torch.manual_seed(4)
+    a, b = SoldierLayer(), SoldierLayer()
+    a.forward(torch.randn(32))
+    assert a.hidden is not None
+    assert a.clone().hidden is None, "clone starts with blank memory"
+    child = a.mate(b)
+    assert child.hidden is None, "offspring starts with blank memory"
+    # mate must mix/mutate memory parameters too (spec N10)
+    assert not torch.equal(child.memory.weight_ih, a.memory.weight_ih)
+    assert not torch.equal(child.memory.weight_ih, b.memory.weight_ih)
+
+
+def test_soldier_memory_survives_pickle_and_deepcopy():
+    import pickle
+    from neural_hive import SoldierLayer
+
+    torch.manual_seed(5)
+    soldier = SoldierLayer()
+    soldier.forward(torch.randn(32))
+    for revived in (pickle.loads(pickle.dumps(soldier)), copy.deepcopy(soldier)):
+        assert torch.equal(revived.hidden, soldier.hidden)
+        revived.forward(torch.randn(32))  # must keep stepping
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
