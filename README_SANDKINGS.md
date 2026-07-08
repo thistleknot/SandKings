@@ -44,6 +44,7 @@ python sandkings.py
 # - sandkings_3d.gif (3D visualization, 5 frames)
 
 # LIVE MODE: watch the terrarium in a real-time pygame window
+# (demo: sandkings_live.gif)
 python sandkings.py --live                     # run until you quit
 python sandkings.py --live --steps 500         # auto-exit after 500 steps
 python sandkings.py --live --use-neural --sps 10

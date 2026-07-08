@@ -169,6 +169,13 @@ Assert: len(colonies) is constant; every colony_id occurs exactly once
 
 ## 7. Reconciliation Log
 
+- 2026-07-07 (drama rounds) — T9 (event feed), T10 (war parties with
+  WAR_CHEST/2 hysteresis and 0-clamped maw HP), and T11 (scouts) implemented
+  and soak-verified: war soak 12 sieges / 4 falls / 6 declarations in 3000
+  steps; scout soak 2500 steps with active surveying, shared intel, and 7
+  falls — all slots alive-or-pending throughout. Note: at-war raids apply to
+  rule-based soldiers; neural-mode soldiers keep their learned policy
+  (accepted — war pressure still arrives via the enemy's rule-based raids).
 - 2026-07-07 — Implemented as specced, with notes:
   - Maws sit ON the surface (`surface_z + 1`, clamped to depth−1) rather than
     buried at mid-depth; visible in TOPDOWN immediately.

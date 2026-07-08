@@ -221,6 +221,14 @@ Termination conditions: user quit (ESC/close) OR steps_done reaching max_steps.
 - Acceptance verified: GIF regression (`--steps 5`), headless live 30 steps
   exit 0, neural live 120 steps exit 0, windowed 100-step auto-exit, both
   test suites green (8 + 6 tests).
+- 2026-07-07 (dazzle rounds) — R15-R19 implemented: drama-feed ticker, maw
+  health bars, pheromone overlay (P), DF glyph renderer as default (R
+  toggles BLOCKS), color-coded HUD via `build_hud_entries` with
+  `build_hud_lines` retained as its text projection. Deviation: unit glyph
+  colors pass through `hud_text_color` so black-colony units stay legible
+  on dark terrain (extends the R18 "black units lightened" clause to all
+  dark fills). Verified by 22 viewer tests + captured frames
+  (sandkings_live.gif).
 - 2026-07-07 (later) — R12-R14 (Dwarf-Fortress-style TOPDOWN view) added per
   user request and implemented: `topdown_color_array` / `depth_shade` /
   `unit_visible_depth` pure functions, `ViewMode` enum, TAB toggle, entity
