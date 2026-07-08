@@ -24,6 +24,11 @@ class ViewMode(Enum):
     TOPDOWN = 0   # DF-style: look down z through open space, depth-shaded
     SLICE = 1     # single-z cross-section
 
+
+class RenderStyle(Enum):
+    GLYPH = 0     # DF-style character grid (default; spec R18)
+    BLOCKS = 1    # plain colored rects
+
 HUD_WIDTH = 320
 DEFAULT_CELL_SIZE = 12
 DEFAULT_STEPS_PER_SECOND = 5.0
@@ -40,6 +45,25 @@ MAW_COLOR = (255, 255, 0)
 HUD_BG = (12, 12, 16)
 HUD_FG = (220, 220, 220)
 EVENT_LINES = 4            # drama-feed entries shown in the HUD (spec R15)
+GLYPH_BG_DIM = 0.45        # background dimming under glyphs (spec R18)
+GLYPH_MIN_CELL = 8         # px; below this glyphs are illegible -> BLOCKS
+GLYPHS = {                 # DF-style terrain glyphs (spec R18)
+    VoxelType.AIR.value: " ",
+    VoxelType.SAND.value: "░",
+    VoxelType.STONE.value: "▓",
+    VoxelType.GLASS.value: "#",
+    VoxelType.FOOD.value: "•",
+    VoxelType.CORPSE.value: "%",
+    VoxelType.TUNNEL_WALL.value: "≡",
+}
+UNIT_GLYPHS = {UnitType.WORKER: "w", UnitType.SOLDIER: "s", UnitType.SCOUT: "c"}
+MAW_GLYPH = "Ω"
+EVENT_TINTS = (            # substring -> HUD color (spec R19)
+    ("Keeper", (120, 210, 120)),
+    ("besieges", (255, 165, 60)),
+    ("fallen", (255, 85, 85)),
+    ("arrives", (90, 200, 255)),
+)
 PHEROMONE_OVERLAYS = (None, PheromoneType.FOOD_TRAIL, PheromoneType.TERRITORY,
                       PheromoneType.DANGER)  # P-key cycle (spec R17)
 PHEROMONE_BRIGHTNESS = 140  # additive glow ceiling per channel
@@ -78,6 +102,24 @@ def depth_shade(delta: int) -> float:
     return max(DEPTH_SHADE_MIN, DEPTH_SHADE_FACTOR ** delta)
 
 
+def topdown_cells(world: VoxelWorld, z_level: int):
+    """Per-column look-down data at z_level (spec R12/R18).
+
+    Returns (found_voxels, depth_below, has_terrain, ownership): the first
+    non-AIR voxel type per column, how far below z_level it sits, whether
+    any terrain exists down to z=0, and the ownership at the found voxel.
+    """
+    sub_voxels = world.voxels[:, :, :z_level + 1]
+    nonair_from_top = (sub_voxels != VoxelType.AIR.value)[:, :, ::-1]
+    depth_below = np.argmax(nonair_from_top, axis=2)      # 0 = terrain at z_level
+    has_terrain = nonair_from_top.any(axis=2)
+    z_found = z_level - depth_below
+    found_voxels = np.take_along_axis(sub_voxels, z_found[..., None], axis=2)[..., 0]
+    ownership = np.take_along_axis(world.ownership[:, :, :z_level + 1],
+                                   z_found[..., None], axis=2)[..., 0]
+    return found_voxels, depth_below, has_terrain, ownership
+
+
 def topdown_color_array(world: VoxelWorld, colonies: List[Colony], z_level: int) -> np.ndarray:
     """(w, h, 3) uint8 DF-style top-down view at z_level (spec R12).
 
@@ -85,18 +127,10 @@ def topdown_color_array(world: VoxelWorld, colonies: List[Colony], z_level: int)
     darker with depth; owned surface voxels blend TERRITORY_TINT of the
     colony color; bottomless columns render VOID_COLOR.
     """
-    sub_voxels = world.voxels[:, :, :z_level + 1]
-    nonair_from_top = (sub_voxels != VoxelType.AIR.value)[:, :, ::-1]
-    depth_below = np.argmax(nonair_from_top, axis=2)      # 0 = terrain at z_level
-    has_terrain = nonair_from_top.any(axis=2)
-    z_found = z_level - depth_below
-
-    found_voxels = np.take_along_axis(sub_voxels, z_found[..., None], axis=2)[..., 0]
+    found_voxels, depth_below, has_terrain, ownership = topdown_cells(world, z_level)
     colors = build_voxel_palette()[found_voxels].astype(np.float32)
     colors *= np.maximum(DEPTH_SHADE_MIN, DEPTH_SHADE_FACTOR ** depth_below)[..., None]
 
-    ownership = np.take_along_axis(world.ownership[:, :, :z_level + 1],
-                                   z_found[..., None], axis=2)[..., 0]
     for colony in colonies:
         mask = has_terrain & (ownership == colony.colony_id)
         if mask.any():
@@ -153,27 +187,49 @@ def unit_draw_color(colony_color: Tuple[int, int, int],
     return tuple(colony_color), border
 
 
-def build_hud_lines(sim: SandKingsSimulation, sps: float, paused: bool,
-                    z_level: int, capturing: bool,
-                    view_mode: ViewMode = ViewMode.TOPDOWN,
-                    overlay: Optional[PheromoneType] = None) -> List[str]:
-    """HUD text: global state, per-colony stats, and the recent drama feed."""
-    lines = [
-        f"Step {sim.step_count}",
-        f"{'PAUSED' if paused else 'RUNNING'} @ {sps:.1f} steps/s",
-        f"{view_mode.name}  z={z_level}/{sim.world.depth - 1}",
-        f"Capture: {'ON' if capturing else 'off'}"
-        + (f"  Pher: {overlay.name}" if overlay else ""),
-        "",
+def hud_text_color(color: Tuple[int, int, int]) -> Tuple[int, int, int]:
+    """A colony color made legible on the dark HUD panel (spec R19)."""
+    r, g, b = color
+    if 0.299 * r + 0.587 * g + 0.114 * b < 60:
+        return (150, 150, 150)
+    return color
+
+
+def event_tint(message: str) -> Tuple[int, int, int]:
+    """HUD color for a drama-feed message (spec R19)."""
+    for needle, color in EVENT_TINTS:
+        if needle in message:
+            return color
+    return HUD_FG
+
+
+def hp_bar(fraction: float, width: int = 8) -> str:
+    """Text health bar like [███░░░░░]."""
+    filled = int(round(max(0.0, min(1.0, fraction)) * width))
+    return "[" + "█" * filled + "░" * (width - filled) + "]"
+
+
+def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
+                      z_level: int, capturing: bool,
+                      view_mode: ViewMode = ViewMode.TOPDOWN,
+                      overlay: Optional[PheromoneType] = None
+                      ) -> List[Tuple[str, Tuple[int, int, int]]]:
+    """HUD content as (text, color) pairs: state, colonies, drama feed (R19)."""
+    entries = [
+        (f"Step {sim.step_count}", HUD_FG),
+        (f"{'PAUSED' if paused else 'RUNNING'} @ {sps:.1f} steps/s", HUD_FG),
+        (f"{view_mode.name}  z={z_level}/{sim.world.depth - 1}", HUD_FG),
+        (f"Capture: {'ON' if capturing else 'off'}"
+         + (f"  Pher: {overlay.name}" if overlay else ""), HUD_FG),
+        ("", HUD_FG),
     ]
     for colony in sim.colonies:
+        color = hud_text_color(colony.color)
         if not colony.is_alive():
             due = getattr(sim, 'pending_respawns', {}).get(colony.colony_id)
-            if due is not None:
-                lines.append(f"Colony {colony.colony_id}: DEAD"
-                             f" (respawn in {max(0, due - sim.step_count)})")
-            else:
-                lines.append(f"Colony {colony.colony_id}: DEAD")
+            suffix = (f" (respawn in {max(0, due - sim.step_count)})"
+                      if due is not None else "")
+            entries.append((f"Colony {colony.colony_id}: DEAD{suffix}", (140, 60, 60)))
             continue
         castes = {t: 0 for t in UnitType}
         retreating = 0
@@ -181,18 +237,32 @@ def build_hud_lines(sim: SandKingsSimulation, sps: float, paused: bool,
             castes[unit.unit_type] += 1
             if unit.retreating:
                 retreating += 1
-        lines.append(f"Colony {colony.colony_id}")
-        lines.append(f"  W:{castes[UnitType.WORKER]} S:{castes[UnitType.SOLDIER]}"
-                     f" Sc:{castes[UnitType.SCOUT]} retreat:{retreating}")
-        lines.append(f"  food:{colony.maw.food_stored:.0f} maw:{colony.maw.health:.0f}")
+        entries.append((f"Colony {colony.colony_id}", color))
+        entries.append((f"  W:{castes[UnitType.WORKER]} S:{castes[UnitType.SOLDIER]}"
+                        f" Sc:{castes[UnitType.SCOUT]} retreat:{retreating}", color))
+        maw_line = f"  food:{colony.maw.food_stored:.0f} maw:{colony.maw.health:.0f}"
+        hp_frac = colony.maw.health / MAW_MAX_HEALTH
+        if hp_frac < 1.0:
+            maw_line += f" {hp_bar(hp_frac)}"
+        entries.append((maw_line, color))
     events = list(getattr(sim, 'events', []))[-EVENT_LINES:]
     if events:
-        lines.append("")
+        entries.append(("", HUD_FG))
         for step, message in events:
-            lines.append(f"[{step}] {message}"[:38])
-    lines += ["", "SPACE pause  S step", "+/- speed  </> or UP/DN z",
-              "TAB view  P pheromones", "G capture  ESC quit"]
-    return lines
+            entries.append((f"[{step}] {message}"[:38], event_tint(message)))
+    for help_line in ("", "SPACE pause  S step", "+/- speed  </> or UP/DN z",
+                      "TAB view  P pheromones  R style", "G capture  ESC quit"):
+        entries.append((help_line, (140, 140, 150)))
+    return entries
+
+
+def build_hud_lines(sim: SandKingsSimulation, sps: float, paused: bool,
+                    z_level: int, capturing: bool,
+                    view_mode: ViewMode = ViewMode.TOPDOWN,
+                    overlay: Optional[PheromoneType] = None) -> List[str]:
+    """Text-only projection of build_hud_entries (kept for callers/tests)."""
+    return [text for text, _ in build_hud_entries(
+        sim, sps, paused, z_level, capturing, view_mode, overlay)]
 
 
 class StepPacer:
@@ -258,10 +328,14 @@ class LiveViewer:
         self.z_level = sim.world.depth - 1  # surface view (spec R14)
         self.capturing = False
         self.overlay_index = 0  # index into PHEROMONE_OVERLAYS (spec R17)
+        self.render_style = RenderStyle.GLYPH  # dazzle by default (spec R18)
         self.captured_frames: List[np.ndarray] = []
         self.running = False
         self._screen = None
         self._font = None
+        self._cell_font = None
+        self._maw_font = None
+        self._glyph_cache: dict = {}  # (char, color, big) -> Surface
 
     def run(self) -> None:
         pygame.init()
@@ -271,6 +345,10 @@ class LiveViewer:
             self._screen = pygame.display.set_mode(size)
             pygame.display.set_caption("Sand Kings — Live Terrarium")
             self._font = pygame.font.SysFont("consolas,courier", 14)
+            self._cell_font = pygame.font.SysFont("consolas,couriernew",
+                                                  self.cell_size + 3, bold=True)
+            self._maw_font = pygame.font.SysFont("consolas,couriernew",
+                                                 self.cell_size * 2, bold=True)
             clock = pygame.time.Clock()
             self.running = True
 
@@ -332,20 +410,63 @@ class LiveViewer:
                 self.capturing = not self.capturing
             elif key == pygame.K_p:
                 self.overlay_index = (self.overlay_index + 1) % len(PHEROMONE_OVERLAYS)
+            elif key == pygame.K_r:
+                self.render_style = (RenderStyle.BLOCKS
+                                     if self.render_style == RenderStyle.GLYPH
+                                     else RenderStyle.GLYPH)
+
+    def _glyph(self, char: str, color: Tuple[int, int, int],
+               big: bool = False) -> "pygame.Surface":
+        """Cached rendered glyph; the grid never re-renders text per frame (R18)."""
+        key = (char, color, big)
+        surface = self._glyph_cache.get(key)
+        if surface is None:
+            font = self._maw_font if big else self._cell_font
+            surface = font.render(char, True, color)
+            self._glyph_cache[key] = surface
+        return surface
+
+    def _blit_glyph(self, char: str, color: Tuple[int, int, int],
+                    cx: int, cy: int, big: bool = False) -> None:
+        """Blit a glyph centered on the cell at pixel (cx, cy)."""
+        cell = self.cell_size
+        span = cell * 2 if big else cell
+        surface = self._glyph(char, color, big)
+        self._screen.blit(surface, (cx + (span - surface.get_width()) // 2,
+                                    cy + (span - surface.get_height()) // 2))
 
     def _render(self) -> None:
         cell = self.cell_size
         w, h = self.sim.world.width, self.sim.world.height
+        glyph_mode = (self.render_style == RenderStyle.GLYPH
+                      and cell >= GLYPH_MIN_CELL)
 
         topdown = self.view_mode == ViewMode.TOPDOWN
         if topdown:
             colors = topdown_color_array(self.sim.world, self.sim.colonies, self.z_level)
         else:
             colors = slice_color_array(self.sim.world, self.sim.colonies, self.z_level)
-        surf = pygame.surfarray.make_surface(colors)  # axis 0 = x, no transpose
+
+        base = (colors * GLYPH_BG_DIM).astype(np.uint8) if glyph_mode else colors
+        surf = pygame.surfarray.make_surface(base)  # axis 0 = x, no transpose
         surf = pygame.transform.scale(surf, (w * cell, h * cell))
         self._screen.fill(HUD_BG)
         self._screen.blit(surf, (0, 0))
+
+        if glyph_mode:
+            if topdown:
+                found_voxels, _, has_terrain, _ = topdown_cells(self.sim.world, self.z_level)
+                cell_voxels = np.where(has_terrain, found_voxels, VoxelType.AIR.value)
+            else:
+                cell_voxels = self.sim.world.voxels[:, :, self.z_level]
+            for x in range(w):
+                col_voxels = cell_voxels[x]
+                col_colors = colors[x]
+                for y in range(h):
+                    char = GLYPHS.get(int(col_voxels[y]), " ")
+                    if char != " ":
+                        self._blit_glyph(char, tuple(int(c) for c in col_colors[y]),
+                                         x * cell, y * cell)
 
         overlay_type = PHEROMONE_OVERLAYS[self.overlay_index]
         if overlay_type is not None:
@@ -363,9 +484,14 @@ class LiveViewer:
                 ux, uy = unit.position[0], unit.position[1]
                 fill, border = unit_draw_color(colony.color, unit.retreating)
                 fill = tuple(int(c * depth_shade(depth)) for c in fill)
-                rect = pygame.Rect(ux * cell + 1, uy * cell + 1, cell - 2, cell - 2)
-                pygame.draw.rect(self._screen, fill, rect)
-                pygame.draw.rect(self._screen, border, rect, 1)
+                if glyph_mode:
+                    char = UNIT_GLYPHS.get(unit.unit_type, "?")
+                    color = border if unit.retreating else hud_text_color(fill)
+                    self._blit_glyph(char, color, ux * cell, uy * cell)
+                else:
+                    rect = pygame.Rect(ux * cell + 1, uy * cell + 1, cell - 2, cell - 2)
+                    pygame.draw.rect(self._screen, fill, rect)
+                    pygame.draw.rect(self._screen, border, rect, 1)
             if colony.is_alive():
                 depth = self._visible_depth(colony.maw.position)
                 if depth is not None:
@@ -373,8 +499,11 @@ class LiveViewer:
                     fill = tuple(int(c * depth_shade(depth)) for c in MAW_COLOR)
                     rect = pygame.Rect(mx * cell - cell // 2, my * cell - cell // 2,
                                        cell * 2, cell * 2)
-                    pygame.draw.rect(self._screen, fill, rect)
-                    pygame.draw.rect(self._screen, (0, 0, 0), rect, 2)
+                    if glyph_mode:
+                        self._blit_glyph(MAW_GLYPH, fill, rect.x, rect.y, big=True)
+                    else:
+                        pygame.draw.rect(self._screen, fill, rect)
+                        pygame.draw.rect(self._screen, (0, 0, 0), rect, 2)
                     # Siege health bar (spec R16): only shown when damaged
                     hp_frac = colony.maw.health / MAW_MAX_HEALTH
                     if hp_frac < 1.0:
@@ -386,12 +515,13 @@ class LiveViewer:
                                          (int(255 * (1 - hp_frac)), int(220 * hp_frac), 0), fg)
 
         hud_x = w * cell + 12
-        for i, line in enumerate(build_hud_lines(self.sim, self.pacer.steps_per_second,
-                                                 self.paused, self.z_level, self.capturing,
-                                                 self.view_mode,
-                                                 PHEROMONE_OVERLAYS[self.overlay_index])):
-            text = self._font.render(line, True, HUD_FG)
-            self._screen.blit(text, (hud_x, 10 + i * 18))
+        for i, (line, color) in enumerate(build_hud_entries(
+                self.sim, self.pacer.steps_per_second,
+                self.paused, self.z_level, self.capturing,
+                self.view_mode, PHEROMONE_OVERLAYS[self.overlay_index])):
+            if line:
+                text = self._font.render(line, True, color)
+                self._screen.blit(text, (hud_x, 10 + i * 18))
 
         pygame.display.flip()
 

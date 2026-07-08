@@ -245,6 +245,63 @@ def test_p_key_cycles_overlay():
     assert len([s for s in seen if s is not None]) == len(PHEROMONE_OVERLAYS) - 1
 
 
+def test_glyph_map_covers_all_voxel_types():
+    from live_view import GLYPHS, UNIT_GLYPHS, MAW_GLYPH
+    from sandkings import UnitType
+    for vt in VoxelType:
+        assert vt.value in GLYPHS, f"no glyph for {vt}"
+    for ut in UnitType:
+        assert ut in UNIT_GLYPHS, f"no glyph for {ut}"
+    assert MAW_GLYPH
+
+
+def test_hud_text_color_lightens_dark():
+    from live_view import hud_text_color
+    assert hud_text_color((0, 0, 0)) == (150, 150, 150), "black must be readable"
+    assert hud_text_color((255, 255, 255)) == (255, 255, 255)
+    assert hud_text_color((255, 0, 0)) == (255, 0, 0)
+
+
+def test_hud_entries_colors_and_hp_bar():
+    from live_view import build_hud_entries, event_tint, hud_text_color
+    from collections import deque
+    from sandkings import MAW_MAX_HEALTH
+    sim = make_sim()
+    wounded = sim.colonies[0]
+    wounded.maw.health = MAW_MAX_HEALTH * 0.5
+    sim.events = deque([(1, "Keeper scatters 40 food"),
+                        (2, "Colony 1 besieges Colony 0!")], maxlen=50)
+    entries = build_hud_entries(sim, sps=5.0, paused=False, z_level=2, capturing=False)
+    by_text = {text: color for text, color in entries}
+    assert by_text[f"Colony {wounded.colony_id}"] == hud_text_color(wounded.color)
+    maw_line = next(t for t in by_text if t.startswith("  food:") and "[" in t)
+    assert "█" in maw_line and "░" in maw_line, "damaged maw shows text hp bar"
+    assert by_text["[1] Keeper scatters 40 food"] == event_tint("Keeper")
+    assert by_text["[2] Colony 1 besieges Colony 0!"] == event_tint("besieges")
+
+
+def test_r_key_toggles_render_style():
+    import pygame
+    from live_view import RenderStyle
+    sim = make_sim()
+    viewer = LiveViewer(sim, max_steps=1)
+    assert viewer.render_style == RenderStyle.GLYPH, "glyph is the default"
+    viewer._handle_event(make_keydown(pygame.K_r))
+    assert viewer.render_style == RenderStyle.BLOCKS
+    viewer._handle_event(make_keydown(pygame.K_r))
+    assert viewer.render_style == RenderStyle.GLYPH
+
+
+def test_topdown_cells_consistency():
+    from live_view import topdown_cells
+    world = make_empty_world()
+    world.voxels[3, 3, 2] = VoxelType.SAND.value
+    found, depth, has, own = topdown_cells(world, 4)
+    assert found[3, 3] == VoxelType.SAND.value
+    assert depth[3, 3] == 2
+    assert has[3, 3] and not has[1, 1]
+
+
 def test_full_loop_headless_auto_exit():
     sim = make_sim()
     viewer = LiveViewer(sim, steps_per_second=60.0, max_steps=5)

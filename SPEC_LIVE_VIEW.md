@@ -108,6 +108,26 @@ Status: draft → implement → reconcile (see Reconciliation Log at bottom).
   selected type at the current z in SLICE mode; max over z ≤ z_level visible
   column in TOPDOWN is NOT required — z-slice sampling at the current level
   is acceptable in both modes). HUD names the active overlay.
+- **R18** (Round C — dazzle) The default render style MUST be GLYPH, a
+  DF-style character grid: each cell draws its terrain color dimmed by
+  GLYPH_BG_DIM as background and a foreground glyph from the GLYPH map
+  (SAND `░`, STONE `▓`, GLASS `#`, FOOD `•`, CORPSE `%`, TUNNEL_WALL `≡`,
+  AIR blank) in the full depth-shaded terrain color. Units render as
+  letters (`w` worker, `s` soldier, `c` scout) in colony color — black
+  units get a readable lightened color — and retreating units render their
+  letter in RETREAT_BORDER_COLOR. The Maw renders as `Ω` in MAW_COLOR at
+  double glyph size (health bar per R16 unchanged). `R` toggles GLYPH ↔
+  BLOCKS (the rect renderer, unchanged semantics). While cell_size <
+  GLYPH_MIN_CELL (8 px), BLOCKS MUST be used regardless of the toggle.
+  Glyph surfaces MUST be cached per (char, color) — the grid blits from
+  cache, never re-rendering text per frame.
+- **R19** (Round C) The HUD MUST be color-coded: colony stat lines in the
+  colony's color (lightened when too dark for the panel background); event
+  lines tinted by type (feeding green, siege orange, fall red, arrival
+  cyan); a damaged maw's line MUST include a text bar `[███░░░]` of its HP
+  fraction. Pure HUD content MUST come from `build_hud_entries(...) ->
+  list[(text, color)]`; `build_hud_lines` remains as the text-only
+  projection of the same content (existing tests and callers stay valid).
 - **R10** (MAY — stretch) While capture is on, each rendered frame is stored;
   on quit, frames save to `sandkings_live.gif`.
 - **R11** The Maw MUST render as a yellow (255,255,0) square with black border,
