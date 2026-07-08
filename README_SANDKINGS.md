@@ -159,21 +159,37 @@ Visualizer
 
 ## Roadmap
 
-### v1.1 (Next)
-- [ ] MapElites quality-diversity evolution
-- [ ] LLM-generated behavioral scripts (Ollama integration)
-- [ ] Behavioral DSL interpreter (WHEN/THEN rules)
-- [ ] Enhanced combat (cover, AP, criticals, poison)
-- [ ] Tournament evaluation loop
-- [ ] Configurable simulation lengths (50-2000 steps)
+### Done
+- [x] MapElites quality-diversity evolution (v1.1, `sandkings_evolution.py`)
+- [x] LLM-generated behavioral scripts (v1.1, Ollama via OpenAI-compat API)
+- [x] Behavioral DSL interpreter (v1.1, WHEN/THEN rules)
+- [x] Enhanced combat (v1.1 cover/criticals; v2 morale + retreat AI)
+- [x] Configurable simulation lengths (v1.1, `--steps` / `--sim-steps`)
+- [x] Morale/shaken mechanics (v2.0: retreat at 10% HP, retreat coloring)
+- [x] Resource gathering strategies (v2.2-2.3: directed foraging, scout
+      intel, keeper feedings, war-chest economics)
+- [x] Maw migration (v2.3: wounded maws crawl away from attackers)
+- [x] Outcome-based fitness (v2.3: eliminations/survival dominate scoring)
+- [x] Live viewer, DF glyph rendering, sandstorms, pet-mode persistence,
+      soldier GRU memory (v2.1-2.3, see CHANGELOG)
 
-### v1.2 (Future)
-- [ ] Multi-model wound tracking
-- [ ] Morale/shaken mechanics
-- [ ] Resource gathering strategies
-- [ ] Maw migration
-- [ ] Nested colonies
-- [ ] UMAP dimensionality reduction for 3D visualization
+### Explicitly out of scope (closed with rationale)
+- Tournament evaluation loop — outcome-based fitness delivers decisive
+  scoring; full round-robin over archived phenotypes is research tooling
+  beyond the terrarium's product scope. Reopen if evolution research resumes.
+- Multi-model wound tracking — units have 5-20 HP; per-limb wounds add
+  bookkeeping without observable behavior change at this scale. Morale +
+  retreat already express "wounded".
+- Nested colonies — no design exists for what nesting means here; parked
+  until one does.
+- UMAP for 3D visualization — would add a dependency, and the live DF
+  top-down view superseded the need it addressed.
+
+### Open research directions (neural)
+- Soldier-to-soldier communication, colony speciation, meta-learning,
+  neural workers, GPU forward passes — see NEURAL_HIVE_IMPLEMENTATION.md
+  Research Questions. The nearest-term item (temporal memory) shipped as
+  the v2.3 GRU.
 
 ## Credits
 

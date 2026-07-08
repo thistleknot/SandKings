@@ -215,6 +215,18 @@ Assert: len(colonies) is constant; every colony_id occurs exactly once
 
 ## 7. Reconciliation Log
 
+- 2026-07-07 (night rounds G-K) — T12 (sandstorms; non-overlap made explicit
+  in code, sand conservation tested), T13 (pet-mode persistence; verified
+  save-at-25 / resume / save-at-50 across real processes), T14 (outcome
+  fitness; siege pass extracted to `_apply_maw_siege_damage`, Enhanced sims
+  cascade deaths but never respawn), and T15 (maw migration) all implemented
+  as specced. Grand soak, 4000 steps with every system live: recent-50 event
+  mix 12 sieges / 14 feedings / 2 wars / 17 maw flights / 4 storms / falls
+  and arrivals; all slots alive-or-pending. N10 (soldier GRU memory) lives
+  in SPEC_NEURAL_ACTIVATION_TRACKING.md. Remaining roadmap items across the
+  docs were either shipped or closed with rationale (README_SANDKINGS.md
+  Roadmap: Done / Out of scope / Open research).
+
 - 2026-07-07 (drama rounds) — T9 (event feed), T10 (war parties with
   WAR_CHEST/2 hysteresis and 0-clamped maw HP), and T11 (scouts) implemented
   and soak-verified: war soak 12 sieges / 4 falls / 6 declarations in 3000

@@ -30,6 +30,14 @@ All notable changes to this project will be documented in this file.
   the viewer renders a flickering sand haze while it blows
 - **Pet mode** (`--persist [db]`): the terrarium lives between sessions -
   resumes from a sqlite checkpoint, autosaves on exit, `K` saves anytime
+- **Soldier GRU memory**: per-soldier recurrent state between the shared
+  Maw encoding and the action head; crossover/mutation cover memory
+  weights; offspring start with blank memories
+- **Outcome-based evolution fitness**: enemies_eliminated and survival
+  dominate scoring; maw sieges now run inside evaluation sims where
+  elimination is terminal (closes BATTLE_SYSTEM_V2 Next Step 4)
+- **Maw migration**: below 40% HP with an enemy in range, a Maw crawls
+  away from its attacker at 2 food per move ('The Maw flees!')
 
 ### Changed
 - Vectorized the cellular-automata territory pass (~100x on large
