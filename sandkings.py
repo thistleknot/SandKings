@@ -120,6 +120,10 @@ class VoxelWorld:
     def __init__(self, width=80, height=40, depth=20, seed: Optional[int] = None):
         self.dimensions = (width, height, depth)
         self.width, self.height, self.depth = width, height, depth
+        # seed=None derives from the global NumPy stream so np.random.seed()
+        # in tests makes terrain reproducible; unseeded runs stay random
+        if seed is None:
+            seed = int(np.random.randint(0, 2**31))
         self.rng = np.random.default_rng(seed)
 
         # Core voxel data
@@ -1103,22 +1107,27 @@ class SandKingsSimulation:
                 maw.fleeing = False
                 continue
 
-            dx = int(-np.sign(threat.position[0] - mx)) or random.choice([-1, 1])
-            dy = int(-np.sign(threat.position[1] - my)) or random.choice([-1, 1])
+            dx = int(-np.sign(threat.position[0] - mx))
+            dy = int(-np.sign(threat.position[1] - my))
+            if dx == 0 and dy == 0:  # attacker on top of the maw: pick any way out
+                dx, dy = random.choice([(-1, 0), (1, 0), (0, -1), (0, 1)])
             w, h, d = self.world.dimensions
-            new_pos = (mx + dx, my + dy, mz)
-            if not (1 <= new_pos[0] < w - 1 and 1 <= new_pos[1] < h - 1):
-                continue
-            voxel = self.world.get_voxel(*new_pos)
-            if not voxel.is_tunnelable():
-                continue
-
-            if not getattr(maw, 'fleeing', False):
-                maw.fleeing = True
-                self._log_event(f"Colony {colony.colony_id}'s Maw flees!")
-            self.world.set_voxel(*new_pos, VoxelType.AIR, colony_id=colony.colony_id)
-            maw.position = new_pos
-            maw.food_stored -= MAW_MIGRATE_COST
+            # Directly away first; blocked paths fall back to single axes
+            for step_dir in ((dx, dy), (dx, 0), (0, dy)):
+                if step_dir == (0, 0):
+                    continue
+                new_pos = (mx + step_dir[0], my + step_dir[1], mz)
+                if not (1 <= new_pos[0] < w - 1 and 1 <= new_pos[1] < h - 1):
+                    continue
+                if not self.world.get_voxel(*new_pos).is_tunnelable():
+                    continue
+                if not getattr(maw, 'fleeing', False):
+                    maw.fleeing = True
+                    self._log_event(f"Colony {colony.colony_id}'s Maw flees!")
+                self.world.set_voxel(*new_pos, VoxelType.AIR, colony_id=colony.colony_id)
+                maw.position = new_pos
+                maw.food_stored -= MAW_MIGRATE_COST
+                break
 
     def _apply_maw_regen(self):
         """Maws heal MAW_REGEN per step while no enemy unit is adjacent (SPEC T4)."""
