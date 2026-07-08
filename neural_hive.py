@@ -328,7 +328,7 @@ def encode_soldier_state(unit, colony, world, enemy_positions) -> torch.Tensor:
         enemy_dir = torch.zeros(3)
         enemy_dist = 1.0
     
-    # Local voxel neighborhood (3×3×3 = 27 voxels + padding = 28)
+    # Local voxel neighborhood (3×3×3 = 27 voxels exactly)
     local_voxels = []
     for dx in [-1, 0, 1]:
         for dy in [-1, 0, 1]:
@@ -338,25 +338,21 @@ def encode_soldier_state(unit, colony, world, enemy_positions) -> torch.Tensor:
                     voxel = world.get_voxel(nx, ny, nz)
                     local_voxels.append(float(voxel.value))
                 else:
-                    local_voxels.append(0.0)
-    
-    # Pad to 28
-    while len(local_voxels) < 28:
-        local_voxels.append(0.0)
+                    local_voxels.append(0.0)  # Out of bounds = solid
     
     # Colony food
     food_level = colony.maw.food_stored / 100.0  # Normalize
     
-    # Concatenate all features
+    # Concatenate all features (should be exactly 40)
     state = torch.cat([
-        pos,                                    # [0:3]
-        maw_rel,                               # [3:6]
-        torch.tensor([health_pct]),            # [6]
-        torch.tensor([retreating]),            # [7]
-        enemy_dir,                             # [8:11]
-        torch.tensor([enemy_dist]),            # [11]
-        torch.tensor(local_voxels[:28]),       # [12:40]
-        torch.tensor([food_level])             # [40]
+        pos,                                    # [0:3] = 3 features
+        maw_rel,                               # [3:6] = 3 features
+        torch.tensor([health_pct]),            # [6] = 1 feature
+        torch.tensor([retreating]),            # [7] = 1 feature
+        enemy_dir,                             # [8:11] = 3 features
+        torch.tensor([enemy_dist]),            # [11] = 1 feature
+        torch.tensor(local_voxels),            # [12:39] = 27 features
+        torch.tensor([food_level])             # [39] = 1 feature
     ])
     
     return state

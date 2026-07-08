@@ -295,13 +295,13 @@ class Maw:
         self.position = position
         self.genome = genome
         self.health = 100
-        self.food_stored = 50
+        self.food_stored = 200  # Higher starting food
         self.spawn_queue = deque()
         self.alive = True
     
     def spawn_unit(self, unit_type: UnitType) -> Optional[SandKing]:
         """Spawn worker/soldier, costs food"""
-        cost = {UnitType.WORKER: 5, UnitType.SOLDIER: 10, UnitType.SCOUT: 3}
+        cost = {UnitType.WORKER: 3, UnitType.SOLDIER: 6, UnitType.SCOUT: 3}
         if self.food_stored >= cost[unit_type]:
             self.food_stored -= cost[unit_type]
             unit = SandKing(self.colony_id, self.position, unit_type)
@@ -739,8 +739,8 @@ class SandKingsSimulation:
             if not colony.is_alive():
                 continue
             
-            # Maintenance cost: 0.5 food per unit per step
-            maintenance_cost = len(colony.units) * 0.5
+            # Maintenance cost: 1.0 food per unit per step (balanced pressure)
+            maintenance_cost = len(colony.units) * 1.0
             colony.maw.food_stored -= maintenance_cost
             
             # Starvation: kill units if food negative
@@ -757,10 +757,10 @@ class SandKingsSimulation:
                     self.world.set_voxel(*dead_unit.position, VoxelType.CORPSE)
             
             # Adjust spawn threshold by expansion_rate
-            spawn_threshold = 20 / max(0.1, colony.genome.expansion_rate)
+            spawn_threshold = 30 / max(0.1, colony.genome.expansion_rate)
             
-            # Maw spawning decisions
-            if colony.maw.food_stored > spawn_threshold and len(colony.units) < 50:
+            # Maw spawning decisions (reduced max units)
+            if colony.maw.food_stored > spawn_threshold and len(colony.units) < 30:
                 if random.random() < colony.genome.fertility:
                     unit_type = UnitType.WORKER if random.random() < 0.7 else UnitType.SOLDIER
                     colony.spawn_unit(unit_type)
@@ -787,7 +787,7 @@ class SandKingsSimulation:
                     # Move toward food/corpse
                     unit.move((nx, ny, nz))
                     self.world.set_voxel(nx, ny, nz, VoxelType.AIR)
-                    colony.maw.eat(10)  # Both give 10 food
+                    colony.maw.eat(15)  # Both give 15 food
                     
                     # Track neural performance
                     if unit.brain_layer is not None:
