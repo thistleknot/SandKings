@@ -83,6 +83,17 @@ to stay alive indefinitely.
   new arrivals, and the first step a Maw comes under siege (per siege spell —
   re-announced only after it has regenerated to full or the besieger died
   off; implementation MAY simplify to "when damaged at full health").
+- **T10** (Round D — war parties) `Constant: WAR_CHEST = 400`. While a
+  colony's `food_stored` > WAR_CHEST it is **at war**: its spawn mix flips
+  soldier-heavy (70% soldier instead of 30%), and its soldiers' maw-siege
+  targeting ignores `foraging_range` (they march across the map). The
+  transition into war MUST log "Colony X marches to war!" to the event feed
+  (once per transition). Hysteresis: war ends only when food falls below
+  WAR_CHEST/2 (war soak showed threshold flapping without it). Maw health is
+  clamped at 0 (soak briefly showed negative HP in the HUD).
+  Rationale: the 3000-step soak showed rich colonies hoarding unboundedly
+  with zero sieges — wealth must convert into drama. The HUD shows `[WAR]`
+  on a warring colony's line.
 - **T8** Terrain generation MUST produce: a 3-octave value-noise heightmap
   with per-column surface height in `[substrate+2, 0.85·depth]`; two stone
   strata bands (thickness 2) where band noise exceeds its threshold; cavern

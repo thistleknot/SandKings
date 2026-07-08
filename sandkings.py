@@ -45,6 +45,7 @@ MAW_MAX_HEALTH = 500
 MAW_REGEN = 0.5              # HP per step while unbesieged
 RESPAWN_DELAY = 300          # steps a fallen colony slot stays empty
 RESPAWN_FOOD = 50            # starting food for an arriving colony
+WAR_CHEST = 400              # food hoard that sends a colony to war (SPEC T10)
 
 
 class VoxelType(Enum):
@@ -417,7 +418,7 @@ class Maw:
     
     def take_damage(self, damage: int) -> bool:
         """Take damage, return True if killed"""
-        self.health -= damage
+        self.health = max(0, self.health - damage)
         if self.health <= 0:
             self.alive = False
             return True
@@ -440,6 +441,7 @@ class Colony:
         self.territory: Set[Tuple[int, int, int]] = {maw_position}
         self.genome = genome
         self.color = self.COLORS[colony_id % len(self.COLORS)]
+        self.at_war = False  # food hoard > WAR_CHEST drives raids (SPEC T10)
         
     def spawn_unit(self, unit_type: UnitType):
         """Spawn new unit from Maw"""
@@ -871,13 +873,22 @@ class SandKingsSimulation:
             # Adjust spawn threshold by expansion_rate
             spawn_threshold = 30 / max(0.1, colony.genome.expansion_rate)
 
+            # WAR FOOTING: a hoard converts into raids (SPEC T10).
+            # Hysteresis: enter above WAR_CHEST, stand down below half of it
+            was_at_war = colony.at_war
+            threshold = WAR_CHEST / 2 if colony.at_war else WAR_CHEST
+            colony.at_war = colony.maw.food_stored > threshold
+            if colony.at_war and not was_at_war:
+                self._log_event(f"Colony {colony.colony_id} marches to war!")
+
             # BOOTSTRAP: a colony with no units always fields a worker (SPEC T2)
             if not colony.units and colony.maw.food_stored >= 3:
                 colony.spawn_unit(UnitType.WORKER)
-            # Maw spawning decisions (reduced max units)
+            # Maw spawning decisions (reduced max units); war flips the mix
             elif colony.maw.food_stored > spawn_threshold and len(colony.units) < 30:
                 if random.random() < colony.genome.fertility:
-                    unit_type = UnitType.WORKER if random.random() < 0.7 else UnitType.SOLDIER
+                    worker_share = 0.3 if colony.at_war else 0.7
+                    unit_type = UnitType.WORKER if random.random() < worker_share else UnitType.SOLDIER
                     colony.spawn_unit(unit_type)
             
             # Unit AI (simplified)
@@ -1179,7 +1190,8 @@ class SandKingsSimulation:
                         if dist < maw_dist:
                             maw_dist, closest_maw = dist, enemy_colony.maw
 
-                    if (closest_maw is not None and maw_dist < colony.genome.foraging_range
+                    if (closest_maw is not None
+                            and (colony.at_war or maw_dist < colony.genome.foraging_range)
                             and random.random() < colony.genome.aggression):
                         if not self._step_toward(unit, closest_maw.position, colony):
                             pass  # boxed in this step; siege pressure resumes next step

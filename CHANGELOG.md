@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.0] - 2026-07-07
+
+### Added - Dazzle & Drama
+- **DF-style glyph renderer** (default; `R` toggles plain blocks): sand ░,
+  stone ▓, glass #, food •, corpses %, tunnel walls ≡; units as
+  colony-colored w/s/c letters (magenta when retreating); maws as
+  double-size yellow Ω over depth-shaded dimmed terrain
+- **Color-coded HUD**: colony lines in colony colors, tinted event feed,
+  [███░░] health bars for damaged maws, [WAR] badges
+- **Drama feed**: keeper feedings, siege first-blood, colony falls, and
+  arrivals stream into the HUD (sim.events, last 4 shown)
+- **Pheromone overlay**: `P` cycles FOOD_TRAIL / TERRITORY / DANGER as
+  additive colony-colored glow
+- **War parties**: a colony hoarding > 400 food goes to war - spawn mix
+  flips soldier-heavy and its soldiers raid enemy Maws across the whole
+  map (the long-run soak previously showed rich colonies hoarding
+  unboundedly with zero combat)
+
+### Changed
+- Vectorized the cellular-automata territory pass (~100x on large
+  territories; 2 -> 20 steps/s at full population) with a parity test
+- Console prints use ASCII markers (emoji crashed cp1252 pipes on Windows)
+- numpy pin trued to installed 2.2.6
+
+### Removed
+- sandkings_v1.py (dead legacy monolith, superseded since v1.2)
+
 ## [2.2.0] - 2026-07-07
 
 ### Added - Perpetual Terrarium (SPEC_TERRARIUM_LIVENESS.md)

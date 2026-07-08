@@ -213,6 +213,53 @@ def test_forage_target_invalidated_when_eaten():
     assert worker.forage_target != target, "stale target must be dropped"
 
 
+# --- War parties (T10) ---
+
+def test_war_footing_triggers_and_logs():
+    from sandkings import WAR_CHEST
+    sim = make_sim()
+    rich = sim.colonies[0]
+    rich.maw.food_stored = WAR_CHEST + 200
+    sim.step()
+    assert rich.at_war
+    assert any("marches to war" in m for _, m in sim.events)
+    war_events = [m for _, m in sim.events if "marches to war" in m
+                  and f"Colony {rich.colony_id}" in m]
+    sim.step()
+    war_events_after = [m for _, m in sim.events if "marches to war" in m
+                        and f"Colony {rich.colony_id}" in m]
+    assert len(war_events_after) == len(war_events), "logged once per transition"
+    rich.maw.food_stored = 10
+    sim.step()
+    assert not rich.at_war, "war ends when the hoard is spent"
+
+
+def test_war_soldier_marches_beyond_foraging_range():
+    sim = make_sim()
+    colony, enemy = sim.colonies[0], sim.colonies[1]
+    for c in sim.colonies:
+        c.units.clear()
+    colony.at_war = True
+    # soldier far from every unit and far from the enemy maw
+    z = sim.world.depth - 2
+    sim.world.voxels[1:-1, 1:-1, z] = VoxelType.AIR.value
+    start = (3, 3, z)
+    soldier = SandKing(colony.colony_id, start, UnitType.SOLDIER)
+    colony.units.append(soldier)
+    colony.genome.aggression = 1.0  # deterministic engage roll
+    mx, my, _ = enemy.maw.position
+    d0 = abs(start[0] - mx) + abs(start[1] - my)
+    assert d0 > colony.genome.foraging_range, "test premise: maw out of range"
+    moved = False
+    for _ in range(3):
+        sim._execute_unit_ai(soldier, colony)
+        d1 = abs(soldier.position[0] - mx) + abs(soldier.position[1] - my)
+        if d1 < d0:
+            moved = True
+            break
+    assert moved, "at-war soldier must march toward the distant enemy maw"
+
+
 # --- Vectorized CA parity (perf fix must preserve semantics) ---
 
 def _territory_spread_reference(world, colonies):

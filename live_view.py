@@ -237,7 +237,8 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
             castes[unit.unit_type] += 1
             if unit.retreating:
                 retreating += 1
-        entries.append((f"Colony {colony.colony_id}", color))
+        war = " [WAR]" if getattr(colony, 'at_war', False) else ""
+        entries.append((f"Colony {colony.colony_id}{war}", color))
         entries.append((f"  W:{castes[UnitType.WORKER]} S:{castes[UnitType.SOLDIER]}"
                         f" Sc:{castes[UnitType.SCOUT]} retreat:{retreating}", color))
         maw_line = f"  food:{colony.maw.food_stored:.0f} maw:{colony.maw.health:.0f}"
