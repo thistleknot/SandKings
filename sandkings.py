@@ -48,6 +48,10 @@ RESPAWN_FOOD = 50            # starting food for an arriving colony
 WAR_CHEST = 400              # food hoard that sends a colony to war (SPEC T10)
 SCOUT_ALARM_RANGE = 5        # Manhattan distance that triggers a scout alarm (SPEC T11)
 KNOWN_FOOD_CAP = 8           # shared food-intel entries per colony (SPEC T11)
+STORM_INTERVAL = 600         # steps between storm rolls (SPEC T12)
+STORM_CHANCE = 0.5           # probability a roll spawns a storm
+STORM_DURATION = 25          # steps a storm blows
+STORM_COLUMNS_FRACTION = 1 / 50  # surface columns disturbed per storm step
 
 
 class VoxelType(Enum):
@@ -774,6 +778,8 @@ class SandKingsSimulation:
         self.step_count = 0
         self.pending_respawns: Dict[int, int] = {}  # colony_id -> due step
         self.events: deque = deque(maxlen=50)  # (step, message) drama feed (SPEC T9)
+        self.storm_until = 0                   # storm active while > step_count (SPEC T12)
+        self._storm_wind = (1, 0)              # per-storm prevailing direction
         
         # Initialize colonies with random count (3-5) and positions
         self._spawn_colonies(num_colonies)
@@ -845,6 +851,18 @@ class SandKingsSimulation:
         # 3b. KEEPER FEEDING: scatter food on the surface (SPEC T1)
         if self.step_count % FEED_INTERVAL == 0:
             self._feed_terrarium()
+
+        # 3c. SANDSTORMS: wind reshapes the dunes (SPEC T12); storms never overlap
+        if (self.step_count % STORM_INTERVAL == 0
+                and self.storm_until <= self.step_count
+                and random.random() < STORM_CHANCE):
+            self.storm_until = self.step_count + STORM_DURATION
+            self._storm_wind = random.choice([(1, 0), (-1, 0), (0, 1), (0, -1)])
+            self._log_event("A sandstorm rises!")
+        if self.storm_until > self.step_count:
+            self._blow_sand()
+            if self.storm_until == self.step_count + 1:
+                self._log_event("The sandstorm passes")
 
         # 4. NEURAL PRUNING: Remove rarely activated weights every 50 steps
         if NEURAL_AVAILABLE and self.step_count % 50 == 0:
@@ -954,6 +972,35 @@ class SandKingsSimulation:
         coords = hits + np.array([x0, y0, z0])
         best = coords[int(np.argmin(np.abs(coords - np.array(position)).sum(axis=1)))]
         return (int(best[0]), int(best[1]), int(best[2]))
+
+    def _blow_sand(self):
+        """One storm step: wind transports surface sand downwind (SPEC T12).
+
+        Moves the top sand voxel of random interior columns to the top of
+        the downwind neighbor (with lateral jitter), then settles gravity so
+        drifts slump. Whatever the drift covers stays buried but diggable.
+        """
+        w, h, d = self.world.dimensions
+        substrate = d // 5
+        wx, wy = self._storm_wind
+        n = max(1, int(w * h * STORM_COLUMNS_FRACTION))
+        for _ in range(n):
+            x = random.randint(1, w - 2)
+            y = random.randint(1, h - 2)
+            top = self.world.surface_z(x, y)
+            if top <= substrate or self.world.voxels[x, y, top] != VoxelType.SAND.value:
+                continue
+            jitter = random.choice([-1, 0, 1])
+            tx = x + wx + (jitter if wx == 0 else 0)
+            ty = y + wy + (jitter if wy == 0 else 0)
+            if not (1 <= tx < w - 1 and 1 <= ty < h - 1):
+                continue
+            dst_top = self.world.surface_z(tx, ty)
+            if dst_top + 1 >= d:
+                continue
+            self.world.voxels[x, y, top] = VoxelType.AIR.value
+            self.world.voxels[tx, ty, dst_top + 1] = VoxelType.SAND.value
+        self.world.apply_gravity()
 
     def _pull_known_food(self, colony: Colony,
                          position: Tuple[int, int, int]) -> Optional[Tuple[int, int, int]]:

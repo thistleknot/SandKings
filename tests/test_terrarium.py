@@ -314,6 +314,43 @@ def test_stale_known_food_dropped():
     assert colony.known_food == [], "stale intel purged on read"
 
 
+# --- Sandstorms (T12) ---
+
+def test_storm_transports_sand_and_stays_settled():
+    sim = make_sim()
+    sim.storm_until = sim.step_count + 10
+    sim._storm_wind = (1, 0)
+    before = sim.world.voxels.copy()
+    for _ in range(5):
+        sim._blow_sand()
+    assert not np.array_equal(before, sim.world.voxels), "storm must reshape terrain"
+    settled = sim.world.voxels.copy()
+    sim.world.apply_gravity()
+    assert np.array_equal(settled, sim.world.voxels), "drifts must be settled"
+    total_sand_before = (before == VoxelType.SAND.value).sum()
+    total_sand_after = (sim.world.voxels == VoxelType.SAND.value).sum()
+    assert total_sand_after == total_sand_before, "wind moves sand, never creates/destroys it"
+
+
+def test_storm_lifecycle_events():
+    import sandkings as sk
+    sim = make_sim(seed=13)
+    old_interval, old_chance = sk.STORM_INTERVAL, sk.STORM_CHANCE
+    sk.STORM_INTERVAL, sk.STORM_CHANCE = 5, 1.0  # force a storm promptly
+    try:
+        while sim.storm_until == 0:
+            sim.step()
+        sk.STORM_CHANCE = 0.0  # no follow-up storms; let this one end
+        for _ in range(sk.STORM_DURATION + 2):
+            sim.step()
+    finally:
+        sk.STORM_INTERVAL, sk.STORM_CHANCE = old_interval, old_chance
+    messages = [m for _, m in sim.events]
+    assert any("sandstorm rises" in m for m in messages)
+    assert any("sandstorm passes" in m for m in messages)
+    assert sim.storm_until <= sim.step_count, "storm ended"
+
+
 # --- Vectorized CA parity (perf fix must preserve semantics) ---
 
 def _territory_spread_reference(world, colonies):

@@ -175,6 +175,14 @@ def pheromone_overlay_array(pheromones, colonies: List[Colony], z_level: int,
     return overlay.astype(np.uint8)
 
 
+def storm_haze_array(shape_wh: Tuple[int, int]) -> np.ndarray:
+    """(w, h, 3) uint8 flickering sand speckle for active storms (spec T12)."""
+    w, h = shape_wh
+    speckle = (np.random.random((w, h, 1)) > 0.55).astype(np.float32)
+    sand = np.array((194, 178, 128), dtype=np.float32) * 0.35
+    return (speckle * sand).astype(np.uint8)
+
+
 def unit_draw_color(colony_color: Tuple[int, int, int],
                     retreating: bool) -> Tuple[Tuple[int, int, int], Tuple[int, int, int]]:
     """(fill, border) for a unit marker; retreating units dim + magenta border."""
@@ -514,6 +522,12 @@ class LiveViewer:
                                          max(1, int(rect.width * hp_frac)), 3)
                         pygame.draw.rect(self._screen,
                                          (int(255 * (1 - hp_frac)), int(220 * hp_frac), 0), fg)
+
+        if getattr(self.sim, 'storm_until', 0) > self.sim.step_count:
+            haze = pygame.transform.scale(
+                pygame.surfarray.make_surface(storm_haze_array((w, h))),
+                (w * cell, h * cell))
+            self._screen.blit(haze, (0, 0), special_flags=pygame.BLEND_ADD)
 
         hud_x = w * cell + 12
         for i, (line, color) in enumerate(build_hud_entries(

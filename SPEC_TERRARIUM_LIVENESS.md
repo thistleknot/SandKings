@@ -106,6 +106,20 @@ to stay alive indefinitely.
   from `colony.known_food` (stale entries dropped on read). This closes
   the v1.0 known limitation "Scout units defined but not spawned" and
   feeds the DANGER overlay.
+- **T12** (Round G — sandstorms) `Constant: STORM_INTERVAL = 600`,
+  `Constant: STORM_CHANCE = 0.5`, `Constant: STORM_DURATION = 25`,
+  `Constant: STORM_COLUMNS_FRACTION = 1/50` (surface columns disturbed per
+  storm step). Every STORM_INTERVAL steps, with probability STORM_CHANCE, a
+  storm begins: `sim.storm_until = step + STORM_DURATION` and a per-storm
+  prevailing wind direction (unit x/y vector) is chosen. While a storm is
+  active, each step MUST transport sand: for ~`w·h·fraction` random interior
+  columns whose surface voxel is SAND above the substrate, the top sand
+  voxel moves to the top of the downwind neighbor column (with ±1 lateral
+  jitter), and gravity runs each storm step so drifts settle. Storms bury
+  what they cover (food/corpses under new sand stay in place — diggable).
+  Events: "A sandstorm rises!" on start and "The sandstorm passes" on end.
+  The viewer MUST render a flickering sand-haze overlay while
+  `sim.storm_until > sim.step_count` (guarded getattr).
 - **T8** Terrain generation MUST produce: a 3-octave value-noise heightmap
   with per-column surface height in `[substrate+2, 0.85·depth]`; two stone
   strata bands (thickness 2) where band noise exceeds its threshold; cavern
