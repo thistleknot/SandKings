@@ -351,6 +351,58 @@ def test_storm_lifecycle_events():
     assert sim.storm_until <= sim.step_count, "storm ended"
 
 
+# --- Persistence (T13) ---
+
+def test_checkpoint_roundtrip(tmp_path=None):
+    import tempfile
+    from sandkings import load_checkpoint, save_checkpoint
+    sim = make_sim(seed=21)
+    for _ in range(40):
+        sim.step()
+    with tempfile.TemporaryDirectory() as tmp:
+        db = os.path.join(tmp, "terrarium.db")
+        assert load_checkpoint(db) is None, "missing db loads as None"
+        save_checkpoint(sim, db)
+        sim.step()  # diverge, then save a later checkpoint
+        save_checkpoint(sim, db)
+        loaded = load_checkpoint(db)
+        assert loaded.step_count == sim.step_count, "latest checkpoint wins"
+        assert np.array_equal(loaded.world.voxels, sim.world.voxels)
+        assert np.array_equal(loaded.world.ownership, sim.world.ownership)
+        assert len(loaded.colonies) == len(sim.colonies)
+        for a, b in zip(loaded.colonies, sim.colonies):
+            assert len(a.units) == len(b.units)
+            assert a.maw.food_stored == b.maw.food_stored
+            assert a.maw.health == b.maw.health
+        assert loaded.pending_respawns == sim.pending_respawns
+        assert list(loaded.events) == list(sim.events)
+        loaded.step()  # resumed sim must be steppable
+        assert loaded.step_count == sim.step_count + 1
+
+
+def test_checkpoint_roundtrip_neural():
+    import tempfile
+    from sandkings import NEURAL_AVAILABLE, load_checkpoint, save_checkpoint
+    if not NEURAL_AVAILABLE:
+        return
+    from neural_hive import HiveMindBrain, SoldierLayer
+    sim = make_sim(seed=22)
+    for colony in sim.colonies:
+        colony.genome.use_neural = True
+        colony.genome.brain = HiveMindBrain()
+        for unit in colony.units:
+            if unit.unit_type == UnitType.SOLDIER:
+                unit.brain_layer = SoldierLayer()
+    for _ in range(10):
+        sim.step()
+    with tempfile.TemporaryDirectory() as tmp:
+        db = os.path.join(tmp, "terrarium.db")
+        save_checkpoint(sim, db)
+        loaded = load_checkpoint(db)
+        assert loaded.colonies[0].genome.brain is not None, "brains survive the pickle"
+        loaded.step()
+
+
 # --- Vectorized CA parity (perf fix must preserve semantics) ---
 
 def _territory_spread_reference(world, colonies):

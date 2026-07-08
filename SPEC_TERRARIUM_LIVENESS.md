@@ -120,6 +120,17 @@ to stay alive indefinitely.
   Events: "A sandstorm rises!" on start and "The sandstorm passes" on end.
   The viewer MUST render a flickering sand-haze overlay while
   `sim.storm_until > sim.step_count` (guarded getattr).
+- **T13** (Round H — persistence) `save_checkpoint(sim, path) -> int` MUST
+  pickle the entire simulation into a sqlite table
+  `checkpoints(id, step, saved_at, state BLOB)`; `load_checkpoint(path)`
+  MUST return the latest checkpoint's sim, or None when the file or table
+  has none. CLI: `--persist [DB]` (default path `terrarium.db`) resumes
+  from the db when it exists (else starts fresh) and autosaves on exit in
+  both live and GIF modes; in live mode the `K` key saves a snapshot on
+  demand and logs "The keeper preserves the terrarium". Neural init
+  (`--use-neural`) applies only to fresh sims — resumed sims keep their
+  evolved brains. Round-trip MUST preserve step_count, voxels, ownership,
+  colonies (units, food, maw HP), pending respawns, and the event feed.
 - **T8** Terrain generation MUST produce: a 3-octave value-noise heightmap
   with per-column surface height in `[substrate+2, 0.85·depth]`; two stone
   strata bands (thickness 2) where band noise exceeds its threshold; cavern

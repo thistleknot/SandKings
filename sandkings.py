@@ -5,7 +5,10 @@ Combines Core War's evolution with 1pageskirmish's tactics in a 3D voxel terrari
 Inspired by GRRM's Sand Kings novella - 4 colored Maw colonies compete for territory
 """
 
+import os
+import pickle
 import random
+import sqlite3
 import numpy as np
 from enum import Enum
 from dataclasses import dataclass, field
@@ -1423,6 +1426,48 @@ class SandKingsSimulation:
         return status
 
 # ============================================================================
+# PERSISTENCE - the terrarium lives between sessions (SPEC T13)
+# ============================================================================
+
+def save_checkpoint(sim: 'SandKingsSimulation', path: str) -> int:
+    """Pickle the whole simulation into a sqlite checkpoint row.
+
+    Returns the new checkpoint id. Failure mode: raises on unpicklable
+    state or unwritable path (callers treat persistence as best-effort).
+    """
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS checkpoints ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "step INTEGER NOT NULL, saved_at TEXT NOT NULL, state BLOB NOT NULL)")
+        blob = pickle.dumps(sim, protocol=pickle.HIGHEST_PROTOCOL)
+        cursor = conn.execute(
+            "INSERT INTO checkpoints (step, saved_at, state) "
+            "VALUES (?, datetime('now'), ?)", (sim.step_count, sqlite3.Binary(blob)))
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def load_checkpoint(path: str) -> Optional['SandKingsSimulation']:
+    """Latest checkpointed simulation from a sqlite db, or None if absent."""
+    if not os.path.exists(path):
+        return None
+    conn = sqlite3.connect(path)
+    try:
+        try:
+            row = conn.execute(
+                "SELECT state FROM checkpoints ORDER BY id DESC LIMIT 1").fetchone()
+        except sqlite3.OperationalError:  # no table: not a terrarium db yet
+            return None
+    finally:
+        conn.close()
+    return pickle.loads(row[0]) if row else None
+
+
+# ============================================================================
 # MAIN ENTRY POINT
 # ============================================================================
 
@@ -1437,6 +1482,9 @@ def main():
                         help='Open a real-time pygame viewer instead of rendering GIFs')
     parser.add_argument('--sps', type=float, default=5.0,
                         help='Live mode: initial simulation steps per second')
+    parser.add_argument('--persist', nargs='?', const='terrarium.db', default=None,
+                        metavar='DB', help='Resume from and autosave to a sqlite '
+                        'terrarium (default file: terrarium.db). Live mode: K saves.')
     parser.add_argument('--num-colonies', type=int, default=0, help='Number of colonies (0=random 3-5)')
     parser.add_argument('--width', type=int, default=80, help='World width')
     parser.add_argument('--height', type=int, default=40, help='World height')
@@ -1452,12 +1500,20 @@ def main():
         print("   Maw brain + soldier layers with mating/folding/pruning")
     print("="*60)
     
-    # Create simulation
-    sim = SandKingsSimulation(width=args.width, height=args.height, 
-                             depth=args.depth, num_colonies=args.num_colonies)
-    
-    # Enable neural mode if requested
-    if args.use_neural:
+    # Create or resume the simulation (SPEC T13)
+    sim = None
+    if args.persist:
+        sim = load_checkpoint(args.persist)
+        if sim is not None:
+            print(f"[>] Resumed terrarium from {args.persist} at step {sim.step_count}")
+    fresh = sim is None
+    if fresh:
+        sim = SandKingsSimulation(width=args.width, height=args.height,
+                                 depth=args.depth, num_colonies=args.num_colonies)
+
+    # Enable neural mode if requested (fresh sims only - resumed sims keep
+    # their evolved brains)
+    if args.use_neural and fresh:
         if NEURAL_AVAILABLE:
             for colony in sim.colonies:
                 colony.genome.use_neural = True
@@ -1478,7 +1534,8 @@ def main():
         import sys
         sys.modules.setdefault('sandkings', sys.modules[__name__])
         from live_view import run_live
-        run_live(sim, max_steps=args.steps, steps_per_second=args.sps)
+        run_live(sim, max_steps=args.steps, steps_per_second=args.sps,
+                 save_path=args.persist)
         print("\n" + sim.get_status())
         return
 
@@ -1520,6 +1577,11 @@ def main():
     print("\n" + sim.get_status())
     print("\n✓ Saved sandkings_2d.gif (2D cross-section)")
     print("✓ Saved sandkings_3d.gif (3D clustered view)")
+
+    if args.persist:
+        save_checkpoint(sim, args.persist)
+        print(f"[S] Terrarium saved to {args.persist}")
+
     print("\nSimulation complete!")
 
 if __name__ == "__main__":

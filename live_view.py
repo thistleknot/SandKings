@@ -323,7 +323,9 @@ class LiveViewer:
 
     def __init__(self, sim: SandKingsSimulation, cell_size: int = DEFAULT_CELL_SIZE,
                  steps_per_second: float = DEFAULT_STEPS_PER_SECOND,
-                 max_steps: Optional[int] = None):
+                 max_steps: Optional[int] = None,
+                 save_path: Optional[str] = None):
+        self.save_path = save_path  # sqlite terrarium db (spec T13); None = off
         self.sim = sim
         w, h = sim.world.width, sim.world.height
         self.cell_size = max(2, min(cell_size,
@@ -383,6 +385,8 @@ class LiveViewer:
             assert self.max_steps is None or self.steps_done <= self.max_steps
             self._save_capture()
         finally:
+            if self.save_path:
+                self._save_terrarium()
             pygame.quit()
 
     def _handle_event(self, event) -> None:
@@ -423,6 +427,10 @@ class LiveViewer:
                 self.render_style = (RenderStyle.BLOCKS
                                      if self.render_style == RenderStyle.GLYPH
                                      else RenderStyle.GLYPH)
+            elif key == pygame.K_k and self.save_path:
+                self._save_terrarium()
+                if hasattr(self.sim, '_log_event'):
+                    self.sim._log_event("The keeper preserves the terrarium")
 
     def _glyph(self, char: str, color: Tuple[int, int, int],
                big: bool = False) -> "pygame.Surface":
@@ -550,6 +558,12 @@ class LiveViewer:
             return 0 if position[2] == self.z_level else None
         return unit_visible_depth(self.sim.world, position, self.z_level)
 
+    def _save_terrarium(self) -> None:
+        """Checkpoint the sim into the sqlite terrarium db (spec T13)."""
+        from sandkings import save_checkpoint
+        save_checkpoint(self.sim, self.save_path)
+        print(f"[S] Terrarium saved to {self.save_path} at step {self.sim.step_count}")
+
     def _capture_frame(self) -> None:
         frame = pygame.surfarray.array3d(self._screen).transpose(1, 0, 2)
         self.captured_frames.append(frame.copy())
@@ -565,6 +579,8 @@ class LiveViewer:
 
 
 def run_live(sim: SandKingsSimulation, max_steps: Optional[int] = None,
-             steps_per_second: float = DEFAULT_STEPS_PER_SECOND) -> None:
+             steps_per_second: float = DEFAULT_STEPS_PER_SECOND,
+             save_path: Optional[str] = None) -> None:
     """Entry point from sandkings.main(): open the live window and block until done."""
-    LiveViewer(sim, steps_per_second=steps_per_second, max_steps=max_steps).run()
+    LiveViewer(sim, steps_per_second=steps_per_second, max_steps=max_steps,
+               save_path=save_path).run()

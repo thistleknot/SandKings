@@ -68,9 +68,15 @@ python sandkings.py --live --use-neural --sps 10
 # Dead colonies show a respawn countdown in the HUD.
 
 # The terrarium is perpetual: the keeper scatters food every 100 steps,
-# workers forage toward it, and colonies that hoard past 400 food march
-# to war - soldier-heavy spawns, cross-map raids on enemy Maws. Fallen
-# colonies become corpse feasts and a new colony arrives in the slot.
+# workers forage toward it, scouts survey and raise alarms, sandstorms
+# reshape the dunes, and colonies that hoard past 400 food march to war -
+# soldier-heavy spawns, cross-map raids on enemy Maws. Fallen colonies
+# become corpse feasts and a new colony arrives in the slot.
+
+# PET MODE: the terrarium lives between sessions (sqlite checkpoint)
+python sandkings.py --live --persist           # resumes terrarium.db if present,
+                                               # autosaves on exit; K saves anytime
+python sandkings.py --live --persist mytank.db # named tank
 ```
 
 ## Architecture

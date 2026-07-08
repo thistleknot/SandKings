@@ -25,6 +25,12 @@ All notable changes to this project will be documented in this file.
   when enemies close within 5 - closing the v1.0 "scouts defined but
   not spawned" limitation
 
+- **Sandstorms**: every ~600 steps a 25-step storm's prevailing wind
+  transports surface sand downwind, reshaping dunes and burying food;
+  the viewer renders a flickering sand haze while it blows
+- **Pet mode** (`--persist [db]`): the terrarium lives between sessions -
+  resumes from a sqlite checkpoint, autosaves on exit, `K` saves anytime
+
 ### Changed
 - Vectorized the cellular-automata territory pass (~100x on large
   territories; 2 -> 20 steps/s at full population) with a parity test
