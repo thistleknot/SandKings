@@ -260,6 +260,60 @@ def test_war_soldier_marches_beyond_foraging_range():
     assert moved, "at-war soldier must march toward the distant enemy maw"
 
 
+# --- Scouts (T11) ---
+
+def test_scout_surveys_food_into_colony_intel():
+    sim = make_sim()
+    colony = sim.colonies[0]
+    for c in sim.colonies:
+        c.units.clear()
+    z = sim.world.depth - 2
+    sim.world.voxels[1:-1, 1:-1, z] = VoxelType.AIR.value
+    # remove all terrain food/corpses so the planted voxel is the only find
+    for vt in (VoxelType.FOOD.value, VoxelType.CORPSE.value):
+        sim.world.voxels[sim.world.voxels == vt] = VoxelType.AIR.value
+    scout = SandKing(colony.colony_id, (5, 5, z), UnitType.SCOUT)
+    colony.units.append(scout)
+    food_pos = (5 + colony.genome.foraging_range + 3, 5, z)  # beyond worker range
+    sim.world.voxels[food_pos] = VoxelType.FOOD.value
+    sim._execute_unit_ai(scout, colony)
+    assert food_pos in colony.known_food, "scout must report distant food"
+    # a worker with nothing in personal range pulls the intel
+    worker = SandKing(colony.colony_id, (5, 5, z), UnitType.WORKER)
+    colony.units.append(worker)
+    sim._execute_unit_ai(worker, colony)
+    assert worker.forage_target == food_pos, "worker must adopt scout intel"
+
+
+def test_scout_alarm_deposits_danger_and_flees():
+    from sandkings import PheromoneType, SCOUT_ALARM_RANGE
+    sim = make_sim()
+    colony, enemy_colony = sim.colonies[0], sim.colonies[1]
+    for c in sim.colonies:
+        c.units.clear()
+    z = sim.world.depth - 2
+    sim.world.voxels[1:-1, 1:-1, z] = VoxelType.AIR.value
+    scout_pos = (10, 10, z)
+    scout = SandKing(colony.colony_id, scout_pos, UnitType.SCOUT)
+    colony.units.append(scout)
+    enemy = SandKing(enemy_colony.colony_id, (12, 10, z), UnitType.SOLDIER)
+    enemy_colony.units.append(enemy)
+    sim._execute_unit_ai(scout, colony)
+    strength = sim.pheromones.get_strength(scout_pos, colony.colony_id,
+                                           PheromoneType.DANGER)
+    assert strength > 0, "alarm pheromone deposited at sighting position"
+    assert scout.position[0] < scout_pos[0], "scout fled away from the enemy"
+
+
+def test_stale_known_food_dropped():
+    sim = make_sim()
+    colony = sim.colonies[0]
+    stale = (5, 5, sim.world.depth - 2)
+    colony.known_food = [stale]
+    assert sim._pull_known_food(colony, (1, 1, 1)) is None
+    assert colony.known_food == [], "stale intel purged on read"
+
+
 # --- Vectorized CA parity (perf fix must preserve semantics) ---
 
 def _territory_spread_reference(world, colonies):

@@ -19,6 +19,11 @@ All notable changes to this project will be documented in this file.
   flips soldier-heavy and its soldiers raid enemy Maws across the whole
   map (the long-run soak previously showed rich colonies hoarding
   unboundedly with zero combat)
+- **Scouts live**: 15% of peacetime spawns (10% at war); fast air-only
+  wanderers that report distant food into shared colony intel (workers
+  pull it when their own scan fails) and raise DANGER pheromone alarms
+  when enemies close within 5 - closing the v1.0 "scouts defined but
+  not spawned" limitation
 
 ### Changed
 - Vectorized the cellular-automata territory pass (~100x on large

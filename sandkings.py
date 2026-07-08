@@ -46,6 +46,8 @@ MAW_REGEN = 0.5              # HP per step while unbesieged
 RESPAWN_DELAY = 300          # steps a fallen colony slot stays empty
 RESPAWN_FOOD = 50            # starting food for an arriving colony
 WAR_CHEST = 400              # food hoard that sends a colony to war (SPEC T10)
+SCOUT_ALARM_RANGE = 5        # Manhattan distance that triggers a scout alarm (SPEC T11)
+KNOWN_FOOD_CAP = 8           # shared food-intel entries per colony (SPEC T11)
 
 
 class VoxelType(Enum):
@@ -442,6 +444,7 @@ class Colony:
         self.genome = genome
         self.color = self.COLORS[colony_id % len(self.COLORS)]
         self.at_war = False  # food hoard > WAR_CHEST drives raids (SPEC T10)
+        self.known_food: List[Tuple[int, int, int]] = []  # scout intel (SPEC T11)
         
     def spawn_unit(self, unit_type: UnitType):
         """Spawn new unit from Maw"""
@@ -887,8 +890,13 @@ class SandKingsSimulation:
             # Maw spawning decisions (reduced max units); war flips the mix
             elif colony.maw.food_stored > spawn_threshold and len(colony.units) < 30:
                 if random.random() < colony.genome.fertility:
-                    worker_share = 0.3 if colony.at_war else 0.7
-                    unit_type = UnitType.WORKER if random.random() < worker_share else UnitType.SOLDIER
+                    roll = random.random()
+                    if colony.at_war:  # SPEC T11 mix: 0.30 W / 0.60 S / 0.10 C
+                        unit_type = (UnitType.WORKER if roll < 0.30 else
+                                     UnitType.SOLDIER if roll < 0.90 else UnitType.SCOUT)
+                    else:              # peacetime: 0.60 W / 0.25 S / 0.15 C
+                        unit_type = (UnitType.WORKER if roll < 0.60 else
+                                     UnitType.SOLDIER if roll < 0.85 else UnitType.SCOUT)
                     colony.spawn_unit(unit_type)
             
             # Unit AI (simplified)
@@ -946,6 +954,20 @@ class SandKingsSimulation:
         coords = hits + np.array([x0, y0, z0])
         best = coords[int(np.argmin(np.abs(coords - np.array(position)).sum(axis=1)))]
         return (int(best[0]), int(best[1]), int(best[2]))
+
+    def _pull_known_food(self, colony: Colony,
+                         position: Tuple[int, int, int]) -> Optional[Tuple[int, int, int]]:
+        """Nearest still-valid scout-reported food; stale entries dropped (SPEC T11)."""
+        valid = []
+        for entry in colony.known_food:
+            if self.world.get_voxel(*entry) in (VoxelType.FOOD, VoxelType.CORPSE):
+                valid.append(entry)
+        colony.known_food = valid
+        if not valid:
+            return None
+        return min(valid, key=lambda p: (abs(p[0] - position[0])
+                                         + abs(p[1] - position[1])
+                                         + abs(p[2] - position[2])))
 
     def _step_toward(self, unit: SandKing, target: Tuple[int, int, int],
                      colony: Colony) -> bool:
@@ -1094,6 +1116,8 @@ class SandKingsSimulation:
                 if target is None:
                     target = self._find_food_target(unit.position,
                                                     colony.genome.foraging_range)
+                    if target is None:
+                        target = self._pull_known_food(colony, unit.position)
                     unit.forage_target = target
                 if target is not None:
                     acted = self._step_toward(unit, target, colony)
@@ -1107,6 +1131,46 @@ class SandKingsSimulation:
                     self.pheromones.deposit(unit.position, colony.colony_id,
                                           PheromoneType.TERRITORY, 1.0)
         
+        # Scouts: fast surface surveyors and sentinels (SPEC T11)
+        elif unit.unit_type == UnitType.SCOUT:
+            nearest_enemy, enemy_dist = None, float('inf')
+            for enemy_colony in self.colonies:
+                if enemy_colony.colony_id == colony.colony_id:
+                    continue
+                for enemy in enemy_colony.units:
+                    dist = (abs(enemy.position[0] - x) + abs(enemy.position[1] - y)
+                            + abs(enemy.position[2] - z))
+                    if dist < enemy_dist:
+                        enemy_dist, nearest_enemy = dist, enemy
+
+            if nearest_enemy is not None and enemy_dist <= SCOUT_ALARM_RANGE:
+                # Alarm: mark danger (feeds the DANGER overlay) and flee
+                self.pheromones.deposit(unit.position, colony.colony_id,
+                                        PheromoneType.DANGER, 2.0)
+                for _ in range(2):
+                    ux, uy, uz = unit.position
+                    dx = -np.sign(nearest_enemy.position[0] - ux) or random.choice([-1, 1])
+                    dy = -np.sign(nearest_enemy.position[1] - uy) or random.choice([-1, 1])
+                    flee_pos = (int(ux + dx), int(uy + dy), uz)
+                    if (self.world.in_bounds(*flee_pos) and
+                            self.world.get_voxel(*flee_pos) == VoxelType.AIR):
+                        unit.move(flee_pos)
+            else:
+                # Survey: long-range food intel for the colony
+                found = self._find_food_target(unit.position,
+                                               colony.genome.foraging_range * 2)
+                if found is not None and found not in colony.known_food:
+                    colony.known_food.append(found)
+                    del colony.known_food[:-KNOWN_FOOD_CAP]
+                # Fast wander through open air (scouts do not tunnel)
+                for _ in range(2):
+                    ux, uy, uz = unit.position
+                    direction = random.choice([(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)])
+                    new_pos = (ux + direction[0], uy + direction[1], uz + direction[2])
+                    if (self.world.in_bounds(*new_pos) and
+                            self.world.get_voxel(*new_pos) == VoxelType.AIR):
+                        unit.move(new_pos)
+
         # Soldiers: NEURAL AI or RULE-BASED
         elif unit.unit_type == UnitType.SOLDIER:
             # NEURAL AI PATH

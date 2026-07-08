@@ -94,6 +94,18 @@ to stay alive indefinitely.
   Rationale: the 3000-step soak showed rich colonies hoarding unboundedly
   with zero sieges — wealth must convert into drama. The HUD shows `[WAR]`
   on a warring colony's line.
+- **T11** (Round F — scouts) Scouts join the spawn mix: peacetime
+  0.60 worker / 0.25 soldier / 0.15 scout; at war 0.30 / 0.60 / 0.10.
+  Scout AI: (a) if an enemy unit is within SCOUT_ALARM_RANGE (5,
+  Manhattan), the scout MUST deposit a DANGER pheromone (strength 2.0)
+  at its position and flee (up to 2 AIR moves away); (b) otherwise it
+  surveys — scanning 2 × foraging_range for food/corpses and appending
+  finds to `colony.known_food` (deduped, cap KNOWN_FOOD_CAP = 8) — and
+  wanders fast (up to 2 random AIR moves per step; scouts do not tunnel).
+  Workers whose own scan fails MUST pull the nearest still-valid entry
+  from `colony.known_food` (stale entries dropped on read). This closes
+  the v1.0 known limitation "Scout units defined but not spawned" and
+  feeds the DANGER overlay.
 - **T8** Terrain generation MUST produce: a 3-octave value-noise heightmap
   with per-column surface height in `[substrate+2, 0.85·depth]`; two stone
   strata bands (thickness 2) where band noise exceeds its threshold; cavern
