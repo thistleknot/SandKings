@@ -194,7 +194,7 @@ python sandkings_evolution.py --mode demo --sim-steps 500 --gpu --num-colonies 0
 
 1. **Test long runs (500-1000 steps)** - Verify morale system creates decisive outcomes
 2. **Check battle duration** - Should see colonies eliminated through morale collapse
-3. **Visualize retreats** - Add color coding for retreating units (e.g., darker shade)
+3. ✅ **Visualize retreats** - Done: the live viewer (`python sandkings.py --live`) renders retreating units at 40% brightness with a magenta border (`live_view.py`, SPEC_LIVE_VIEW.md R5)
 4. **Fix fitness function** - Change from time-based to outcome-based scoring
 5. **Reduce max steps** - If battles are decisive, reduce from 500 → 200 for evolution
 

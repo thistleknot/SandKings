@@ -135,4 +135,22 @@ Termination conditions: user quit (ESC/close) OR steps_done reaching max_steps.
 
 ## 7. Reconciliation Log
 
-- (fill in after implementation)
+- 2026-07-07 — Implemented as specced with three deviations/discoveries:
+  1. **Module aliasing requirement (new)**: when `sandkings.py` runs as a
+     script it is `__main__`; `live_view`'s `from sandkings import ...` would
+     re-import a duplicate module with distinct enum classes (KeyError on
+     `UnitType`). The `--live` branch MUST alias
+     `sys.modules['sandkings'] = sys.modules[__name__]` before importing
+     `live_view`. Implemented in `sandkings.main()`.
+  2. **Capture cadence**: frames are captured only on renders where at least
+     one sim step executed (not every 60 FPS frame), keeping
+     `sandkings_live.gif` aligned with sim time. R10 refined accordingly.
+  3. **Pre-existing sim defect fixed during verification**: with
+     `--num-colonies 0` (default), `SandKingsSimulation.__init__` sized the
+     pheromone colony axis at 0 before `_spawn_colonies` resolved the random
+     3-5 count, crashing on first deposit. Count is now resolved in
+     `__init__` before `PheromoneLayer` construction (out of this spec's
+     module scope, recorded here as the discovering spec).
+- Acceptance verified: GIF regression (`--steps 5`), headless live 30 steps
+  exit 0, neural live 120 steps exit 0, windowed 100-step auto-exit, both
+  test suites green (8 + 6 tests).

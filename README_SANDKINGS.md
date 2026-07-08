@@ -42,6 +42,16 @@ python sandkings.py
 # Outputs:
 # - sandkings_2d.gif (2D cross-section animation, 20 frames)
 # - sandkings_3d.gif (3D visualization, 5 frames)
+
+# LIVE MODE: watch the terrarium in a real-time pygame window
+python sandkings.py --live                     # run until you quit
+python sandkings.py --live --steps 500         # auto-exit after 500 steps
+python sandkings.py --live --use-neural --sps 10
+
+# Live controls:
+#   SPACE pause/resume   S single-step (paused)   +/- speed
+#   UP/DOWN z-slice      G toggle GIF capture     ESC quit
+# Retreating units render dimmed with a magenta border.
 ```
 
 ## Architecture

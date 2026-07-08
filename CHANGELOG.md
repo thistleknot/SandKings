@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.0] - 2026-07-07
+
+### Added - Live Terrarium Viewer
+- **Live mode**: `python sandkings.py --live` opens a real-time pygame window
+  (2D z-slice, per-colony HUD, pause/speed/slice controls, optional GIF capture);
+  `--live --steps N` auto-exits for scripted runs. Spec: SPEC_LIVE_VIEW.md
+- **Retreat visualization**: retreating units render dimmed with magenta border
+  (BATTLE_SYSTEM_V2 Next Steps item 3)
+- **Tests**: `tests/test_live_view.py`, `tests/test_neural_activation.py`
+
+### Fixed
+- **Neural pruning was vestigial**: `HiveMindBrain.forward` had unreachable code
+  and tracked nonzero-weight masks instead of activations; now tracks per-neuron
+  post-ReLU firing EMA with a warm-up guard, so `prune_weights` actually prunes.
+  Spec: SPEC_NEURAL_ACTIVATION_TRACKING.md
+- **`fold_soldier_layer` shape mismatch**: blending a 7x32 soldier layer into the
+  32x64 encoder raised RuntimeError whenever a dying soldier scored >= 0.7; now
+  blends the overlapping submatrix
+- **Default-flag crash**: `--num-colonies 0` (the default) built a zero-size
+  pheromone colony axis before the random 3-5 count was resolved, crashing on
+  the first deposit; the count is now resolved in `SandKingsSimulation.__init__`
+- **requirements.txt**: added torch, matplotlib, Pillow (imported but unpinned)
+
 ## [2.0.0] - 2026-01-24
 
 ### Added - Sand Kings 3D Colony Simulation

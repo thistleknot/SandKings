@@ -89,4 +89,8 @@ Assert: output shape == encoder(x).shape
 
 ## 6. Reconciliation Log
 
-- (fill in after implementation)
+- 2026-07-07 — Implemented as specced (N1-N8). N9 was added mid-implementation
+  when the acceptance test for the encoder[-2] structural guard exposed the
+  pre-existing `fold_soldier_layer` shape mismatch; fixed with the overlap
+  blend as specced. All acceptance scenarios pass
+  (`tests/test_neural_activation.py`, 6 tests).
