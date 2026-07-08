@@ -1,7 +1,8 @@
 """Live pygame viewer for the Sand Kings simulation.
 
-Renders a 2D z-slice of the voxel terrarium in real time with a stats HUD.
-Governed by SPEC_LIVE_VIEW.md.
+Renders the voxel terrarium in real time with a stats HUD, in two view
+modes: TOPDOWN (Dwarf-Fortress-style look-down with depth shading, the
+default) and SLICE (single-z cross-section). Governed by SPEC_LIVE_VIEW.md.
 
 Preconditions: a constructed SandKingsSimulation; pygame installed. Runs
 headlessly under SDL_VIDEODRIVER=dummy. Failure modes: pygame init failure
@@ -9,12 +10,18 @@ raises; the sim stepping is clamped per frame so slow (neural) steps degrade
 speed instead of freezing the UI.
 """
 
+from enum import Enum
 from typing import List, Optional, Tuple
 
 import numpy as np
 import pygame
 
 from sandkings import Colony, SandKingsSimulation, UnitType, VoxelType, VoxelWorld
+
+
+class ViewMode(Enum):
+    TOPDOWN = 0   # DF-style: look down z through open space, depth-shaded
+    SLICE = 1     # single-z cross-section
 
 HUD_WIDTH = 320
 DEFAULT_CELL_SIZE = 12
@@ -25,6 +32,9 @@ RETREAT_BORDER_COLOR = (255, 0, 255)
 RETREAT_FILL_FACTOR = 0.4
 MAX_WINDOW = (1600, 900)
 TERRITORY_TINT = 0.3  # matches Visualizer.render_z_slice owned-air factor
+DEPTH_SHADE_FACTOR = 0.85  # brightness multiplier per z-level of depth
+DEPTH_SHADE_MIN = 0.3      # floor so deep terrain stays legible
+VOID_COLOR = (10, 10, 12)  # column with no terrain down to z=0
 MAW_COLOR = (255, 255, 0)
 HUD_BG = (12, 12, 16)
 HUD_FG = (220, 220, 220)
@@ -58,6 +68,55 @@ def slice_color_array(world: VoxelWorld, colonies: List[Colony], z_level: int) -
     return colors
 
 
+def depth_shade(delta: int) -> float:
+    """Brightness multiplier for terrain `delta` z-levels below the view level."""
+    return max(DEPTH_SHADE_MIN, DEPTH_SHADE_FACTOR ** delta)
+
+
+def topdown_color_array(world: VoxelWorld, colonies: List[Colony], z_level: int) -> np.ndarray:
+    """(w, h, 3) uint8 DF-style top-down view at z_level (spec R12).
+
+    Per (x, y) column: the first non-AIR voxel at or below z_level, shaded
+    darker with depth; owned surface voxels blend TERRITORY_TINT of the
+    colony color; bottomless columns render VOID_COLOR.
+    """
+    sub_voxels = world.voxels[:, :, :z_level + 1]
+    nonair_from_top = (sub_voxels != VoxelType.AIR.value)[:, :, ::-1]
+    depth_below = np.argmax(nonair_from_top, axis=2)      # 0 = terrain at z_level
+    has_terrain = nonair_from_top.any(axis=2)
+    z_found = z_level - depth_below
+
+    found_voxels = np.take_along_axis(sub_voxels, z_found[..., None], axis=2)[..., 0]
+    colors = build_voxel_palette()[found_voxels].astype(np.float32)
+    colors *= np.maximum(DEPTH_SHADE_MIN, DEPTH_SHADE_FACTOR ** depth_below)[..., None]
+
+    ownership = np.take_along_axis(world.ownership[:, :, :z_level + 1],
+                                   z_found[..., None], axis=2)[..., 0]
+    for colony in colonies:
+        mask = has_terrain & (ownership == colony.colony_id)
+        if mask.any():
+            tint = np.array(colony.color, dtype=np.float32)
+            colors[mask] = (1 - TERRITORY_TINT) * colors[mask] + TERRITORY_TINT * tint
+
+    colors[~has_terrain] = VOID_COLOR
+    return colors.astype(np.uint8)
+
+
+def unit_visible_depth(world: VoxelWorld, position: Tuple[int, int, int],
+                       z_level: int) -> Optional[int]:
+    """Depth below z_level at which a unit is visible top-down (spec R13).
+
+    None when the unit is above z_level or occluded by non-AIR voxels in
+    its column between the unit and the view level.
+    """
+    x, y, z = position
+    if z > z_level:
+        return None
+    if not np.all(world.voxels[x, y, z + 1:z_level + 1] == VoxelType.AIR.value):
+        return None
+    return z_level - z
+
+
 def unit_draw_color(colony_color: Tuple[int, int, int],
                     retreating: bool) -> Tuple[Tuple[int, int, int], Tuple[int, int, int]]:
     """(fill, border) for a unit marker; retreating units dim + magenta border."""
@@ -71,12 +130,13 @@ def unit_draw_color(colony_color: Tuple[int, int, int],
 
 
 def build_hud_lines(sim: SandKingsSimulation, sps: float, paused: bool,
-                    z_level: int, capturing: bool) -> List[str]:
+                    z_level: int, capturing: bool,
+                    view_mode: ViewMode = ViewMode.TOPDOWN) -> List[str]:
     """HUD text: global state plus per-living-colony caste/food/health/retreat."""
     lines = [
         f"Step {sim.step_count}",
         f"{'PAUSED' if paused else 'RUNNING'} @ {sps:.1f} steps/s",
-        f"Slice z={z_level}/{sim.world.depth - 1}",
+        f"{view_mode.name}  z={z_level}/{sim.world.depth - 1}",
         f"Capture: {'ON' if capturing else 'off'}",
         "",
     ]
@@ -94,7 +154,8 @@ def build_hud_lines(sim: SandKingsSimulation, sps: float, paused: bool,
         lines.append(f"  W:{castes[UnitType.WORKER]} S:{castes[UnitType.SOLDIER]}"
                      f" Sc:{castes[UnitType.SCOUT]} retreat:{retreating}")
         lines.append(f"  food:{colony.maw.food_stored:.0f} maw:{colony.maw.health:.0f}")
-    lines += ["", "SPACE pause  S step", "+/- speed  UP/DN slice", "G capture  ESC quit"]
+    lines += ["", "SPACE pause  S step", "+/- speed  UP/DN z-level",
+              "TAB view  G capture  ESC quit"]
     return lines
 
 
@@ -157,7 +218,8 @@ class LiveViewer:
         self.max_steps = max_steps
         self.steps_done = 0
         self.paused = False
-        self.z_level = sim.world.depth // 2
+        self.view_mode = ViewMode.TOPDOWN
+        self.z_level = sim.world.depth - 1  # surface view (spec R14)
         self.capturing = False
         self.captured_frames: List[np.ndarray] = []
         self.running = False
@@ -218,6 +280,9 @@ class LiveViewer:
                 self.z_level = min(self.sim.world.depth - 1, self.z_level + 1)
             elif key == pygame.K_DOWN:
                 self.z_level = max(0, self.z_level - 1)
+            elif key == pygame.K_TAB:
+                self.view_mode = (ViewMode.SLICE if self.view_mode == ViewMode.TOPDOWN
+                                  else ViewMode.TOPDOWN)
             elif key == pygame.K_g:
                 self.capturing = not self.capturing
 
@@ -225,7 +290,11 @@ class LiveViewer:
         cell = self.cell_size
         w, h = self.sim.world.width, self.sim.world.height
 
-        colors = slice_color_array(self.sim.world, self.sim.colonies, self.z_level)
+        topdown = self.view_mode == ViewMode.TOPDOWN
+        if topdown:
+            colors = topdown_color_array(self.sim.world, self.sim.colonies, self.z_level)
+        else:
+            colors = slice_color_array(self.sim.world, self.sim.colonies, self.z_level)
         surf = pygame.surfarray.make_surface(colors)  # axis 0 = x, no transpose
         surf = pygame.transform.scale(surf, (w * cell, h * cell))
         self._screen.fill(HUD_BG)
@@ -233,27 +302,43 @@ class LiveViewer:
 
         for colony in self.sim.colonies:
             for unit in colony.units:
-                if unit.position[2] != self.z_level:
+                depth = self._visible_depth(unit.position)
+                if depth is None:
                     continue
                 ux, uy = unit.position[0], unit.position[1]
                 fill, border = unit_draw_color(colony.color, unit.retreating)
+                fill = tuple(int(c * depth_shade(depth)) for c in fill)
                 rect = pygame.Rect(ux * cell + 1, uy * cell + 1, cell - 2, cell - 2)
                 pygame.draw.rect(self._screen, fill, rect)
                 pygame.draw.rect(self._screen, border, rect, 1)
-            if colony.is_alive() and colony.maw.position[2] == self.z_level:
-                mx, my = colony.maw.position[0], colony.maw.position[1]
-                rect = pygame.Rect(mx * cell - cell // 2, my * cell - cell // 2,
-                                   cell * 2, cell * 2)
-                pygame.draw.rect(self._screen, MAW_COLOR, rect)
-                pygame.draw.rect(self._screen, (0, 0, 0), rect, 2)
+            if colony.is_alive():
+                depth = self._visible_depth(colony.maw.position)
+                if depth is not None:
+                    mx, my = colony.maw.position[0], colony.maw.position[1]
+                    fill = tuple(int(c * depth_shade(depth)) for c in MAW_COLOR)
+                    rect = pygame.Rect(mx * cell - cell // 2, my * cell - cell // 2,
+                                       cell * 2, cell * 2)
+                    pygame.draw.rect(self._screen, fill, rect)
+                    pygame.draw.rect(self._screen, (0, 0, 0), rect, 2)
 
         hud_x = w * cell + 12
         for i, line in enumerate(build_hud_lines(self.sim, self.pacer.steps_per_second,
-                                                 self.paused, self.z_level, self.capturing)):
+                                                 self.paused, self.z_level, self.capturing,
+                                                 self.view_mode)):
             text = self._font.render(line, True, HUD_FG)
             self._screen.blit(text, (hud_x, 10 + i * 18))
 
         pygame.display.flip()
+
+    def _visible_depth(self, position: Tuple[int, int, int]) -> Optional[int]:
+        """Depth an entity renders at in the active view mode, None if hidden.
+
+        SLICE shows only exact-z matches at depth 0; TOPDOWN applies the
+        R13 look-down visibility rule.
+        """
+        if self.view_mode == ViewMode.SLICE:
+            return 0 if position[2] == self.z_level else None
+        return unit_visible_depth(self.sim.world, position, self.z_level)
 
     def _capture_frame(self) -> None:
         frame = pygame.surfarray.array3d(self._screen).transpose(1, 0, 2)

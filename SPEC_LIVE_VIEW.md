@@ -31,6 +31,9 @@ Status: draft → implement → reconcile (see Reconciliation Log at bottom).
 - Constant: `SPS_MIN = 0.5`, `SPS_MAX = 60.0`.
 - Constant: `MAX_STEPS_PER_FRAME = 10` — UI-freeze guard.
 - Constant: `RETREAT_BORDER_COLOR = (255, 0, 255)`, `RETREAT_FILL_FACTOR = 0.4`.
+- Constant: `DEPTH_SHADE_FACTOR = 0.85`, `DEPTH_SHADE_MIN = 0.3` — R12 top-down
+  shading: brightness per z-level of depth, floor so deep terrain stays legible.
+- Constant: `VOID_COLOR = (10, 10, 12)` — column with no terrain down to z=0.
 - Palette MUST equal `Visualizer.render_z_slice` colors exactly
   (`sandkings.py:501-524`): GLASS (100,100,100), STONE (50,50,50),
   SAND (194,178,128), TUNNEL_WALL (139,90,43), FOOD (0,255,0),
@@ -59,11 +62,29 @@ Status: draft → implement → reconcile (see Reconciliation Log at bottom).
   z-slice, capture state, and per living colony: unit counts by caste, food
   stored, maw health, retreating count.
 - **R8** Key bindings: SPACE pause/resume; `+`/`=`/`.` speed ×1.5 (clamp
-  SPS_MAX); `-`/`,` speed ÷1.5 (clamp SPS_MIN); UP/DOWN z-slice ±1 (clamp
-  [0, depth-1], initial depth//2); `S` single step (paused only); `G` toggle
-  frame capture; ESC or window close quits.
+  SPS_MAX); `-`/`,` speed ÷1.5 (clamp SPS_MIN); UP/DOWN z-level ±1 (clamp
+  [0, depth-1]); TAB toggle view mode (R12); `S` single step (paused only);
+  `G` toggle frame capture; ESC or window close quits.
 - **R9** (MAY — stretch) `P` cycles a pheromone overlay off → FOOD_TRAIL →
   DANGER; alpha-blended heatmap. Not required for acceptance.
+- **R12** The viewer MUST offer two view modes toggled by TAB:
+  - `TOPDOWN` (default) — Dwarf-Fortress-style: looking down the z axis
+    (z is vertical: gravity moves sand z→z−1). For each (x, y) column,
+    render the first non-AIR voxel at or below the current z_level, with
+    brightness multiplied by `depth_shade(delta) = max(DEPTH_SHADE_MIN,
+    DEPTH_SHADE_FACTOR ** delta)` where delta = z_level − found_z; columns
+    with no terrain down to z=0 render VOID_COLOR. Territory: where the
+    found voxel is owned, blend TERRITORY_TINT of the colony color into the
+    shaded terrain color.
+  - `SLICE` — the existing single-z cross-section (R5/R11 semantics).
+- **R13** In TOPDOWN mode a unit (or Maw) MUST render iff its z ≤ z_level
+  and every voxel strictly above it up to z_level in its column is AIR;
+  its fill is depth-shaded like terrain, its border is not shaded (so
+  retreat magenta and contrast borders stay readable at depth).
+- **R14** UP/DOWN changes z_level in both modes (shared state, clamped to
+  [0, depth−1]). Initial z_level is depth−1 in TOPDOWN (surface view),
+  which also serves SLICE after a TAB switch. The HUD MUST name the
+  active view mode.
 - **R10** (MAY — stretch) While capture is on, each rendered frame is stored;
   on quit, frames save to `sandkings_live.gif`.
 - **R11** The Maw MUST render as a yellow (255,255,0) square with black border,
@@ -75,8 +96,11 @@ Status: draft → implement → reconcile (see Reconciliation Log at bottom).
 live_view.py
   build_voxel_palette() -> np.ndarray            # (256,3) uint8 LUT
   slice_color_array(world, colonies, z) -> np.ndarray   # (w,h,3) uint8; voxel LUT + territory tint
+  topdown_color_array(world, colonies, z) -> np.ndarray # (w,h,3) uint8; DF view (R12), pure
+  depth_shade(delta) -> float                    # pure, R12 shading curve
+  unit_visible_depth(world, position, z) -> int | None  # pure, R13 visibility
   unit_draw_color(colony_color, retreating) -> (fill, border)   # pure
-  build_hud_lines(sim, sps, paused, z_level, capturing) -> list[str]  # pure
+  build_hud_lines(sim, sps, paused, z_level, capturing, view_mode) -> list[str]  # pure
 
   class StepPacer:            # role: value-ish entity, no I/O
       __init__(steps_per_second)
@@ -154,3 +178,11 @@ Termination conditions: user quit (ESC/close) OR steps_done reaching max_steps.
 - Acceptance verified: GIF regression (`--steps 5`), headless live 30 steps
   exit 0, neural live 120 steps exit 0, windowed 100-step auto-exit, both
   test suites green (8 + 6 tests).
+- 2026-07-07 (later) — R12-R14 (Dwarf-Fortress-style TOPDOWN view) added per
+  user request and implemented: `topdown_color_array` / `depth_shade` /
+  `unit_visible_depth` pure functions, `ViewMode` enum, TAB toggle, entity
+  depth shading with unshaded borders, initial z_level moved to depth−1
+  (surface). `build_hud_lines` gained a `view_mode` parameter (defaulted, so
+  prior callers remain valid). Verified: 12 viewer tests green, headless and
+  windowed runs exit 0, real-terrain render shows 10 distinct brightness
+  levels at surface view and visible tunnel pits at mid-level.

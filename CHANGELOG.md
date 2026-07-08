@@ -6,8 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Added - Live Terrarium Viewer
 - **Live mode**: `python sandkings.py --live` opens a real-time pygame window
-  (2D z-slice, per-colony HUD, pause/speed/slice controls, optional GIF capture);
+  (per-colony HUD, pause/speed/z-level controls, optional GIF capture);
   `--live --steps N` auto-exits for scripted runs. Spec: SPEC_LIVE_VIEW.md
+- **Dwarf-Fortress-style top-down view** (default, TAB toggles to flat slice):
+  looks down the z axis through open space to the first terrain at or below
+  the current z-level, shaded darker with depth; tunnels render as darker
+  pits and UP/DOWN slices through the earth like DF elevations
 - **Retreat visualization**: retreating units render dimmed with magenta border
   (BATTLE_SYSTEM_V2 Next Steps item 3)
 - **Tests**: `tests/test_live_view.py`, `tests/test_neural_activation.py`

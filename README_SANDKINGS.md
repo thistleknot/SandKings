@@ -48,9 +48,17 @@ python sandkings.py --live                     # run until you quit
 python sandkings.py --live --steps 500         # auto-exit after 500 steps
 python sandkings.py --live --use-neural --sps 10
 
+# Two views (TAB toggles):
+#   TOPDOWN (default) - Dwarf Fortress style: look down through open space
+#     to the first terrain below the current z-level, shaded darker with
+#     depth; tunnels appear as darker pits. UP/DOWN slices through the
+#     earth one z-level at a time.
+#   SLICE - single-z cross-section (same colors as the GIF renderer).
+#
 # Live controls:
 #   SPACE pause/resume   S single-step (paused)   +/- speed
-#   UP/DOWN z-slice      G toggle GIF capture     ESC quit
+#   UP/DOWN z-level      TAB view mode            G toggle GIF capture
+#   ESC quit
 # Retreating units render dimmed with a magenta border.
 ```
 
