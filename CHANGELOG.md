@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.6.0] - 2026-07-08
+
+### Added - The Political World (SPEC_POLITICS.md, P1-P15)
+- **Trust ledgers** (politics.py): directional trust per colony pair,
+  built slowly (honored truces +0.02/step, shared blood +0.05), destroyed
+  fast (kills -4, sieges -0.08/HP, betrayal -60), decaying toward
+  forgiveness (half-life ~1.7 seasons)
+- **Targeted war** (amends T10): a hoard now declares war on ONE colony -
+  scored by grievance (0.45), wealth (0.35), and strength (-0.20);
+  cross-map raids reach only the target; "seethes, but has no enemy"
+  when universal truces leave a rich colony without one
+- **Truces**: 400-step pacts (exactly one season) with exhaustion-peace
+  auto-acceptance, grudge locks, silent renewal, and sanctity - truced
+  crops can't be plundered, truced fields can't be razed
+- **Gift envoys**: physical couriers (gold letters on the map) hauling
+  escrowed food/gold to rival maws; they can die in transit or be
+  spurned; diminishing returns and cooldowns kill kingmaking
+- **Coalitions**: a colony exceeding 1.6x equal power share triggers
+  "A coalition rises" - alignment drift, half-chest mobilization, combat
+  immunity among co-belligerents, and the victors' quarrel when it falls
+- **Betrayal**: hawks (aggression>0.75, loyalty<0.35) with jealousy,
+  power, and a war chest break truces - once per 800 steps, -60 victim
+  and -20 with every observer; the logged mood contains "jealousy" by
+  construction (the thought layer is an early-warning system)
+- **Cooperative cultivation**: allied workers tend each other's crops
+  (+1 progress/visit); jointly tended fields yield +25%, split 60/40
+- **Respawn reputation**: asymmetric shadow - successors start clean
+  outbound, others keep a clamped quarter-memory of the banner
+- **New evolvable gene**: ColonyGenome.loyalty (Axelrod's tournament
+  runs inside the red-queen respawn loop)
+- **4 new anchors**: ally, betrayed, gratitude, dread (31 total)
+- **Surfacing**: HUD [WAR->n] + T:/A: treaty marks; manager RELATIONS
+  block (out/in trust, standing, truce countdowns); political event
+  tints; 16 acceptance tests + a 5000-step soak
+
 ## [2.5.0] - 2026-07-08
 
 ### Added - Seasons & Stone (SPEC_SEASONS_AND_STONE.md, T16-T27)

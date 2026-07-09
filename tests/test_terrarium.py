@@ -221,14 +221,17 @@ def test_war_footing_triggers_and_logs():
     rich = sim.colonies[0]
     rich.maw.food_stored = WAR_CHEST + 200
     sim.step()
-    assert rich.at_war
-    assert any("marches to war" in m for _, m in sim.events)
-    war_events = [m for _, m in sim.events if "marches to war" in m
-                  and f"Colony {rich.colony_id}" in m]
+    assert rich.at_war, "hoard forces war footing"
+    d = sim._diplomacy()
+    target = d.war_target[rich.colony_id]
+    assert target is not None, "P5: war has ONE target"
+    assert any(f"declares war on Colony {target}" in m for _, m in sim.events)
+    declared = sum(1 for _, m in sim.events if "declares war" in m
+                   and m.startswith(f"Colony {rich.colony_id}"))
     sim.step()
-    war_events_after = [m for _, m in sim.events if "marches to war" in m
-                        and f"Colony {rich.colony_id}" in m]
-    assert len(war_events_after) == len(war_events), "logged once per transition"
+    declared_after = sum(1 for _, m in sim.events if "declares war" in m
+                         and m.startswith(f"Colony {rich.colony_id}"))
+    assert declared_after == declared, "target is sticky - no re-declaration"
     rich.maw.food_stored = 10
     sim.step()
     assert not rich.at_war, "war ends when the hoard is spent"
@@ -240,6 +243,7 @@ def test_war_soldier_marches_beyond_foraging_range():
     for c in sim.colonies:
         c.units.clear()
     colony.at_war = True
+    sim._diplomacy().war_target[colony.colony_id] = enemy.colony_id  # P5 scope
     # soldier far from every unit and far from the enemy maw
     z = sim.world.depth - 2
     sim.world.voxels[1:-1, 1:-1, z] = VoxelType.AIR.value

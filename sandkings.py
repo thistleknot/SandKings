@@ -372,6 +372,7 @@ class ColonyGenome:
     fertility: float = 0.5         # Spawn rate modifier
     resilience: float = 0.5        # Damage resistance
     patience: float = 0.5          # TD discount gamma - evolvable temperament (T26)
+    loyalty: float = 0.5           # hawk-dove axis: honors commitments (P11)
     
     # Neural hive mind (Maw brain)
     brain: Optional[HiveMindBrain] = None
@@ -383,7 +384,8 @@ class ColonyGenome:
         mutated.use_neural = self.use_neural
         
         for attr in ['aggression', 'tunnel_preference', 'expansion_rate',
-                     'defense_investment', 'fertility', 'resilience', 'patience']:
+                     'defense_investment', 'fertility', 'resilience', 'patience',
+                     'loyalty']:
             current = getattr(self, attr)
             noise = np.random.normal(0, mutation_rate)
             setattr(mutated, attr, np.clip(current + noise, 0.0, 1.0))
@@ -431,6 +433,9 @@ class SandKing:
     thought: str = "..."  # last decoded thought / instincts (SPEC_HIVE_MONITOR M3)
     mine_target: Optional[Tuple[int, int, int]] = None  # ore being worked (T24)
     mine_progress: int = 0
+    gift_amount: float = 0.0   # escrowed tribute an envoy carries (P3)
+    gift_kind: str = ""        # 'food' | 'gold'
+    gift_to: int = -1          # recipient colony id (-1 = not an envoy)
     
     # Neural hive mind extension (soldier's personal layer)
     brain_layer: Optional[SoldierLayer] = None
@@ -937,6 +942,7 @@ class SandKingsSimulation:
             genome.tunnel_preference = random.random()
             genome.expansion_rate = random.uniform(0.3, 1.0)  # Spawn threshold bounded [30, 100]
             genome.patience = random.uniform(0.3, 0.95)  # discount gamma (T26)
+            genome.loyalty = random.uniform(0.2, 0.9)    # hawk-dove (P11)
             genome.resilience = random.uniform(0.0, 0.3)  # Defense weaker
             
             colony = Colony(i, positions[i], genome)
@@ -1053,17 +1059,36 @@ class SandKingsSimulation:
             # Adjust spawn threshold by expansion_rate
             spawn_threshold = 30 / max(0.1, colony.genome.expansion_rate)
 
-            # WAR FOOTING: a hoard converts into raids (SPEC T10).
-            # Hysteresis: enter above WAR_CHEST, stand down below half of it
-            was_at_war = colony.at_war
-            threshold = WAR_CHEST / 2 if colony.at_war else WAR_CHEST
-            colony.at_war = colony.maw.food_stored > threshold
-            if colony.at_war and not was_at_war:
-                self._log_event(f"Colony {colony.colony_id} marches to war!")
-                monitor = self._monitor(colony.colony_id)
-                monitor.log_decision(self.step_count, f"Colony {colony.colony_id}",
-                                     "declares war",
-                                     monitor.colony_thought(self, colony))
+            # WAR FOOTING (T10 amended by P5): the hoard picks ONE target;
+            # coalition members mobilize at half the chest
+            d = self._diplomacy()
+            cid = colony.colony_id
+            current_target = d.war_target.get(cid)
+            coalition_member = d.hegemon is not None and cid != d.hegemon
+            enter_at = WAR_CHEST * (0.5 if coalition_member else 1.0)
+            if current_target is None:
+                if colony.maw.food_stored > enter_at:
+                    target = self._select_war_target(colony)
+                    d.war_target[cid] = target
+                    if target is not None:
+                        self._log_event(f"Colony {cid} declares war"
+                                        f" on Colony {target}!")
+                        monitor = self._monitor(cid)
+                        monitor.log_decision(self.step_count, f"Colony {cid}",
+                                             f"declares war on Colony {target}",
+                                             monitor.colony_thought(self, colony))
+                    elif (self.step_count - d.restless_logged.get(cid, -10**9)
+                          > SEASON_LENGTH):
+                        d.restless_logged[cid] = self.step_count
+                        self._log_event(f"Colony {cid} seethes, but has no enemy")
+            else:
+                target_colony = self._colony_by_id(current_target)
+                if (colony.maw.food_stored < WAR_CHEST / 2
+                        or target_colony is None
+                        or not target_colony.is_alive()
+                        or d.truce_active(cid, current_target, self.step_count)):
+                    d.war_target[cid] = None  # stand down / target resolved
+            colony.at_war = d.war_target.get(cid) is not None
 
             # BOOTSTRAP: a colony with no units always fields a worker (SPEC T2)
             if not colony.units and colony.maw.food_stored >= 3:
@@ -1086,6 +1111,10 @@ class SandKingsSimulation:
             for unit in colony.units[:]:  # Copy list to allow removal
                 self._execute_unit_ai(unit, colony)
         
+        # 5b. DIPLOMACY (SPEC_POLITICS): a truce signed this step prevents
+        # this step's bloodshed
+        self._resolve_diplomacy()
+
         # 6. Combat resolution
         self._resolve_conflicts()
 
@@ -1189,6 +1218,16 @@ class SandKingsSimulation:
         if colony_id not in self.monitors:
             self.monitors[colony_id] = HiveMindMonitor(colony_id)
         return self.monitors[colony_id]
+
+    def _diplomacy(self) -> 'Diplomacy':
+        """Lazy political state (SPEC_POLITICS P1); checkpoint-guarded."""
+        from politics import Diplomacy
+        if not hasattr(self, 'diplomacy') or self.diplomacy is None:
+            self.diplomacy = Diplomacy()
+        return self.diplomacy
+
+    def _colony_by_id(self, colony_id: int) -> Optional[Colony]:
+        return next((c for c in self.colonies if c.colony_id == colony_id), None)
 
     def _learner(self, colony_id: int) -> 'ColonyLearner':
         """Lazy per-colony posture learner (T26); checkpoint-guarded."""
@@ -1485,25 +1524,362 @@ class SandKingsSimulation:
                 return True
         return False
 
+    def _select_war_target(self, colony: Colony) -> Optional[int]:
+        """P5: coalition targets the hegemon; else grievance directs,
+        wealth tempts, capability deters."""
+        from politics import power
+        d = self._diplomacy()
+        cid = colony.colony_id
+        if d.hegemon is not None and cid != d.hegemon:
+            hegemon = self._colony_by_id(d.hegemon)
+            if hegemon is not None and hegemon.is_alive():
+                return d.hegemon
+        eligible = [c for c in self.colonies
+                    if c.colony_id != cid and c.is_alive()
+                    and not d.truce_active(cid, c.colony_id, self.step_count)
+                    and not d.ally(cid, c.colony_id)
+                    and not d.co_belligerents(cid, c.colony_id)]
+        if not eligible:
+            return None
+        max_wealth = max(c.maw.food_stored for c in eligible) or 1.0
+        max_power = max(power(c) for c in eligible) or 1.0
+
+        def score(c):
+            hatred = max(0.0, -d.trust(cid, c.colony_id)) / 100.0
+            return (0.45 * hatred
+                    + 0.35 * c.maw.food_stored / max_wealth
+                    - 0.20 * power(c) / max_power)
+        return max(eligible, key=score).colony_id
+
+    def _dispatch_gift(self, colony: Colony, recipient_id: int,
+                       kind: str = 'food') -> bool:
+        """P3: escrow the amount onto a courier worker; visible drama."""
+        from politics import GIFT_COOLDOWN
+        d = self._diplomacy()
+        rel = d.rel(colony.colony_id, recipient_id)
+        if self.step_count - rel.last_gift_sent < GIFT_COOLDOWN:
+            return False
+        workers = [u for u in colony.units if u.unit_type == UnitType.WORKER
+                   and getattr(u, 'gift_to', -1) < 0
+                   and u.carrying not in ('copper', 'gold')]
+        if not workers:
+            return False
+        if kind == 'gold':
+            if getattr(colony, 'ore', {}).get('gold', 0) < 1:
+                return False
+            colony.ore['gold'] -= 1
+            amount = 5.0
+        else:
+            amount = min(60.0, 0.25 * colony.maw.food_stored)
+            if amount < 20.0 or colony.maw.food_stored < amount:
+                return False
+            colony.maw.food_stored -= amount  # escrow: committed and at risk
+        mx, my, mz = colony.maw.position
+        envoy = min(workers, key=lambda u: (abs(u.position[0] - mx)
+                                            + abs(u.position[1] - my)))
+        envoy.gift_amount = amount
+        envoy.gift_kind = kind
+        envoy.gift_to = recipient_id
+        envoy.forage_target = None
+        rel.last_gift_sent = self.step_count
+        if self.step_count - rel.window_start > 500:
+            rel.window_start = self.step_count
+            rel.gifts_in_window = 0
+        rel.gifts_in_window += 1
+        self._log_event(f"Colony {colony.colony_id} sends tribute"
+                        f" to Colony {recipient_id}")
+        monitor = self._monitor(colony.colony_id)
+        monitor.log_decision(self.step_count, f"Colony {colony.colony_id}",
+                             f"sends tribute to Colony {recipient_id}",
+                             monitor.colony_thought(self, colony))
+        return True
+
+    def _deliver_gift(self, envoy: SandKing, sender: Colony):
+        """Envoy arrival / refusal (P3)."""
+        from politics import GIFT_TRUST_FOOD, GIFT_TRUST_GOLD
+        d = self._diplomacy()
+        recipient = self._colony_by_id(envoy.gift_to)
+        if recipient is None or not recipient.is_alive():
+            envoy.gift_to, envoy.gift_amount = -1, 0.0
+            return
+        if d.war_target.get(recipient.colony_id) == sender.colony_id:
+            self._log_event(f"Colony {recipient.colony_id} spurns"
+                            f" Colony {sender.colony_id}'s envoy!")
+            d.rel(sender.colony_id, recipient.colony_id).adjust(-25.0)
+            envoy.gift_to, envoy.gift_amount = -1, 0.0
+            return
+        if envoy.gift_kind == 'gold':
+            base = GIFT_TRUST_GOLD
+            if not hasattr(recipient, 'ore'):
+                recipient.ore = {'copper': 0, 'gold': 0}
+            recipient.ore['gold'] = recipient.ore.get('gold', 0) + 1
+        else:
+            base = GIFT_TRUST_FOOD
+            recipient.maw.food_stored += envoy.gift_amount
+        rel = d.rel(sender.colony_id, recipient.colony_id)
+        k = max(0, rel.gifts_in_window - 1)
+        d.rel(recipient.colony_id, sender.colony_id).adjust(base * (0.5 ** k))
+        rel.last_gift_received = self.step_count  # reciprocation clock (theirs)
+        d.rel(recipient.colony_id, sender.colony_id).last_gift_received = self.step_count
+        self._log_event(f"Colony {recipient.colony_id} accepts"
+                        f" Colony {sender.colony_id}'s tribute")
+        envoy.gift_to, envoy.gift_amount, envoy.gift_kind = -1, 0.0, ""
+
+    def _betray(self, colony: Colony, target_id: int):
+        """P6 execution: atomic, once per cooldown."""
+        from politics import BETRAYAL_OBSERVER, BETRAYAL_VICTIM
+        d = self._diplomacy()
+        cid = colony.colony_id
+        d.truce_until.pop(frozenset((cid, target_id)), None)
+        d.rel(target_id, cid).adjust(BETRAYAL_VICTIM)
+        d.rel(target_id, cid).last_betrayed_by = self.step_count
+        for other in self.colonies:
+            if other.colony_id not in (cid, target_id) and other.is_alive():
+                d.rel(other.colony_id, cid).adjust(BETRAYAL_OBSERVER)
+        d.war_target[cid] = target_id
+        colony.at_war = True
+        d.last_betrayal[cid] = self.step_count
+        self._log_event(f"Colony {cid} betrays Colony {target_id}!")
+        monitor = self._monitor(cid)
+        monitor.log_decision(self.step_count, f"Colony {cid}",
+                             f"betrays Colony {target_id}",
+                             monitor.colony_thought(self, colony))
+
+    def _propose_truce(self, colony: Colony, other: Colony) -> bool:
+        """P4: proposal + same-tick acceptance by the counterpart's rules."""
+        from politics import (GRUDGE_LOCK, NEMESIS, REJECT_COOLDOWN,
+                              TRUCE_DURATION, power)
+        d = self._diplomacy()
+        a, b = colony.colony_id, other.colony_id
+        key = frozenset((a, b))
+        if d.truce_active(a, b, self.step_count):
+            return False
+        if self.step_count - d.rejected_at.get(key, -10**9) < REJECT_COOLDOWN:
+            return False
+        rel_b = d.rel(b, a)
+        accepts = False
+        if other.maw.food_stored < 2 * BOOTSTRAP_FLOOR:
+            accepts = True  # exhaustion peace
+        elif (self.step_count - rel_b.last_betrayed_by) < GRUDGE_LOCK:
+            accepts = False
+        elif rel_b.trust <= NEMESIS:
+            accepts = False
+        elif (getattr(other.genome, 'aggression', 0.5) > 0.8
+                and power(other) > 1.5 * power(colony)):
+            accepts = False  # strong hawks refuse peace they don't need
+        else:
+            accepts = True
+        if not accepts:
+            d.rejected_at[key] = self.step_count
+            return False
+        d.truce_until[key] = self.step_count + TRUCE_DURATION
+        if d.war_target.get(a) == b:
+            d.war_target[a] = None
+        if d.war_target.get(b) == a:
+            d.war_target[b] = None
+        self._log_event(f"Colony {a} and Colony {b} strike a truce")
+        for c, o in ((colony, b), (other, a)):
+            monitor = self._monitor(c.colony_id)
+            monitor.log_decision(self.step_count, f"Colony {c.colony_id}",
+                                 f"signs a truce with Colony {o}",
+                                 monitor.colony_thought(self, c))
+        return True
+
+    def _update_hegemon(self):
+        """P7: enter/exit with hysteresis; events on transition."""
+        from politics import HEGEMON_ENTER, HEGEMON_EXIT, power
+        d = self._diplomacy()
+        living = [c for c in self.colonies if c.is_alive()]
+        if len(living) < 2:
+            if d.hegemon is not None:
+                self._log_event(f"The coalition against Colony {d.hegemon} dissolves")
+                d.hegemon = None
+            return
+        total = sum(power(c) for c in living) or 1.0
+        n = len(living)
+        if d.hegemon is None:
+            for c in living:
+                if power(c) / total > HEGEMON_ENTER / n:
+                    d.hegemon = c.colony_id
+                    self._log_event(f"A coalition rises against Colony {c.colony_id}!")
+                    for other in living:
+                        if other.colony_id != c.colony_id:
+                            monitor = self._monitor(other.colony_id)
+                            monitor.log_decision(
+                                self.step_count, f"Colony {other.colony_id}",
+                                f"joins the coalition against Colony {c.colony_id}",
+                                monitor.colony_thought(self, other))
+                    break
+        else:
+            hegemon = self._colony_by_id(d.hegemon)
+            if (hegemon is None or not hegemon.is_alive()
+                    or power(hegemon) / total < HEGEMON_EXIT / n):
+                if hegemon is not None and hegemon.is_alive():
+                    self._log_event(f"The coalition against Colony {d.hegemon} dissolves")
+                d.hegemon = None
+
+    def _run_policy_cascade(self, colony: Colony):
+        """P11: first matching rule acts."""
+        from politics import power
+        d = self._diplomacy()
+        cid = colony.colony_id
+        living = [c for c in self.colonies
+                  if c.is_alive() and c.colony_id != cid]
+        if not living:
+            return
+        aggression = getattr(colony.genome, 'aggression', 0.5)
+        loyalty = getattr(colony.genome, 'loyalty', 0.5)
+
+        # R1 BETRAY
+        if (aggression > 0.75 and loyalty < 0.35
+                and colony.maw.food_stored > WAR_CHEST
+                and self.step_count - d.last_betrayal.get(cid, -10**9) > 800):
+            for other in living:
+                if (d.truce_active(cid, other.colony_id, self.step_count)
+                        and other.maw.food_stored > 2 * max(1.0, colony.maw.food_stored)
+                        and power(colony) > 1.5 * power(other)):
+                    self._betray(colony, other.colony_id)
+                    return
+
+        my_power = power(colony)
+        total = sum(power(c) for c in self.colonies if c.is_alive()) or 1.0
+        n = sum(1 for c in self.colonies if c.is_alive())
+
+        # R2 APPEASE
+        for other in living:
+            if (d.war_target.get(other.colony_id) == cid
+                    and power(other) > 1.4 * my_power
+                    and my_power / total < 0.8 / n):
+                if self._dispatch_gift(colony, other.colony_id):
+                    self._propose_truce(colony, other)
+                    return
+
+        # R3 RECIPROCATE
+        for other in living:
+            rel = d.rel(cid, other.colony_id)
+            if (self.step_count - rel.last_gift_received < 300
+                    and rel.last_gift_sent < rel.last_gift_received
+                    and colony.maw.food_stored > WAR_CHEST / 2):
+                if self._dispatch_gift(colony, other.colony_id):
+                    return
+
+        # R4 INVEST
+        if d.hegemon is not None and cid != d.hegemon:
+            partners = [c for c in living if c.colony_id != d.hegemon]
+            if partners:
+                best = max(partners, key=lambda c: d.trust(cid, c.colony_id))
+                if self._dispatch_gift(colony, best.colony_id):
+                    return
+
+        # R5 SUE-FOR-PEACE
+        from politics import HOSTILE as HOSTILE_T
+        for other in living:
+            if (d.trust(cid, other.colony_id) > HOSTILE_T
+                    and d.trust(other.colony_id, cid) > HOSTILE_T
+                    and d.war_target.get(cid) != other.colony_id
+                    and d.war_target.get(other.colony_id) != cid
+                    and colony.maw.food_stored < WAR_CHEST
+                    and other.maw.food_stored < WAR_CHEST):
+                if self._propose_truce(colony, other):
+                    return
+
+    def _resolve_diplomacy(self):
+        """Step phase 5b (SPEC_POLITICS behavioral block)."""
+        from politics import (COALITION_CAP, DIPLOMACY_INTERVAL,
+                              TRUST_COALITION, TRUST_JOINT_WAR,
+                              TRUST_TRUCE_TICK)
+        d = self._diplomacy()
+        d.decay()
+        living = [c for c in self.colonies if c.is_alive()]
+
+        # honored-truce and joint-war ticks; ally latches
+        for i, a in enumerate(living):
+            for b in living[i + 1:]:
+                aid, bid = a.colony_id, b.colony_id
+                if d.truce_active(aid, bid, self.step_count):
+                    d.rel(aid, bid).adjust(TRUST_TRUCE_TICK)
+                    d.rel(bid, aid).adjust(TRUST_TRUCE_TICK)
+                if d.co_belligerents(aid, bid):
+                    d.rel(aid, bid).adjust(TRUST_JOINT_WAR)
+                    d.rel(bid, aid).adjust(TRUST_JOINT_WAR)
+                if (d.hegemon is not None
+                        and aid != d.hegemon and bid != d.hegemon):
+                    for x, y in ((aid, bid), (bid, aid)):
+                        if d.trust(x, y) < COALITION_CAP:
+                            d.rel(x, y).adjust(TRUST_COALITION)
+                d.update_ally_latch(aid, bid)
+
+        # truce expiry: renew silently when both still accept, else lapse
+        for key in list(d.truce_until.keys()):
+            if d.truce_until[key] <= self.step_count:
+                a, b = tuple(key)
+                ca, cb = self._colony_by_id(a), self._colony_by_id(b)
+                renewed = False
+                if (ca is not None and cb is not None and ca.is_alive()
+                        and cb.is_alive() and d.trust(a, b) >= 0
+                        and d.trust(b, a) >= 0):
+                    del d.truce_until[key]
+                    renewed = self._propose_truce(ca, cb)
+                else:
+                    del d.truce_until[key]
+                if not renewed:
+                    self._log_event(f"The truce between Colony {a}"
+                                    f" and Colony {b} lapses")
+
+        self._update_hegemon()
+
+        # envoys move every step (their AI happens here, not in worker AI)
+        for colony in living:
+            for unit in colony.units[:]:
+                if getattr(unit, 'gift_to', -1) >= 0:
+                    recipient = self._colony_by_id(unit.gift_to)
+                    if recipient is None or not recipient.is_alive():
+                        unit.gift_to, unit.gift_amount = -1, 0.0
+                        continue
+                    mx, my, mz = recipient.maw.position
+                    x, y, z = unit.position
+                    if max(abs(mx - x), abs(my - y), abs(mz - z)) <= 2:
+                        self._deliver_gift(unit, colony)
+                    else:
+                        self._step_toward(unit, recipient.maw.position, colony)
+
+        # policy cascade on the diplomacy cadence, randomized order
+        if self.step_count % DIPLOMACY_INTERVAL == 0:
+            order = living[:]
+            random.shuffle(order)
+            for colony in order:
+                self._run_policy_cascade(colony)
+
     def _apply_maw_siege_damage(self):
         """Units adjacent to an enemy Maw damage it (SPEC T4/T14).
 
         Shared by the base combat resolution and the evolution sim's step
         so eliminations are real outcomes in both.
         """
+        from politics import TRUST_FIRST_BLOOD, TRUST_MAW_HP, hostile
         for colony in self.colonies:
             if not colony.maw.alive:
                 continue
             mx, my, mz = colony.maw.position
             for enemy_colony in self.colonies:
-                if enemy_colony.colony_id == colony.colony_id:
-                    continue
+                if not hostile(self, colony.colony_id, enemy_colony.colony_id):
+                    continue  # P9 gate
                 for enemy in enemy_colony.units:
+                    if getattr(enemy, 'gift_to', -1) >= 0:
+                        continue  # envoys don't besiege
                     ex, ey, ez = enemy.position
                     if max(abs(ex - mx), abs(ey - my), abs(ez - mz)) <= 1:
+                        if hasattr(self, 'diplomacy') and self.diplomacy is not None:
+                            self.diplomacy.rel(colony.colony_id,
+                                               enemy_colony.colony_id).adjust(
+                                TRUST_MAW_HP * enemy.attack)  # grievance (P1)
                         if colony.maw.health >= MAW_MAX_HEALTH:  # first blood of a siege
                             self._log_event(f"Colony {enemy_colony.colony_id} besieges"
                                             f" Colony {colony.colony_id}!")
+                            if hasattr(self, 'diplomacy') and self.diplomacy is not None:
+                                self.diplomacy.rel(
+                                    colony.colony_id,
+                                    enemy_colony.colony_id).adjust(TRUST_FIRST_BLOOD)
                             self._monitor(enemy_colony.colony_id).log_decision(
                                 self.step_count, self._unit_label(enemy),
                                 "landed first blood on a Maw",
@@ -1527,10 +1903,11 @@ class SandKingsSimulation:
                 continue
 
             mx, my, mz = maw.position
+            from politics import hostile as _hostile
             threat, threat_dist = None, float('inf')
             for enemy_colony in self.colonies:
-                if enemy_colony.colony_id == colony.colony_id:
-                    continue
+                if not _hostile(self, colony.colony_id, enemy_colony.colony_id):
+                    continue  # P9: allies/truced are not threats
                 for enemy in enemy_colony.units:
                     dist = (abs(enemy.position[0] - mx) + abs(enemy.position[1] - my)
                             + abs(enemy.position[2] - mz))
@@ -1611,6 +1988,23 @@ class SandKingsSimulation:
 
             self.world.ownership[self.world.ownership == colony.colony_id] = -1
             self.pheromones.trails[:, :, :, colony.colony_id, :] = 0.0
+            # Political death (P12/P8): treaties and grudges die with the
+            # colony; a fallen hegemon triggers the victors' quarrel
+            d = self._diplomacy()
+            if d.hegemon == colony.colony_id:
+                from politics import VICTORS_QUARREL, power
+                d.hegemon = None
+                self._log_event(f"The coalition against Colony {colony.colony_id} dissolves")
+                survivors = [c for c in self.colonies
+                             if c.is_alive() and c.colony_id != colony.colony_id]
+                if len(survivors) >= 2:
+                    strongest = max(survivors, key=power)
+                    for other in survivors:
+                        if other.colony_id != strongest.colony_id:
+                            d.rel(other.colony_id,
+                                  strongest.colony_id).adjust(VICTORS_QUARREL)
+            d.clear_slot(colony.colony_id, self.step_count)
+
             self.pending_respawns[colony.colony_id] = self.step_count + RESPAWN_DELAY
             self._log_event(f"Colony {colony.colony_id} has fallen!")
             print(f"[x] Colony {colony.colony_id} has fallen! A new colony arrives in {RESPAWN_DELAY} steps")
@@ -1640,6 +2034,7 @@ class SandKingsSimulation:
             genome.expansion_rate = random.uniform(0.3, 1.0)
             genome.resilience = random.uniform(0.0, 0.3)
             genome.patience = random.uniform(0.3, 0.95)
+            genome.loyalty = random.uniform(0.2, 0.9)
 
         min_distance = int(0.1 * ((w**2 + h**2)**0.5))
         living_maws = [c.maw.position for c in survivors]
@@ -1665,6 +2060,7 @@ class SandKingsSimulation:
             self.monitors.pop(colony_id, None)
         if hasattr(self, 'learners'):  # and a fresh policy (T26)
             self.learners.pop(colony_id, None)
+        self._diplomacy().apply_respawn_shadow(colony_id)  # folk memory (P12)
         self.world.set_voxel(*pos, VoxelType.AIR, colony_id=colony_id)
         for _ in range(3):
             colony.spawn_unit(UnitType.WORKER)
@@ -1692,6 +2088,8 @@ class SandKingsSimulation:
         # Workers: worker AI v2 (SPEC T18) - grab > haul > mine-continue >
         # forage > farm > mine-seek > dig. Wild food ALWAYS outranks farming
         if unit.unit_type == UnitType.WORKER:
+            if getattr(unit, 'gift_to', -1) >= 0:
+                return  # envoys are single-minded; they move in 5b (P3)
             # (1) Radius-2 grab: wild food +15, ripe crops +40 -> TILLED
             neighbors = self.world.get_neighbors_3d(unit.position, radius=2)
             acted = False
@@ -1707,8 +2105,26 @@ class SandKingsSimulation:
                     acted = True
                     break
                 if voxel == VoxelType.CROP_RIPE:
+                    owner = int(self.world.ownership[nx, ny, nz])
+                    d = self._diplomacy()
+                    foreign = owner >= 0 and owner != colony.colony_id
+                    if (foreign and not d.ally(colony.colony_id, owner)
+                            and d.truce_active(colony.colony_id, owner,
+                                               self.step_count)):
+                        continue  # truced crops are sacrosanct (P10)
+                    tenders = getattr(self, 'crop_tenders', {}).pop(
+                        (nx, ny, nz), set())
+                    from politics import COOP_YIELD_BONUS
+                    payout = CROP_YIELD * (1 + COOP_YIELD_BONUS
+                                           if len(tenders) >= 2 else 1)
+                    if foreign and d.ally(colony.colony_id, owner):
+                        colony.maw.eat(payout * 0.6)  # co-op split (P10)
+                        owner_colony = self._colony_by_id(owner)
+                        if owner_colony is not None and owner_colony.is_alive():
+                            owner_colony.maw.eat(payout * 0.4)
+                    else:
+                        colony.maw.eat(payout)
                     self.world.voxels[nx, ny, nz] = VoxelType.TILLED.value
-                    colony.maw.eat(CROP_YIELD)
                     unit.forage_target = None
                     self._milestone(colony, 'harvested',
                                     f"Colony {colony.colony_id} reaps its first harvest",
@@ -1746,6 +2162,27 @@ class SandKingsSimulation:
                     self._sow_window_open() or self.in_oasis(x, y)):
                 acted = self._farm_step(unit, colony)
 
+            # (5c) Tend an allied crop (P10): +1 progress per visit-step
+            if not acted:
+                d = self._diplomacy()
+                for nx, ny, nz in self.world.get_neighbors_3d(unit.position, radius=1):
+                    if self.world.voxels[nx, ny, nz] != VoxelType.CROP.value:
+                        continue
+                    owner = int(self.world.ownership[nx, ny, nz])
+                    if owner < 0 or owner == colony.colony_id:
+                        continue
+                    if not d.ally(colony.colony_id, owner):
+                        continue
+                    pos = (nx, ny, nz)
+                    if pos in self._crops():
+                        self.crops[pos] += 1
+                        if not hasattr(self, 'crop_tenders'):
+                            self.crop_tenders = {}
+                        self.crop_tenders.setdefault(pos, set()).add(colony.colony_id)
+                        self.crop_tenders[pos].add(owner)
+                        acted = True
+                        break
+
             # (6) Seek exposed ore
             if not acted:
                 acted = self._mine_seek(unit, colony)
@@ -1759,11 +2196,13 @@ class SandKingsSimulation:
                     self.pheromones.deposit(unit.position, colony.colony_id,
                                           PheromoneType.TERRITORY, 1.0)
         
-        # Scouts: fast surface surveyors and sentinels (SPEC T11)
+        # Scouts: fast surface surveyors and sentinels (SPEC T11; P9-gated:
+        # allied units passing through are not alarms - safe passage)
         elif unit.unit_type == UnitType.SCOUT:
+            from politics import hostile as _hostile
             nearest_enemy, enemy_dist = None, float('inf')
             for enemy_colony in self.colonies:
-                if enemy_colony.colony_id == colony.colony_id:
+                if not _hostile(self, colony.colony_id, enemy_colony.colony_id):
                     continue
                 for enemy in enemy_colony.units:
                     dist = (abs(enemy.position[0] - x) + abs(enemy.position[1] - y)
@@ -1807,10 +2246,11 @@ class SandKingsSimulation:
                 colony.genome.brain is not None and 
                 unit.brain_layer is not None):
                 
-                # Gather enemy positions
+                # Gather enemy positions (hostile colonies only, P9)
+                from politics import hostile as _hostile
                 enemy_positions = []
                 for enemy_colony in self.colonies:
-                    if enemy_colony.colony_id != colony.colony_id:
+                    if _hostile(self, colony.colony_id, enemy_colony.colony_id):
                         enemy_positions.extend([e.position for e in enemy_colony.units])
                 
                 # Encode state
@@ -1843,15 +2283,18 @@ class SandKingsSimulation:
                 
             # RULE-BASED AI PATH (fallback)
             else:
+                from politics import hostile as _hostile
                 # T21: raze an adjacent enemy field (consumes the action)
                 if colony.at_war or random.random() < colony.genome.aggression * 0.1:
                     for nx, ny, nz in self.world.get_neighbors_3d(unit.position, radius=1):
                         v = self.world.voxels[nx, ny, nz]
                         owner = int(self.world.ownership[nx, ny, nz])
                         if (v in (VoxelType.TILLED.value, VoxelType.CROP.value)
-                                and owner >= 0 and owner != colony.colony_id):
+                                and owner >= 0 and owner != colony.colony_id
+                                and _hostile(self, colony.colony_id, owner)):
                             self.world.voxels[nx, ny, nz] = VoxelType.SAND.value
                             self._crops().pop((nx, ny, nz), None)
+                            self._diplomacy().rel(owner, colony.colony_id).adjust(-6.0)
                             if not hasattr(self, '_raze_logged'):
                                 self._raze_logged = {}
                             key = (colony.colony_id, owner)
@@ -1865,12 +2308,12 @@ class SandKingsSimulation:
                                     getattr(unit, 'thought', None))
                             return
 
-                # Find closest enemy unit
+                # Find closest enemy unit (hostile colonies only, P9)
                 closest_enemy = None
                 min_dist = float('inf')
-                
+
                 for enemy_colony in self.colonies:
-                    if enemy_colony.colony_id == colony.colony_id:
+                    if not _hostile(self, colony.colony_id, enemy_colony.colony_id):
                         continue
                     for enemy in enemy_colony.units:
                         dist = abs(enemy.position[0] - x) + abs(enemy.position[1] - y) + abs(enemy.position[2] - z)
@@ -1900,19 +2343,27 @@ class SandKingsSimulation:
                             self.world.get_voxel(*new_pos).is_tunnelable()):
                             unit.move(new_pos)
                 else:
-                    # No enemy unit in range: SIEGE the nearest enemy Maw (SPEC T4)
+                    # No enemy unit in range: SIEGE the nearest enemy Maw
+                    # (T4, P5-scoped: cross-map raids only at the war target)
+                    war_target = self._diplomacy().war_target.get(colony.colony_id)
                     closest_maw, maw_dist = None, float('inf')
                     for enemy_colony in self.colonies:
-                        if enemy_colony.colony_id == colony.colony_id or not enemy_colony.is_alive():
+                        if not enemy_colony.is_alive():
+                            continue
+                        if not _hostile(self, colony.colony_id, enemy_colony.colony_id):
                             continue
                         m = enemy_colony.maw.position
                         dist = abs(m[0] - x) + abs(m[1] - y) + abs(m[2] - z)
+                        # engageable = in local range, OR the war target
+                        # (cross-map raids go to the TARGET only, P5)
+                        if not (dist < colony.genome.foraging_range
+                                or (colony.at_war
+                                    and enemy_colony.colony_id == war_target)):
+                            continue
                         if dist < maw_dist:
                             maw_dist, closest_maw = dist, enemy_colony.maw
 
-                    if (closest_maw is not None
-                            and (colony.at_war or maw_dist < colony.genome.foraging_range)
-                            and random.random() < colony.genome.aggression):
+                    if closest_maw is not None and random.random() < colony.genome.aggression:
                         if not self._step_toward(unit, closest_maw.position, colony):
                             pass  # boxed in this step; siege pressure resumes next step
                     # FORTIFY posture: guard the maw and fields (T26)
@@ -1935,18 +2386,24 @@ class SandKingsSimulation:
         units_to_remove = {}  # Track units to remove after combat
         mating_pairs = []  # Track soldier encounters for mating
         
+        from politics import hostile
         for colony in self.colonies:
             for unit in colony.units:
+                if getattr(unit, 'gift_to', -1) >= 0:
+                    continue  # envoys never initiate combat (P3)
                 # Check radius 1 for enemies (AoE COMBAT)
                 neighbors = self.world.get_neighbors_3d(unit.position, radius=1)
-                
+
                 for nx, ny, nz in neighbors:
                     # Find enemy units at this position
                     for enemy_colony in self.colonies:
-                        if enemy_colony.colony_id == colony.colony_id:
-                            continue
-                        
+                        if not hostile(self, colony.colony_id,
+                                       enemy_colony.colony_id):
+                            continue  # truce/ally/co-belligerent (P9)
+
                         for enemy in enemy_colony.units:
+                            if (getattr(enemy, 'gift_to', -1) == colony.colony_id):
+                                continue  # inbound envoys are sacrosanct (P3)
                             if enemy.position == (nx, ny, nz):
                                 # NEURAL MATING: Soldiers exchange genetic material during combat!
                                 if (NEURAL_AVAILABLE and 
@@ -1971,6 +2428,10 @@ class SandKingsSimulation:
                                     # Track kill for neural performance
                                     if enemy.brain_layer is not None:
                                         enemy.brain_layer.kills += 1
+                                    # grievance: victim colony -> killer (P1)
+                                    self._diplomacy().rel(
+                                        colony.colony_id,
+                                        enemy_colony.colony_id).adjust(-4.0)
                                     # HIVE MONITOR: outcomes carry thoughts (M4)
                                     self._monitor(enemy_colony.colony_id).log_decision(
                                         self.step_count, self._unit_label(enemy),
@@ -1987,6 +2448,10 @@ class SandKingsSimulation:
                                     # Track kill for neural performance
                                     if unit.brain_layer is not None:
                                         unit.brain_layer.kills += 1
+                                    # grievance: victim colony -> killer (P1)
+                                    self._diplomacy().rel(
+                                        enemy_colony.colony_id,
+                                        colony.colony_id).adjust(-4.0)
                                     # HIVE MONITOR: outcomes carry thoughts (M4)
                                     self._monitor(colony.colony_id).log_decision(
                                         self.step_count, self._unit_label(unit),

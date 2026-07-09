@@ -198,4 +198,19 @@ Invariant: fires at most once per BETRAYAL_COOLDOWN per colony
 
 ## 6. Reconciliation Log
 
-- (fill in after implementation)
+- 2026-07-08 — Implemented P1–P15 with deviations, intent-preserving:
+  - P5 refined during testing: the soldier maw scan now picks the nearest
+    ENGAGEABLE maw (local range OR the war target) — the first cut picked
+    the globally nearest and stalled cross-map raids whose target wasn't
+    closest.
+  - P13 safe-passage border in BLOCKS mode deferred (glyph mode carries
+    the envoy gold letter and allied HUD marks; border noted for a polish
+    pass). Allied-territory tint blend deferred with it — the RELATIONS
+    block and `T:`/`A:` HUD marks carry the information.
+  - P10 tend requires the crop to be in the growth registry (ripe crops
+    aren't tendable — nothing left to accelerate).
+  - Trust deltas for unit kills/sieges/razes are applied inline at the
+    existing outcome hooks; raze additionally requires hostility (truced
+    fields can only fall via betrayal, closing a gate the spec implied).
+  - Verified: 16 politics tests + all five prior suites green; 5000-step
+    soak per §5 criteria.

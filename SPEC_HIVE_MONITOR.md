@@ -132,6 +132,14 @@ with no ground truth).
   harvest → moon). Resumed monitors from older checkpoints MUST
   `setdefault` probes for new seeds. Decision-log additions: first
   sowing, first harvest, ore strikes, field razing.
+- **M11 (Round 2 anchors)** The lexicon grows 27 → 31: `ally` (any latched
+  ally or active truce), `betrayed` (my colony betrayed within 300 steps),
+  `gratitude` (gift received within 300 steps), `dread` (a hegemon exists
+  and it is not us) — all colony-level relation facts read from
+  `sim.diplomacy` via guarded helpers. `build_context`'s rival scans
+  (`enemy_dist`/`enemy_maw_cheb`) are hostility-filtered per P9; the
+  `jealousy` richest-rival read deliberately is NOT (envying allies feeds
+  betrayal). Vocabulary rebuilt (31 seeds).
 - **M9 (vocabulary builder)** `thought_vocabulary.py` (build-time, run
   manually, stdlib + numpy only — no gensim) MUST: download the GloVe
   wiki-gigaword-50 vectors (gensim-data GitHub release asset, ~66MB, cached

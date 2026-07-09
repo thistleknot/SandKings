@@ -76,6 +76,13 @@ EVENT_TINTS = (            # substring -> HUD color (spec R19/R24)
     ("sows", (120, 200, 90)),
     ("frost", (150, 190, 230)),
     ("oasis", (80, 200, 170)),
+    ("betrays", (255, 60, 120)),
+    ("truce", (120, 220, 120)),
+    ("tribute", (230, 200, 90)),
+    ("envoy", (230, 200, 90)),
+    ("coalition", (100, 200, 255)),
+    ("raids", (255, 140, 60)),
+    ("seethes", (150, 150, 160)),
 )
 PHEROMONE_OVERLAYS = (None, PheromoneType.FOOD_TRAIL, PheromoneType.TERRITORY,
                       PheromoneType.DANGER)  # P-key cycle (spec R17)
@@ -288,8 +295,26 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
             castes[unit.unit_type] += 1
             if unit.retreating:
                 retreating += 1
-        war = " [WAR]" if getattr(colony, 'at_war', False) else ""
-        entries.append((f"Colony {colony.colony_id}{war}", color))
+        diplomacy = getattr(sim, 'diplomacy', None)
+        war = ""
+        if getattr(colony, 'at_war', False):
+            target = (diplomacy.war_target.get(colony.colony_id)
+                      if diplomacy is not None else None)
+            war = f" [WAR->{target}]" if target is not None else " [WAR]"
+        marks = ""
+        if diplomacy is not None:
+            truced = [str(c.colony_id) for c in sim.colonies
+                      if c.colony_id != colony.colony_id
+                      and diplomacy.truce_active(colony.colony_id,
+                                                 c.colony_id, sim.step_count)]
+            allies = [str(c.colony_id) for c in sim.colonies
+                      if c.colony_id != colony.colony_id
+                      and diplomacy.ally(colony.colony_id, c.colony_id)]
+            if truced:
+                marks += " T:" + ",".join(truced)
+            if allies:
+                marks += " A:" + ",".join(allies)
+        entries.append((f"Colony {colony.colony_id}{war}{marks}", color))
         entries.append((f"  W:{castes[UnitType.WORKER]} S:{castes[UnitType.SOLDIER]}"
                         f" Sc:{castes[UnitType.SCOUT]} retreat:{retreating}", color))
         maw_line = f"  food:{colony.maw.food_stored:.0f} maw:{colony.maw.health:.0f}"
@@ -355,6 +380,39 @@ def build_manager_entries(sim: SandKingsSimulation,
         entries.append((f"== MANAGER: Colony {colony_id}: DEAD ==", (140, 60, 60)))
     entries.append((f"mind: {mode}", (140, 140, 150)))
     entries.append(("", HUD_FG))
+
+    diplomacy = getattr(sim, 'diplomacy', None)
+    if diplomacy is not None and colony is not None and colony.is_alive():
+        from politics import FRIENDLY, HOSTILE, NEMESIS
+        entries.append(("RELATIONS  ->out <-in", (120, 180, 220)))
+        for other in sim.colonies:
+            if other.colony_id == colony_id:
+                continue
+            out_t = diplomacy.trust(colony_id, other.colony_id)
+            in_t = diplomacy.trust(other.colony_id, colony_id)
+            if diplomacy.ally(colony_id, other.colony_id):
+                standing = "ALLY"
+            elif out_t <= NEMESIS:
+                standing = "NEMESIS"
+            elif out_t <= HOSTILE:
+                standing = "hostile"
+            elif out_t >= FRIENDLY:
+                standing = "friendly"
+            else:
+                standing = "neutral"
+            extra = ""
+            key = frozenset((colony_id, other.colony_id))
+            if key in diplomacy.truce_until:
+                left = max(0, diplomacy.truce_until[key] - sim.step_count)
+                extra += f" truce:{left}"
+            if diplomacy.war_target.get(other.colony_id) == colony_id:
+                extra += " [WAR->us]"
+            if diplomacy.war_target.get(colony_id) == other.colony_id:
+                extra += " [WAR->them]"
+            entries.append((f"  C{other.colony_id} {out_t:+4.0f} {in_t:+4.0f}"
+                            f"  {standing}{extra}",
+                            hud_text_color(other.color)))
+        entries.append(("", HUD_FG))
 
     entries.append(("CONCEPTS  acc%/active", (120, 180, 220)))
     rows = monitor.concept_rows(sim, colony) if colony.is_alive() else []
@@ -654,7 +712,9 @@ class LiveViewer:
                 fill = tuple(int(c * depth_shade(depth)) for c in fill)
                 if glyph_mode:
                     char = UNIT_GLYPHS.get(unit.unit_type, "?")
-                    if unit.retreating:
+                    if getattr(unit, 'gift_to', -1) >= 0:  # envoy caravan (P13)
+                        color = (255, 200, 60)
+                    elif unit.retreating:
                         color = border
                     elif getattr(unit, 'armored', False):  # copper armor (R22)
                         color = tuple(int(c * depth_shade(depth)) for c in COPPER_TINT)

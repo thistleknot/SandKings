@@ -197,6 +197,21 @@ is in numeric order.
   ≥ MAW_MIGRATE_HEALTH or no threat remains in range.
   *Rationale:* closes the v1.2 roadmap item "Maw migration".
 
+### Amendments by SPEC_POLITICS.md (Round 2)
+
+- **T4/T15/T11**: soldier targeting, maw-migration threat scans, and scout
+  alarms iterate HOSTILE colonies only (`politics.hostile`, P9) — allied
+  and truced units pass safely.
+- **T5/T6**: the death cascade also clears the fallen colony's treaties,
+  war targets, and grudges (P12); respawns receive the asymmetric
+  reputation shadow.
+- **T9**: the event catalog gains the P13 political rows (truce strike/
+  lapse, betrayal, targeted war declaration — which REPLACES "marches to
+  war" — tribute dispatch/accept/perish/spurn, coalition rise/dissolve,
+  restless peace, field raids).
+- **T10**: war footing now selects a single target (P5); coalition members
+  mobilize at half the chest; cross-map sieges reach only the target.
+
 ### Scope note — neural systems
 
 Neural mating (5% roll between adjacent enemy soldiers, offspring joining

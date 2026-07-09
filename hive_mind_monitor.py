@@ -32,7 +32,8 @@ ANCHOR_SEEDS = [
     "food", "hunger", "war", "defense", "underground", "danger", "flee",
     "hunt", "wounded", "home", "feast", "buried", "crowd", "alone", "rich",
     "storm", "death", "enemy", "victory", "siege", "jealousy", "love",
-    "clueless", "harvest", "farm", "drought", "gold",
+    "clueless", "harvest", "farm", "drought", "gold", "ally", "betrayed",
+    "gratitude", "dread",
 ]
 
 _VOCAB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -67,11 +68,12 @@ def build_context(unit, colony, sim) -> Dict[str, float]:
     x, y, z = unit.position
     world = sim.world
 
+    from politics import hostile as _hostile
     enemy_dist = float("inf")
     enemy_maw_cheb = float("inf")
     for other in sim.colonies:
-        if other.colony_id == colony.colony_id:
-            continue
+        if not _hostile(sim, colony.colony_id, other.colony_id):
+            continue  # P9: allies aren't danger (jealousy stays unfiltered)
         for enemy in other.units:
             d = (abs(enemy.position[0] - x) + abs(enemy.position[1] - y)
                  + abs(enemy.position[2] - z))
@@ -127,6 +129,10 @@ def build_context(unit, colony, sim) -> Dict[str, float]:
         "season": sim.season_index() if callable(getattr(sim, 'season_index', None)) else 0,
         "carrying_ore": getattr(unit, 'carrying', None) in ('copper', 'gold'),
         "colony_gold": getattr(colony, 'ore', {}).get('gold', 0),
+        "has_ally": _political(sim, colony, "has_ally"),
+        "recently_betrayed": _political(sim, colony, "recently_betrayed"),
+        "recent_gift": _political(sim, colony, "recent_gift"),
+        "hegemon_other": _political(sim, colony, "hegemon_other"),
         "allies_3": allies_3,
         "allies_6": allies_6,
         "wounded_ally_2": wounded_ally_2,
@@ -148,6 +154,28 @@ def build_context(unit, colony, sim) -> Dict[str, float]:
         "hunger_floor": 2 * BOOTSTRAP_FLOOR,
         "war_chest": WAR_CHEST,
     }
+
+
+def _political(sim, colony, key: str) -> bool:
+    """Colony-level relation facts for the P14 anchors (guarded)."""
+    diplomacy = getattr(sim, 'diplomacy', None)
+    if diplomacy is None:
+        return False
+    cid = colony.colony_id
+    step = sim.step_count
+    if key == "has_ally":
+        return any(diplomacy.ally(cid, c.colony_id)
+                   or diplomacy.truce_active(cid, c.colony_id, step)
+                   for c in sim.colonies if c.colony_id != cid)
+    if key == "recently_betrayed":
+        return any(step - rel.last_betrayed_by < 300
+                   for (a, _b), rel in diplomacy.relations.items() if a == cid)
+    if key == "recent_gift":
+        return any(step - rel.last_gift_received < 300
+                   for (a, _b), rel in diplomacy.relations.items() if a == cid)
+    if key == "hegemon_other":
+        return diplomacy.hegemon is not None and diplomacy.hegemon != cid
+    return False
 
 
 def ground_truths(ctx: Dict) -> Dict[str, bool]:
@@ -183,6 +211,10 @@ def ground_truths(ctx: Dict) -> Dict[str, bool]:
         "farm": ctx["tilled_2"] > 0,
         "drought": ctx["season"] in (2, 3),
         "gold": bool(ctx["carrying_ore"]) or ctx["colony_gold"] >= 1,
+        "ally": bool(ctx["has_ally"]),
+        "betrayed": bool(ctx["recently_betrayed"]),
+        "gratitude": bool(ctx["recent_gift"]),
+        "dread": bool(ctx["hegemon_other"]),
     }
 
 
