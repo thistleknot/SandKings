@@ -384,6 +384,33 @@ def test_checkpoint_roundtrip(tmp_path=None):
         assert loaded.step_count == sim.step_count + 1
 
 
+def test_checkpoint_incompatible_loads_fresh_not_crash():
+    """Resume-by-default: a version mismatch or corrupt state returns None
+    (start fresh) instead of crashing the resume path."""
+    import sqlite3
+    import tempfile
+    from sandkings import (CHECKPOINT_VERSION, load_checkpoint,
+                           save_checkpoint)
+    sim = make_sim(seed=5)
+    for _ in range(20):
+        sim.step()
+    with tempfile.TemporaryDirectory() as tmp:
+        db = os.path.join(tmp, "t.db")
+        save_checkpoint(sim, db)
+        assert load_checkpoint(db) is not None, "compatible resumes"
+        conn = sqlite3.connect(db)
+        conn.execute("UPDATE checkpoints SET version='0.0-ancient'")
+        conn.commit()
+        conn.close()
+        assert load_checkpoint(db) is None, "version mismatch -> fresh"
+        conn = sqlite3.connect(db)
+        conn.execute("UPDATE checkpoints SET version=?, state=?",
+                     (CHECKPOINT_VERSION, b"not a pickle"))
+        conn.commit()
+        conn.close()
+        assert load_checkpoint(db) is None, "corrupt state -> fresh, no crash"
+
+
 def test_checkpoint_loads_across_script_module_identity():
     """A checkpoint saved by `python sandkings.py` (classes under __main__)
     must load via `import sandkings` (SPEC T13 portability)."""

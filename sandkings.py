@@ -4394,22 +4394,37 @@ class SandKingsSimulation:
 # PERSISTENCE - the terrarium lives between sessions (SPEC T13)
 # ============================================================================
 
+# Bump when a sim-state change makes old checkpoints unloadable. A
+# mismatch makes load_checkpoint() report "incompatible" and start fresh
+# rather than crash (the user's "load last state unless incompatible").
+CHECKPOINT_VERSION = "2.16"
+
+
 def save_checkpoint(sim: 'SandKingsSimulation', path: str) -> int:
     """Pickle the whole simulation into a sqlite checkpoint row.
 
     Returns the new checkpoint id. Failure mode: raises on unpicklable
     state or unwritable path (callers treat persistence as best-effort).
+    The row carries CHECKPOINT_VERSION so an incompatible resume is
+    detected and handled gracefully rather than crashing.
     """
     conn = sqlite3.connect(path)
     try:
         conn.execute(
             "CREATE TABLE IF NOT EXISTS checkpoints ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-            "step INTEGER NOT NULL, saved_at TEXT NOT NULL, state BLOB NOT NULL)")
+            "step INTEGER NOT NULL, saved_at TEXT NOT NULL, "
+            "version TEXT NOT NULL DEFAULT '', state BLOB NOT NULL)")
+        # add the version column to a pre-2.16 db, best-effort
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(checkpoints)")}
+        if "version" not in cols:
+            conn.execute("ALTER TABLE checkpoints ADD COLUMN "
+                         "version TEXT NOT NULL DEFAULT ''")
         blob = pickle.dumps(sim, protocol=pickle.HIGHEST_PROTOCOL)
         cursor = conn.execute(
-            "INSERT INTO checkpoints (step, saved_at, state) "
-            "VALUES (?, datetime('now'), ?)", (sim.step_count, sqlite3.Binary(blob)))
+            "INSERT INTO checkpoints (step, saved_at, version, state) "
+            "VALUES (?, datetime('now'), ?, ?)",
+            (sim.step_count, CHECKPOINT_VERSION, sqlite3.Binary(blob)))
         conn.commit()
         return cursor.lastrowid
     finally:
@@ -4433,22 +4448,41 @@ class _CheckpointUnpickler(pickle.Unpickler):
 
 
 def load_checkpoint(path: str) -> Optional['SandKingsSimulation']:
-    """Latest checkpointed simulation from a sqlite db, or None if absent."""
+    """Latest checkpointed simulation, or None if absent OR incompatible.
+
+    "Incompatible" - a version mismatch or ANY unpickling failure (a
+    renamed/removed class from an older build) - returns None so the
+    caller starts fresh instead of crashing (T13; the resume-by-default
+    contract). The db is left intact for inspection.
+    """
     if not os.path.exists(path):
         return None
     conn = sqlite3.connect(path)
     try:
         try:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(checkpoints)")}
+            select = ("SELECT state, version FROM checkpoints" if "version" in cols
+                      else "SELECT state, '' FROM checkpoints")
             row = conn.execute(
-                "SELECT state FROM checkpoints ORDER BY id DESC LIMIT 1").fetchone()
+                select + " ORDER BY id DESC LIMIT 1").fetchone()
         except sqlite3.OperationalError:  # no table: not a terrarium db yet
             return None
     finally:
         conn.close()
     if row is None:
         return None
+    blob, version = row
+    if version and version != CHECKPOINT_VERSION:
+        print(f"[!] Checkpoint is v{version}, this build is "
+              f"v{CHECKPOINT_VERSION} - starting fresh (old state kept).")
+        return None
     import io
-    return _CheckpointUnpickler(io.BytesIO(row[0])).load()
+    try:
+        return _CheckpointUnpickler(io.BytesIO(blob)).load()
+    except Exception as exc:  # a genuinely incompatible pickle
+        print(f"[!] Checkpoint incompatible ({type(exc).__name__}) - "
+              "starting fresh (old state kept).")
+        return None
 
 
 # ============================================================================
@@ -4466,6 +4500,8 @@ def main():
                         help='Open a real-time pygame viewer instead of rendering GIFs')
     parser.add_argument('--sps', type=float, default=5.0,
                         help='Live mode: initial simulation steps per second')
+    parser.add_argument('--fresh', action='store_true',
+                        help='Ignore any saved state and start a new terrarium')
     parser.add_argument('--persist', nargs='?', const='terrarium.db', default=None,
                         metavar='DB', help='Resume from and autosave to a sqlite '
                         'terrarium (default file: terrarium.db). Live mode: K saves.')
@@ -4487,9 +4523,13 @@ def main():
         print("   Maw brain + soldier layers with mating/folding/pruning")
     print("="*60)
     
-    # Create or resume the simulation (SPEC T13)
+    # Create or resume the simulation (SPEC T13). Persistence is ON by
+    # default now: resume the last state unless --fresh, or unless it is
+    # missing/incompatible (load_checkpoint returns None in those cases).
+    if args.persist is None and not args.fresh:
+        args.persist = 'terrarium.db'
     sim = None
-    if args.persist:
+    if args.persist and not args.fresh:
         sim = load_checkpoint(args.persist)
         if sim is not None:
             print(f"[>] Resumed terrarium from {args.persist} at step {sim.step_count}")

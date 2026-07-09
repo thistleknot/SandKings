@@ -1,5 +1,17 @@
 # Sand Kings Changelog
 
+## 2.16.1 - Resume by default (persistence)
+
+- The terrarium now RESUMES its last saved state by default -
+  `python sandkings.py` and `python dashboard.py` load terrarium.db if
+  present and autosave back to it. The quasi-sentient colonies persist
+  across sessions.
+- "...unless incompatible": checkpoints are version-stamped; a version
+  mismatch or any unpickling failure (a class changed in a newer build)
+  starts a fresh terrarium and keeps the old db, instead of crashing.
+- `--fresh` forces a new world; `--persist PATH` picks the db.
+
+
 ## 2.16.0 - The Codex (SPEC_CODEX.md CX1-CX6)
 
 - The awakened READ. A colony that has breached (or holds a raspberry

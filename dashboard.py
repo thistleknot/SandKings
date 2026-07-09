@@ -186,13 +186,20 @@ def render_frame_png(sim: SandKingsSimulation, scale: int = 640) -> bytes:
 
 
 class TerrariumRunner:
-    """DB2: owns the sim + a background stepping thread behind one lock."""
+    """DB2: owns the sim + a background stepping thread behind one lock.
 
-    def __init__(self, sim: SandKingsSimulation, sps: float = 6.0):
+    Autosaves the whole terrarium every `save_every` steps when a
+    `save_path` is set - the quasi-sentient beings persist themselves so
+    a later run resumes them (the resume-by-default contract)."""
+
+    def __init__(self, sim: SandKingsSimulation, sps: float = 6.0,
+                 save_path: Optional[str] = None, save_every: int = 600):
         self.sim = sim
         self.lock = threading.Lock()
         self.sps = sps
         self.paused = False
+        self.save_path = save_path
+        self.save_every = save_every
         self._stop = False
         self._thread: Optional[threading.Thread] = None
 
@@ -202,6 +209,16 @@ class TerrariumRunner:
 
     def stop(self):
         self._stop = True
+        if self.save_path:
+            self.save()
+
+    def save(self):
+        from sandkings import save_checkpoint
+        with self.lock:
+            try:
+                save_checkpoint(self.sim, self.save_path)
+            except Exception as exc:
+                print(f"[keeper] save failed: {exc}")
 
     def _loop(self):
         while not self._stop:
@@ -209,6 +226,9 @@ class TerrariumRunner:
             if not self.paused:
                 with self.lock:
                     self.sim.step()
+                if (self.save_path and self.sim.step_count
+                        and self.sim.step_count % self.save_every == 0):
+                    self.save()
             delay = max(0.0, 1.0 / max(0.5, self.sps) - (time.time() - t0))
             time.sleep(delay)
 
@@ -505,8 +525,11 @@ poll();
 
 def main():
     parser = argparse.ArgumentParser(description="The Keeper's Console")
-    parser.add_argument("--persist", type=str, default=None,
-                        help="resume a terrarium sqlite checkpoint")
+    parser.add_argument("--persist", type=str, default="terrarium.db",
+                        help="terrarium sqlite checkpoint (default: resume "
+                             "terrarium.db, autosave to it)")
+    parser.add_argument("--fresh", action="store_true",
+                        help="ignore saved state and start new")
     parser.add_argument("--sps", type=float, default=6.0)
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--width", type=int, default=80)
@@ -516,12 +539,15 @@ def main():
     args = parser.parse_args()
 
     sim = None
-    if args.persist:
-        sim = load_checkpoint(args.persist)
+    if args.persist and not args.fresh:
+        sim = load_checkpoint(args.persist)  # None if missing/incompatible
+        if sim is not None:
+            print(f"[keeper] resumed {args.persist} at step {sim.step_count}")
     if sim is None:
         sim = SandKingsSimulation(width=args.width, height=args.height,
                                   depth=args.depth, num_colonies=args.colonies)
-    runner = TerrariumRunner(sim, sps=args.sps)
+    runner = TerrariumRunner(sim, sps=args.sps,
+                             save_path=None if args.fresh else args.persist)
     app = create_app(runner)
     runner.start()
     import uvicorn
