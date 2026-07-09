@@ -135,6 +135,14 @@ FAUNA_EVENTS = {
 }
 POISON_DURATION = 20         # scorpion sting DoT (1 HP/step)
 FAUNA_RAMPAGE = 500          # steps before an unslain incursion wanders off
+
+# Sentience Arc constants (SPEC_SENTIENCE.md S1-S4)
+RESONANCE_RANGE = 6          # Chebyshev radius of thought contagion
+RESONANCE_ALPHA = 0.15       # hidden-state blend rate per resonance tick
+RESONANCE_TICK = 2           # cadence of the resonance phase
+ALLY_RESONANCE_FACTOR = 0.3  # cross-colony damping (conspecific allies)
+SPECIATION_DIST = 0.35       # mean trait distance beyond which no mingling
+DREAM_REPLAYS = 3            # offline TD updates per Chill decision tick
 FAUNA_SPAWN_P = 0.3          # incursion chance per MARAUDER_INTERVAL roll...
 FAUNA_SPAWN_P_DARK = 0.6     # ...doubled in Dust/Chill (monsters own winter)
 
@@ -487,6 +495,7 @@ class ColonyGenome:
     resilience: float = 0.5        # Damage resistance
     patience: float = 0.5          # TD discount gamma - evolvable temperament (T26)
     loyalty: float = 0.5           # hawk-dove axis: honors commitments (P11)
+    plasticity: float = 0.5        # learning-to-learn rate scaler (S3)
     
     # Neural hive mind (Maw brain)
     brain: Optional[HiveMindBrain] = None
@@ -499,8 +508,8 @@ class ColonyGenome:
         
         for attr in ['aggression', 'tunnel_preference', 'expansion_rate',
                      'defense_investment', 'fertility', 'resilience', 'patience',
-                     'loyalty']:
-            current = getattr(self, attr)
+                     'loyalty', 'plasticity']:
+            current = getattr(self, attr, 0.5)  # pre-trait checkpoints
             noise = np.random.normal(0, mutation_rate)
             setattr(mutated, attr, np.clip(current + noise, 0.0, 1.0))
         
@@ -1111,6 +1120,7 @@ class SandKingsSimulation:
             genome.expansion_rate = random.uniform(0.3, 1.0)  # Spawn threshold bounded [30, 100]
             genome.patience = random.uniform(0.3, 0.95)  # discount gamma (T26)
             genome.loyalty = random.uniform(0.2, 0.9)    # hawk-dove (P11)
+            genome.plasticity = random.uniform(0.2, 0.9)  # meta-learning (S3)
             genome.resilience = random.uniform(0.0, 0.3)  # Defense weaker
             
             colony = Colony(i, positions[i], genome)
@@ -1261,10 +1271,21 @@ class SandKingsSimulation:
             if not colony.at_war:
                 colony.ram_until = 0
 
-            # LEARNER decision tick (T26): posture biases gates, never rules
+            # LEARNER decision tick (T26): posture biases gates, never
+            # rules. Plasticity scales the update (S3); Chill dreams (S4)
             if self.step_count % 25 == 0:
-                self._learner(colony.colony_id).decide(
-                    self, colony, getattr(colony.genome, 'patience', 0.5))
+                learner = self._learner(colony.colony_id)
+                plasticity = getattr(colony.genome, 'plasticity', 0.5)
+                learner.decide(self, colony,
+                               getattr(colony.genome, 'patience', 0.5),
+                               plasticity)
+                if self.season_index() == 3:  # the maws dream through frost
+                    learner.dream(getattr(colony.genome, 'patience', 0.5),
+                                  plasticity)
+                    dream_key = (self.year(),)
+                    if getattr(self, '_dream_logged', None) != dream_key:
+                        self._dream_logged = dream_key
+                        self._log_event("The maws dream through the long frost")
             posture = self._posture(colony)
 
             # FARMING FLAG hysteresis: on > FARM_START_FOOD, off < FARM_STOP_FOOD
@@ -1344,6 +1365,10 @@ class SandKingsSimulation:
             for unit in colony.units[:]:  # Copy list to allow removal
                 self._execute_unit_ai(unit, colony)
         
+        # 5a-mind. RESONANCE (S1): thought contagion through the ranks
+        if NEURAL_AVAILABLE and self.step_count % RESONANCE_TICK == 0:
+            self._resonance_tick()
+
         # 5a. WILD INCURSIONS (T48): DF-invader monsters trample through
         self._fauna_tick()
 
@@ -1664,6 +1689,109 @@ class SandKingsSimulation:
                             " around its maw", unit)
             return True
         return self._step_toward(unit, best, colony)
+
+    # ---- Sentience Arc helpers (SPEC_SENTIENCE.md) ----
+
+    def _genome_distance(self, a: 'ColonyGenome', b: 'ColonyGenome') -> float:
+        """S2: mean absolute trait distance over the 8 scalar traits."""
+        traits = ('aggression', 'tunnel_preference', 'expansion_rate',
+                  'defense_investment', 'fertility', 'resilience',
+                  'patience', 'loyalty')
+        return float(np.mean([abs(getattr(a, t, 0.5) - getattr(b, t, 0.5))
+                              for t in traits]))
+
+    def _conspecific(self, c1: Colony, c2: Colony) -> bool:
+        """S2: can these lineages still mingle minds and genes?"""
+        if getattr(c1, 'house', '') and c1.house == getattr(c2, 'house', ''):
+            return True  # kin are conspecific by construction
+        return self._genome_distance(c1.genome, c2.genome) <= SPECIATION_DIST
+
+    def _log_speciation(self, c1: Colony, c2: Colony):
+        """S2: the first crossing per house pair is history."""
+        pair = frozenset((self._house_name(c1), self._house_name(c2)))
+        if not hasattr(self, 'speciation_logged'):
+            self.speciation_logged = set()
+        if pair not in self.speciation_logged:
+            self.speciation_logged.add(pair)
+            h1, h2 = sorted(pair)
+            self._log_event(f"House {h1} and House {h2} have grown"
+                            " too strange to mingle")
+
+    def _resonance_tick(self):
+        """S1: thought contagion - same-colony soldiers within range blend
+        GRU hidden states; conspecific ALLIES cross-resonate, damped.
+
+        The hidden state is the decoded mind (N-spec probes), so this is
+        literal transmission: one soldier's alarm raises its squadmates'
+        p(danger) before they have line of sight.
+        """
+        import torch
+        minded = []  # (unit, colony) with live hidden state
+        for colony in self.colonies:
+            if not (colony.genome.use_neural and colony.genome.brain is not None):
+                continue
+            for unit in colony.units:
+                if (unit.unit_type == UnitType.SOLDIER
+                        and unit.brain_layer is not None
+                        and unit.brain_layer.hidden is not None):
+                    minded.append((unit, colony))
+        n = len(minded)
+        if n < 2:
+            return
+        d = self._diplomacy()
+        # colony-pair weights (k colonies, tiny): 1 kin, 0.3 conspecific
+        # allies, 0 otherwise
+        cols = sorted({c.colony_id for _u, c in minded})
+        by_id = {cid: next(c for _u, c in minded
+                           if c.colony_id == cid) for cid in cols}
+        pair_w = {}
+        for ca in cols:
+            for cb in cols:
+                if ca == cb:
+                    pair_w[(ca, cb)] = 1.0
+                elif (d.ally(ca, cb)
+                      and self._conspecific(by_id[ca], by_id[cb])):
+                    pair_w[(ca, cb)] = ALLY_RESONANCE_FACTOR
+                else:
+                    pair_w[(ca, cb)] = 0.0
+        # one vectorized blend: W row-normalized over in-range weighted
+        # neighbors, H' = (1-a)H + a(W @ H); no order bias by construction
+        pos = np.array([u.position for u, _c in minded], dtype=np.int32)
+        cheb = np.max(np.abs(pos[:, None, :] - pos[None, :, :]), axis=2)
+        weights = np.array([[pair_w[(ca.colony_id, cb.colony_id)]
+                             for _ub, cb in minded]
+                            for _ua, ca in minded], dtype=np.float32)
+        weights *= (cheb <= RESONANCE_RANGE)
+        np.fill_diagonal(weights, 0.0)
+        row_sums = weights.sum(axis=1)
+        active = row_sums > 0
+        if not active.any():
+            return
+        weights[active] /= row_sums[active, None]
+        H = torch.cat([u.brain_layer.hidden for u, _c in minded], dim=0)
+        blended = ((1.0 - RESONANCE_ALPHA) * H
+                   + RESONANCE_ALPHA * (torch.from_numpy(weights) @ H))
+        for i, (unit, _colony) in enumerate(minded):
+            if active[i]:
+                unit.brain_layer.hidden = blended[i:i + 1].detach()
+
+    def resonance_of(self, colony: Colony) -> Tuple[float, int]:
+        """S5: (mean pairwise cosine similarity, soldier count) of the
+        colony's live hidden states - how much the hive is of one mind."""
+        hiddens = [u.brain_layer.hidden.squeeze(0).numpy()
+                   for u in colony.units
+                   if u.unit_type == UnitType.SOLDIER
+                   and u.brain_layer is not None
+                   and u.brain_layer.hidden is not None]
+        if len(hiddens) < 2:
+            return 0.0, len(hiddens)
+        sims = []
+        for i in range(len(hiddens)):
+            for j in range(i + 1, len(hiddens)):
+                a, b = hiddens[i], hiddens[j]
+                denom = (np.linalg.norm(a) * np.linalg.norm(b)) or 1.0
+                sims.append(float(np.dot(a, b) / denom))
+        return float(np.mean(sims)), len(hiddens)
 
     # ---- Fauna (T48): the world's monsters ----
 
@@ -3136,6 +3264,7 @@ class SandKingsSimulation:
             genome.resilience = random.uniform(0.0, 0.3)
             genome.patience = random.uniform(0.3, 0.95)
             genome.loyalty = random.uniform(0.2, 0.9)
+            genome.plasticity = random.uniform(0.2, 0.9)
 
         min_distance = int(0.1 * ((w**2 + h**2)**0.5))
         living_maws = [c.maw.position for c in survivors]
@@ -3570,13 +3699,17 @@ class SandKingsSimulation:
                                 continue  # inbound envoys are sacrosanct (P3)
                             if enemy.position == (nx, ny, nz):
                                 # NEURAL MATING: Soldiers exchange genetic material during combat!
-                                if (NEURAL_AVAILABLE and 
-                                    unit.unit_type == UnitType.SOLDIER and 
+                                if (NEURAL_AVAILABLE and
+                                    unit.unit_type == UnitType.SOLDIER and
                                     enemy.unit_type == UnitType.SOLDIER and
-                                    unit.brain_layer is not None and 
+                                    unit.brain_layer is not None and
                                     enemy.brain_layer is not None and
                                     np.random.random() < 0.05):  # 5% chance during combat
-                                    mating_pairs.append((unit, enemy, colony, enemy_colony))
+                                    # S2: speciated lineages bear no young
+                                    if self._conspecific(colony, enemy_colony):
+                                        mating_pairs.append((unit, enemy, colony, enemy_colony))
+                                    else:
+                                        self._log_speciation(colony, enemy_colony)
                                 
                                 # COMBAT! Apply damage with resilience
                                 # (attackers credit damage_dealt for fitness)

@@ -42,7 +42,9 @@ SALIENCE = [
     ("Wildfire", 6),
     ("puts", 6),           # "...to the torch!"
     ("ram smashes", 6),
+    ("too strange", 8),
     ("incursion", 5),
+    ("dream", 3),
     ("strikes", 5),        # ore strikes
     ("tribute", 5),
     ("first harvest", 5),

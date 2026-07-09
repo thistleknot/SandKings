@@ -111,6 +111,11 @@ EVENT_TINTS = (            # substring -> HUD color (spec R19/R24)
     ("Scorpions", (200, 80, 220)),
     ("beneath the sand", (200, 80, 220)),
     ("anteater", (200, 80, 220)),
+    ("too strange", (200, 80, 220)),
+    ("dream", (150, 180, 255)),
+    ("blood feud", (255, 60, 120)),
+    ("will be remembered", (230, 210, 140)),
+    ("rises (", (230, 210, 140)),
 )
 PHEROMONE_OVERLAYS = (None, PheromoneType.FOOD_TRAIL, PheromoneType.TERRITORY,
                       PheromoneType.DANGER)  # P-key cycle (spec R17)
@@ -450,6 +455,13 @@ def build_manager_entries(sim: SandKingsSimulation,
         if moods and my_house:
             entries.append((f"House {my_house} broods on "
                             + ", ".join(moods), (200, 150, 220)))
+        # S5: how much the hive is of one mind
+        if (getattr(colony.genome, 'use_neural', False)
+                and hasattr(sim, 'resonance_of')):
+            res, k = sim.resonance_of(colony)
+            if k >= 2:
+                entries.append((f"resonance: {res:.2f} across {k} soldiers",
+                                (150, 180, 255)))
         if hasattr(sim, '_farm_counts'):  # Round-1 economy line (R24)
             plots, ripe = sim._farm_counts(colony)
             ore = getattr(colony, 'ore', {})

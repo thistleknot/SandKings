@@ -92,6 +92,29 @@ python sandkings.py --live --use-neural --sps 10
 # Rule-based colonies show instincts (same lexicon, direct predicates).
 # The decision log ties outcomes to the thoughts that led to them.
 
+# POLITICS, MACHINES, TIMBER & MONSTERS: trust and truces, gift envoys,
+# coalitions against the hegemon, betrayal under truce; a buried wreck
+# with a programmable ancient controller (QBasic-flavored VM), devices,
+# radiation that catalyzes mutation; trees to chop and fell (bridges!),
+# bone-and-palm spears, palisades, battering rams, fire that spreads;
+# and DF-invader fauna - one announced incursion at a time (spiders,
+# snakes, birds, scorpions, anteaters...) trampling through the world.
+
+# DYNASTIES & THE SAGA (H key; E exports terrarium_saga.txt): every maw
+# belongs to a named house ("House Vex-Karn II, the Oath-Broken");
+# respawns are cadet branches of surviving bloodlines; epithets are
+# earned by a reign's deeds; betrayals become eternal blood feuds; and
+# the chronicle writes the whole thing down, salience-pruned, as a
+# readable history the terrarium narrates itself.
+
+# THE SENTIENCE ARC (--use-neural): soldiers within earshot resonate -
+# GRU hidden states blend, so alarm literally spreads mind-to-mind
+# before line of sight (watch "resonance: 0.62 across 7 soldiers" on
+# the manager). Lineages that drift too far apart speciate ("too
+# strange to mingle"); plasticity (learning rate) is itself an
+# evolvable gene; and through the Chill the maws dream - experience
+# replay consolidates each colony's policy at zero food cost.
+
 # PET MODE: the terrarium lives between sessions (sqlite checkpoint)
 python sandkings.py --live --persist           # resumes terrarium.db if present,
                                                # autosaves on exit; K saves anytime

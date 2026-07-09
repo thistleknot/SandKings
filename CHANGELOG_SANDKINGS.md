@@ -1,5 +1,27 @@
 # Sand Kings Changelog
 
+## 2.10.0 - The Sentience Arc (SPEC_SENTIENCE.md S1-S6)
+
+- Resonance (S1): soldiers of one colony within earshot blend GRU
+  hidden states each tick - literal thought contagion. One soldier's
+  alarm raises its squadmates' decoded p(danger) before they have
+  line of sight. Conspecific allies cross-resonate, damped; hostile
+  minds never mingle. The manager reports it: "resonance: 0.62
+  across 7 soldiers" - how much the hive is of one mind.
+- Speciation (S2): lineages whose genomes drift beyond a threshold
+  can no longer interbreed (combat crossover bears no young) or
+  share culture (no allied resonance). The first crossing is
+  chronicled: "House X and House Y have grown too strange to mingle."
+  Kin houses are conspecific by construction.
+- Plasticity (S3): a new evolvable genome trait scales the colony
+  learner's rate and exploration floor - selection now acts on HOW
+  FAST minds adapt, not just what bodies do (the Baldwin experiment,
+  made explicit).
+- Dreams (S4): learners keep a replay memory; through the Chill the
+  maws dream - offline TD consolidation at zero food cost. "The maws
+  dream through the long frost."
+
+
 ## 2.9.0 - Dynasties & Chronicle (SPEC_DYNASTIES.md D1-D7)
 
 - Houses: every maw belongs to a named dynasty ("House Vex-Karn").
