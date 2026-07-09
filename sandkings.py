@@ -109,7 +109,34 @@ FIRE_DAMAGE = 2              # per tick to units within Chebyshev 1
 MARAUDER_INTERVAL = 700      # pack-spawn roll cadence (T48)
 MARAUDER_PACK = (2, 3)
 MARAUDER_BOUNTY = 3          # corpse voxels per slain marauder
-FLAMMABLE_VOXELS = (8, 9, 14, 15)  # CROP, CROP_RIPE, WOOD, WOOD_WALL
+FLAMMABLE_VOXELS = (8, 9, 14, 15, 16)  # CROP, CROP_RIPE, WOOD, WOOD_WALL, WEB
+
+# T48 fauna bestiary: (weight, hp, attack, pack, hunt_range, bounty)
+# hunt_range 0 = neutral (retaliates only). Sand kings are scorpion-sized.
+FAUNA = {
+    'spider':   (0.20, 25, 8, (2, 3), 20, 2),
+    'rabbit':   (0.18, 60, 6, (1, 2), 0, 6),
+    'squirrel': (0.15, 30, 3, (1, 2), 0, 4),
+    'bird':     (0.15, 20, 12, (1, 1), 40, 2),
+    'rodent':   (0.12, 12, 2, (3, 4), 0, 1),
+    'scorpion': (0.10, 22, 6, (1, 2), 15, 2),
+    'snake':    (0.06, 80, 18, (1, 1), 25, 5),
+    'anteater': (0.04, 150, 25, (1, 1), 30, 8),
+}
+FAUNA_EVENTS = {
+    'spider': "Spiders crawl up from the deep!",
+    'rabbit': "A great rabbit lopes onto the sands",
+    'squirrel': "A squirrel scampers down from the palms",
+    'bird': "A shadow wheels overhead!",
+    'rodent': "Rodents scurry in from the wastes",
+    'scorpion': "Scorpions skitter across the dunes",
+    'snake': "Something long moves beneath the sand...",
+    'anteater': "An anteater stalks the sands!",
+}
+POISON_DURATION = 20         # scorpion sting DoT (1 HP/step)
+FAUNA_RAMPAGE = 500          # steps before an unslain incursion wanders off
+FAUNA_SPAWN_P = 0.3          # incursion chance per MARAUDER_INTERVAL roll...
+FAUNA_SPAWN_P_DARK = 0.6     # ...doubled in Dust/Chill (monsters own winter)
 
 
 class VoxelType(Enum):
@@ -129,6 +156,7 @@ class VoxelType(Enum):
     SALVAGE = 13       # Wreck components - minable, non-renewable
     WOOD = 14          # Palm/scrub trunk - choppable, flammable (T41)
     WOOD_WALL = 15     # Palisade - rots, burns; the poor colony's wall (T43)
+    WEB = 16           # Spider silk - snares a step, burns (T48)
 
     def is_tunnelable(self):
         return self in (VoxelType.SAND, VoxelType.AIR)
@@ -312,9 +340,10 @@ class VoxelWorld:
         self.voxels[:, -1, :] = VoxelType.GLASS.value
         self.voxels[:, :, 0] = VoxelType.GLASS.value
 
-        # Trees (T41): palm clusters near the oasis, scattered scrub
+        # Trees (T41): palm clusters near the oasis, scattered scrub.
+        # Shallow test worlds stay sterile (mirrors the ore/cavern gate).
         cx2, cy2 = w // 2, h // 2
-        for cluster in range(5):
+        for cluster in range(5 if d >= 8 else 0):
             if cluster < 3:  # oasis ring
                 angle = rng.random() * 2 * np.pi
                 r = 4 + rng.random() * 5
@@ -523,6 +552,9 @@ class SandKing:
     gift_to: int = -1          # recipient colony id (-1 = not an envoy)
     weapon_expires: int = 0    # spear splinter step; 0 = unarmed (T44)
     torch: bool = False        # can put fields to the torch (T44/T45)
+    poisoned_until: int = 0    # scorpion venom DoT end step (T48)
+    chop_target: Optional[Tuple[int, int, int]] = None  # trunk being cut (T41)
+    chop_progress: int = 0
     
     # Neural hive mind extension (soldier's personal layer)
     brain_layer: Optional[SoldierLayer] = None
@@ -558,6 +590,26 @@ class SandKing:
             self.retreating = True
         
         return self.health <= 0
+
+@dataclass
+class Beast:
+    """Wild fauna (T48): a DF-style invader, not a colony citizen.
+
+    Beasts live outside the voxel grid (like units), spawn as single
+    incursions from the map edge, and either die for their bounty or
+    wander off after FAUNA_RAMPAGE steps. hunt_range 0 = neutral:
+    strikes only once provoked.
+    """
+    species: str
+    position: Tuple[int, int, int]
+    health: int
+    attack: int
+    hunt_range: int
+    bounty: int
+    spawned_at: int = 0
+    provoked: bool = False
+    fleeing: bool = False
+
 
 class Maw:
     """Queen entity - heart of each colony"""
@@ -623,16 +675,32 @@ class Colony:
         self.ore = {'copper': 0, 'gold': 0}  # mined stores (T24/T25)
         self.ore_struck: Set[str] = set()    # first-strike events fired (T24)
         
-    def spawn_unit(self, unit_type: UnitType):
-        """Spawn new unit from Maw; copper armors new soldiers (T25)"""
+    def spawn_unit(self, unit_type: UnitType, step: int = 0):
+        """Spawn new unit from Maw; copper armors, timber arms (T25/T44).
+
+        step is the sim step at spawn time - it anchors the spear's
+        splinter clock; callers without a clock may pass 0 (the spear
+        then simply lives its full SPEAR_LIFE from step zero).
+        """
         unit = self.maw.spawn_unit(unit_type)
         if unit:
-            if (unit.unit_type == UnitType.SOLDIER
-                    and getattr(self, 'ore', {}).get('copper', 0) >= 1):
-                self.ore['copper'] -= 1
-                unit.max_health += COPPER_ARMOR_HP
-                unit.health = unit.max_health
-                unit.armored = True
+            if unit.unit_type == UnitType.SOLDIER:
+                if getattr(self, 'ore', {}).get('copper', 0) >= 1:
+                    self.ore['copper'] -= 1
+                    unit.max_health += COPPER_ARMOR_HP
+                    unit.health = unit.max_health
+                    unit.armored = True
+                # T44: a spear of palm and bone - organic, so it splinters
+                if (getattr(self, 'wood', 0) >= 1
+                        and getattr(self, 'bone', 0) >= 1):
+                    self.wood -= 1
+                    self.bone -= 1
+                    unit.attack += SPEAR_ATTACK
+                    unit.weapon_expires = step + SPEAR_LIFE
+                # T45: wartime soldiers may carry a torch (thrown once)
+                if self.at_war and getattr(self, 'wood', 0) >= 1:
+                    self.wood -= 1
+                    unit.torch = True
             self.units.append(unit)
     
     def remove_unit(self, unit: SandKing):
@@ -817,6 +885,12 @@ class Visualizer:
                     color = (120, 130, 150)
                 elif voxel == VoxelType.SALVAGE:
                     color = (170, 190, 210)
+                elif voxel == VoxelType.WOOD:
+                    color = (34, 139, 34)
+                elif voxel == VoxelType.WOOD_WALL:
+                    color = (139, 105, 20)
+                elif voxel == VoxelType.WEB:
+                    color = (210, 210, 220)
                 elif voxel == VoxelType.AIR:
                     if owner >= 0:
                         # Owned air = faint colony color
@@ -1089,6 +1163,15 @@ class SandKingsSimulation:
             self._log_event("A sandstorm rises!")
         if self.storm_until > self.step_count:
             self._blow_sand()
+            # T45: dry lightning rides the Dust storms
+            if season == 2 and random.random() < 0.02:
+                flams = np.argwhere(np.isin(self.world.voxels,
+                                            FLAMMABLE_VOXELS))
+                if len(flams):
+                    pos = tuple(int(v) for v in
+                                flams[random.randrange(len(flams))])
+                    self._ignite(pos)
+                    self._log_event("Lightning splits the sky - fire!")
             if self.storm_until == self.step_count + 1:
                 self._log_event("The sandstorm passes")
 
@@ -1108,6 +1191,19 @@ class SandKingsSimulation:
         # 3g. RADIATION (T40): the damaged reactor seeps; fields decay
         if getattr(self.world, 'wreck', None):
             self._radiation_tick()
+
+        # 3h. FIRE (T45): damage, spread, burn out
+        if self.step_count % FIRE_TICK == 0 and getattr(self, 'fires', None):
+            self._fire_tick()
+
+        # 3i. PALISADE ROT (T43): organic walls crumble on schedule
+        if self.step_count % 50 == 0 and getattr(self, 'rot', None):
+            for pos, expiry in list(self.rot.items()):
+                if self.world.voxels[pos] != VoxelType.WOOD_WALL.value:
+                    del self.rot[pos]
+                elif self.step_count >= expiry:
+                    self.world.voxels[pos] = VoxelType.SAND.value
+                    del self.rot[pos]
 
         # 4. NEURAL PRUNING: Remove rarely activated weights every 50 steps
         if NEURAL_AVAILABLE and self.step_count % 50 == 0:
@@ -1224,7 +1320,7 @@ class SandKingsSimulation:
 
             # BOOTSTRAP: a colony with no units always fields a worker (SPEC T2)
             if not colony.units and colony.maw.food_stored >= 3:
-                colony.spawn_unit(UnitType.WORKER)
+                colony.spawn_unit(UnitType.WORKER, self.step_count)
             # Maw spawning decisions; war flips the mix
             elif colony.maw.food_stored > spawn_threshold and len(colony.units) < UNIT_CAP:
                 if random.random() < colony.genome.fertility:
@@ -1237,12 +1333,15 @@ class SandKingsSimulation:
                     else:              # peacetime: 0.60 W / 0.25 S / 0.15 C
                         unit_type = (UnitType.WORKER if roll < 0.60 else
                                      UnitType.SOLDIER if roll < 0.85 else UnitType.SCOUT)
-                    colony.spawn_unit(unit_type)
+                    colony.spawn_unit(unit_type, self.step_count)
             
             # Unit AI (simplified)
             for unit in colony.units[:]:  # Copy list to allow removal
                 self._execute_unit_ai(unit, colony)
         
+        # 5a. WILD INCURSIONS (T48): DF-invader monsters trample through
+        self._fauna_tick()
+
         # 5b. DIPLOMACY (SPEC_POLITICS): a truce signed this step prevents
         # this step's bloodshed
         self._resolve_diplomacy()
@@ -1338,6 +1437,374 @@ class SandKingsSimulation:
             if z + 1 < d and self.world.voxels[x, y, z + 1] == VoxelType.AIR.value:
                 if random.random() < SPOIL_CHANCE:
                     self.world.voxels[x, y, z] = VoxelType.AIR.value
+
+    # ---- Timber, Bone & Flame helpers (SPEC_TIMBER_AND_FLAME.md) ----
+
+    def _rot(self) -> Dict[Tuple[int, int, int], int]:
+        """Palisade rot registry pos -> expiry step (T43); checkpoint-guarded."""
+        if not hasattr(self, 'rot'):
+            self.rot = {}
+        return self.rot
+
+    def _fires(self) -> Dict[Tuple[int, int, int], int]:
+        """Active fire cells pos -> remaining burn ticks (T45); guarded."""
+        if not hasattr(self, 'fires'):
+            self.fires = {}
+        return self.fires
+
+    def _ignite(self, pos: Tuple[int, int, int]):
+        """Set a flammable voxel alight (T45); non-flammables shrug it off."""
+        if self.world.voxels[pos] in FLAMMABLE_VOXELS:
+            self._fires().setdefault(pos, FIRE_BURN)
+
+    def _fire_tick(self):
+        """T45 behavioral block: damage -> spread -> burn down -> burn out.
+
+        Burnout leaves SAND (AIR for silk), purging crop/rot registries so
+        nothing grows or rots inside a scar. Firebreaks are emergent: fire
+        only crosses FLAMMABLE_VOXELS.
+        """
+        fires = self._fires()
+        fire_set = set(fires)
+        for colony in self.colonies:
+            for unit in colony.units[:]:
+                x, y, z = unit.position
+                near = any((x + dx, y + dy, z + dz) in fire_set
+                           for dx in (-1, 0, 1) for dy in (-1, 0, 1)
+                           for dz in (-1, 0, 1))
+                if near and unit.take_damage(FIRE_DAMAGE, 0.0):
+                    colony.remove_unit(unit)
+                    self.world.set_voxel(*unit.position, VoxelType.CORPSE)
+        for pos in list(fires):
+            if self.world.voxels[pos] not in FLAMMABLE_VOXELS:
+                del fires[pos]  # harvested/buried out from under the flame
+                continue
+            for nx, ny, nz in self.world.get_neighbors_3d(pos, radius=1):
+                npos = (nx, ny, nz)
+                if (self.world.voxels[npos] in FLAMMABLE_VOXELS
+                        and npos not in fires
+                        and random.random() < FIRE_SPREAD_P):
+                    fires[npos] = FIRE_BURN
+            fires[pos] -= 1
+            if fires[pos] <= 0:
+                burned = self.world.voxels[pos]
+                self.world.voxels[pos] = (
+                    VoxelType.AIR.value if burned == VoxelType.WEB.value
+                    else VoxelType.SAND.value)
+                self._crops().pop(pos, None)
+                self._rot().pop(pos, None)
+                del fires[pos]
+        if (len(fires) >= 6 and self.step_count
+                - getattr(self, '_wildfire_logged', -10**9) > SEASON_LENGTH):
+            self._wildfire_logged = self.step_count
+            self._log_event("Wildfire races across the terrarium!")
+
+    def _chop_step(self, unit: SandKing, colony: Colony) -> bool:
+        """T41: walk to the nearest trunk, cut for CHOP_TIME, then fell it."""
+        target = getattr(unit, 'chop_target', None)
+        if (target is not None
+                and self.world.voxels[target] != VoxelType.WOOD.value):
+            target = unit.chop_target = None
+        if target is None:
+            x, y, z = unit.position
+            r = colony.genome.foraging_range
+            w, h, d = self.world.dimensions
+            x0, x1 = max(0, x - r), min(w, x + r + 1)
+            y0, y1 = max(0, y - r), min(h, y + r + 1)
+            box = self.world.voxels[x0:x1, y0:y1, :]
+            hits = np.argwhere(box == VoxelType.WOOD.value)
+            if not len(hits):
+                return False
+            best = min(hits, key=lambda p: (abs(int(p[0]) + x0 - x)
+                                            + abs(int(p[1]) + y0 - y)
+                                            + abs(int(p[2]) - z)))
+            target = (int(best[0]) + x0, int(best[1]) + y0, int(best[2]))
+            unit.chop_target = target
+            unit.chop_progress = 0
+        x, y, z = unit.position
+        if max(abs(target[0] - x), abs(target[1] - y),
+               abs(target[2] - z)) > 1:
+            return self._step_toward(unit, target, colony)
+        unit.chop_progress = getattr(unit, 'chop_progress', 0) + 1
+        if unit.chop_progress >= CHOP_TIME:
+            self._fell_tree(target, unit, colony)
+            unit.chop_target = None
+            unit.chop_progress = 0
+        return True
+
+    def _fell_tree(self, base: Tuple[int, int, int], unit: SandKing,
+                   colony: Colony):
+        """T41: the cut trunk joins the wood store; the crown falls away
+        from the chopper, laying up to FELL_LENGTH trunks into open AIR
+        at the cut height - a felled palm spanning a gap IS a bridge.
+        Crown voxels with nowhere to fall also land in the store.
+        """
+        x, y, z = base
+        crown = []
+        cz = z + 1
+        while (cz < self.world.depth
+               and self.world.voxels[x, y, cz] == VoxelType.WOOD.value):
+            crown.append((x, y, cz))
+            cz += 1
+        self.world.voxels[base] = VoxelType.AIR.value
+        colony.wood = getattr(colony, 'wood', 0) + 1
+        ux, uy, _ = unit.position
+        dx = int(np.sign(x - ux)) or random.choice([-1, 1])
+        dy = int(np.sign(y - uy))
+        laid = 0
+        for i, cpos in enumerate(crown, start=1):
+            self.world.voxels[cpos] = VoxelType.AIR.value
+            lx, ly = x + dx * i, y + dy * i
+            if (laid < FELL_LENGTH and self.world.in_bounds(lx, ly, z)
+                    and self.world.voxels[lx, ly, z] == VoxelType.AIR.value):
+                self.world.voxels[lx, ly, z] = VoxelType.WOOD.value
+                laid += 1
+            else:
+                colony.wood += 1
+        self._milestone(colony, 'felled',
+                        f"Colony {colony.colony_id} fells its first palm",
+                        unit)
+
+    def _palisade_step(self, unit: SandKing, colony: Colony) -> bool:
+        """T43: wall the maw - one WOOD_WALL on the ring per wood spent."""
+        mx, my, mz = colony.maw.position
+        r = PALISADE_RING
+        best, best_dist = None, None
+        ux, uy, uz = unit.position
+        for dx in range(-r, r + 1):
+            for dy in range(-r, r + 1):
+                if max(abs(dx), abs(dy)) != r:
+                    continue
+                pos = (mx + dx, my + dy, mz)
+                if not self.world.in_bounds(*pos):
+                    continue
+                if self.world.voxels[pos] != VoxelType.AIR.value:
+                    continue
+                dist = abs(pos[0] - ux) + abs(pos[1] - uy) + abs(pos[2] - uz)
+                if best_dist is None or dist < best_dist:
+                    best, best_dist = pos, dist
+        if best is None:
+            return False
+        if max(abs(best[0] - ux), abs(best[1] - uy), abs(best[2] - uz)) <= 1:
+            colony.wood -= 1
+            self.world.voxels[best] = VoxelType.WOOD_WALL.value
+            self.world.ownership[best] = colony.colony_id
+            self._rot()[best] = self.step_count + WALL_ROT
+            self._milestone(colony, 'palisade',
+                            f"Colony {colony.colony_id} raises palisades"
+                            " around its maw", unit)
+            return True
+        return self._step_toward(unit, best, colony)
+
+    # ---- Fauna (T48): the world's monsters ----
+
+    def _fauna(self) -> List['Beast']:
+        """Live wild beasts (T48); checkpoint-guarded."""
+        if not hasattr(self, 'fauna'):
+            self.fauna = []
+        return self.fauna
+
+    def _fauna_tick(self):
+        """T48: venom DoT, single-incursion spawns, per-species AI, combat."""
+        # scorpion venom runs its course even after the incursion ends
+        for colony in self.colonies:
+            for unit in colony.units[:]:
+                if getattr(unit, 'poisoned_until', 0) > self.step_count:
+                    if unit.take_damage(1, 0.0):
+                        colony.remove_unit(unit)
+                        self.world.set_voxel(*unit.position, VoxelType.CORPSE)
+
+        beasts = self._fauna()
+        if not beasts:
+            # DF-invader principle: at most ONE incursion at a time
+            if self.step_count and self.step_count % MARAUDER_INTERVAL == 0:
+                dark = self.season_index() in (2, 3)
+                if random.random() < (FAUNA_SPAWN_P_DARK if dark
+                                      else FAUNA_SPAWN_P):
+                    self._spawn_incursion()
+            return
+        for beast in beasts[:]:
+            if (beast.fleeing
+                    or self.step_count - beast.spawned_at > FAUNA_RAMPAGE):
+                if self._beast_leaves(beast):
+                    continue
+            else:
+                self._beast_ai(beast)
+            self._beast_combat(beast)
+
+    def _spawn_incursion(self):
+        """Roll a species and spawn its pack at one random map edge."""
+        species = random.choices(list(FAUNA),
+                                 weights=[FAUNA[s][0] for s in FAUNA])[0]
+        _, hp, atk, pack, hunt, bounty = FAUNA[species]
+        w, h, d = self.world.dimensions
+        edge = random.choice(['n', 's', 'e', 'w'])
+        for _ in range(random.randint(*pack)):
+            if edge == 'n':
+                x, y = random.randint(2, w - 3), 2
+            elif edge == 's':
+                x, y = random.randint(2, w - 3), h - 3
+            elif edge == 'w':
+                x, y = 2, random.randint(2, h - 3)
+            else:
+                x, y = w - 3, random.randint(2, h - 3)
+            z = min(self.world.surface_z(x, y) + 1, d - 1)
+            self._fauna().append(Beast(species, (x, y, z), hp, atk, hunt,
+                                       bounty, spawned_at=self.step_count))
+        self._log_event(FAUNA_EVENTS[species])
+
+    def _beast_leaves(self, beast: 'Beast') -> bool:
+        """Walk to the nearest edge; True once gone (incursion over)."""
+        beast.fleeing = True
+        x, y, z = beast.position
+        w, h = self.world.width, self.world.height
+        if x <= 1 or y <= 1 or x >= w - 2 or y >= h - 2:
+            self._fauna().remove(beast)
+            if not self._fauna():
+                self._log_event(f"The {beast.species} incursion moves on")
+            return True
+        if min(x, w - 1 - x) <= min(y, h - 1 - y):
+            target = (0 if x < w - 1 - x else w - 1, y, z)
+        else:
+            target = (x, 0 if y < h - 1 - y else h - 1, z)
+        self._beast_move(beast, target)
+        return False
+
+    def _beast_move(self, beast: 'Beast', target: Tuple[int, int, int]):
+        """One move toward target: birds fly 3, snakes swim through sand."""
+        steps = 3 if beast.species == 'bird' else 1
+        for _ in range(steps):
+            bx, by, bz = beast.position
+            dx = int(np.sign(target[0] - bx))
+            dy = int(np.sign(target[1] - by))
+            dz = int(np.sign(target[2] - bz))
+            moved = False
+            for sd in ((dx, dy, dz), (dx, 0, 0), (0, dy, 0), (0, 0, dz)):
+                if sd == (0, 0, 0):
+                    continue
+                npos = (bx + sd[0], by + sd[1], bz + sd[2])
+                if not self.world.in_bounds(*npos):
+                    continue
+                v = self.world.get_voxel(*npos)
+                if v == VoxelType.AIR or (beast.species == 'snake'
+                                          and v == VoxelType.SAND):
+                    beast.position = npos
+                    moved = True
+                    break
+            if not moved:
+                return
+
+    def _beast_ai(self, beast: 'Beast'):
+        """Per-species behavior; every colony smells the intruder."""
+        for colony in self.colonies:
+            self.pheromones.deposit(beast.position, colony.colony_id,
+                                    PheromoneType.DANGER, 1.0)
+        bx, by, bz = beast.position
+        nearest, ndist = None, float('inf')
+        for colony in self.colonies:
+            for unit in colony.units:
+                dist = (abs(unit.position[0] - bx) + abs(unit.position[1] - by)
+                        + abs(unit.position[2] - bz))
+                if dist < ndist:
+                    ndist, nearest = dist, unit
+
+        if beast.species == 'rodent':
+            if nearest is not None and ndist <= 3:  # cowardly scavengers
+                away = (bx - int(np.sign(nearest.position[0] - bx)) * 3,
+                        by - int(np.sign(nearest.position[1] - by)) * 3, bz)
+                self._beast_move(beast, away)
+                return
+            for nx, ny, nz in self.world.get_neighbors_3d(beast.position, 1):
+                if self.world.voxels[nx, ny, nz] == VoxelType.CORPSE.value:
+                    self.world.voxels[nx, ny, nz] = VoxelType.AIR.value
+                    return
+            self._beast_wander(beast)
+        elif beast.species == 'squirrel':
+            for nx, ny, nz in self.world.get_neighbors_3d(beast.position, 1):
+                if self.world.voxels[nx, ny, nz] == VoxelType.FOOD.value:
+                    self.world.voxels[nx, ny, nz] = VoxelType.AIR.value
+                    return  # poached!
+            found = self._find_food_target(beast.position, 8)
+            if found is not None:
+                self._beast_move(beast, found)
+            else:
+                self._beast_wander(beast)
+        elif beast.hunt_range > 0:  # spider, bird, scorpion, snake, anteater
+            if nearest is not None and ndist <= beast.hunt_range:
+                if ndist > 1:
+                    self._beast_move(beast, nearest.position)
+            else:
+                self._beast_wander(beast)
+            if beast.species == 'spider' and random.random() < 0.3:
+                for nx, ny, nz in self.world.get_neighbors_3d(
+                        beast.position, 1):
+                    if self.world.voxels[nx, ny, nz] == VoxelType.AIR.value:
+                        self.world.voxels[nx, ny, nz] = VoxelType.WEB.value
+                        break
+        else:  # rabbit: grazes, minds its own business
+            self._beast_wander(beast)
+
+    def _beast_wander(self, beast: 'Beast'):
+        x, y, z = beast.position
+        dx, dy = random.choice([(1, 0), (-1, 0), (0, 1), (0, -1)])
+        self._beast_move(beast, (x + dx * 3, y + dy * 3, z))
+
+    def _beast_combat(self, beast: 'Beast'):
+        """Adjacent exchange: predators strike; neutrals only if provoked;
+        soldiers always engage invaders. Death pays the bounty in corpses."""
+        if beast not in self._fauna():
+            return
+        bx, by, bz = beast.position
+        adjacent = []
+        for colony in self.colonies:
+            for unit in colony.units:
+                if max(abs(unit.position[0] - bx), abs(unit.position[1] - by),
+                       abs(unit.position[2] - bz)) <= 1:
+                    adjacent.append((unit, colony))
+        if not adjacent:
+            return
+        if beast.hunt_range > 0 or beast.provoked:
+            # birds pick the straggler: the victim with fewest allies near
+            unit, colony = min(adjacent, key=lambda uc: sum(
+                1 for other, oc in adjacent
+                if oc.colony_id == uc[1].colony_id)) \
+                if beast.species == 'bird' else random.choice(adjacent)
+            if unit.take_damage(beast.attack, colony.genome.resilience):
+                colony.remove_unit(unit)
+                self.world.set_voxel(*unit.position, VoxelType.CORPSE)
+                self._monitor(colony.colony_id).log_decision(
+                    self.step_count, self._unit_label(unit),
+                    f"was slain by a {beast.species}",
+                    getattr(unit, 'thought', None))
+            elif beast.species == 'scorpion':
+                unit.poisoned_until = self.step_count + POISON_DURATION
+            if beast.species == 'bird':
+                beast.fleeing = True  # strikes once, then wheels away
+        struck = False
+        for unit, colony in adjacent:
+            if (unit.unit_type == UnitType.SOLDIER or beast.provoked
+                    or beast.hunt_range > 0):
+                beast.health -= unit.attack
+                struck = True
+        if struck:
+            beast.provoked = True
+        if beast.health <= 0:
+            if beast.species == 'squirrel' and len(adjacent) < 2:
+                beast.health = 1  # slips away unless pinned by two
+                beast.fleeing = True
+                self._log_event("The squirrel slips away, unpinned")
+                return
+            self._fauna().remove(beast)
+            placed = 0
+            for nx, ny, nz in [beast.position] + list(
+                    self.world.get_neighbors_3d(beast.position, 1)):
+                if placed >= beast.bounty:
+                    break
+                if self.world.voxels[nx, ny, nz] == VoxelType.AIR.value:
+                    self.world.voxels[nx, ny, nz] = VoxelType.CORPSE.value
+                    placed += 1
+            self._log_event(f"The {beast.species} is slain -"
+                            " a feast for the bold!")
 
     def _monitor(self, colony_id: int) -> 'HiveMindMonitor':
         """Lazy per-colony hive-mind monitor (SPEC_HIVE_MONITOR M6/M7).
@@ -1673,6 +2140,9 @@ class SandKingsSimulation:
             if voxel == VoxelType.AIR:
                 unit.move(new_pos)
                 return True
+            if voxel == VoxelType.WEB:  # T48: the silk snares the step
+                self.world.set_voxel(*new_pos, VoxelType.AIR)
+                return False
             if voxel == VoxelType.SAND and self.world.tunnel(
                     unit.position, step_dir, colony.colony_id):
                 unit.move(new_pos)
@@ -2169,8 +2639,7 @@ class SandKingsSimulation:
                         device.durability -= 1
             for pos in list(self._crops().keys()):
                 if rad[pos[0], pos[1]] > RAD_HOT:
-                    self.world.voxels[pos] = VoxelType.SAND.value
-                    del self.crops[pos]
+                    self._ignite(pos)  # T45: hot zones set fields alight
 
     def _machine_tick(self):
         """Phase 3f: discovery ladder, decay, VM execution, tinkering."""
@@ -2408,7 +2877,10 @@ class SandKingsSimulation:
                                 self.step_count, self._unit_label(enemy),
                                 "landed first blood on a Maw",
                                 getattr(enemy, 'thought', None))
-                        colony.maw.take_damage(enemy.attack)
+                        mult = (RAM_SIEGE_MULT  # T44b: the ram at the gates
+                                if getattr(enemy_colony, 'ram_until', 0)
+                                > self.step_count else 1)
+                        colony.maw.take_damage(enemy.attack * mult)
 
     def _migrate_threatened_maws(self):
         """Wounded Maws crawl away from their attackers (SPEC T15).
@@ -2631,6 +3103,8 @@ class SandKingsSimulation:
                     unit.move((nx, ny, nz))
                     self.world.set_voxel(nx, ny, nz, VoxelType.AIR)
                     colony.maw.eat(HARVEST_YIELD)
+                    if voxel == VoxelType.CORPSE:  # T42: bones from the fallen
+                        colony.bone = getattr(colony, 'bone', 0) + 1
                     unit.forage_target = None
                     if unit.brain_layer is not None:
                         unit.brain_layer.food_gathered += 10
@@ -2722,6 +3196,16 @@ class SandKingsSimulation:
             # (6) Seek exposed ore
             if not acted:
                 acted = self._mine_seek(unit, colony)
+
+            # (6b) Timber (T41): chop when the woodpile runs short
+            if not acted and getattr(colony, 'wood', 0) < 4:
+                acted = self._chop_step(unit, colony)
+
+            # (6c) Palisades (T43): fortifiers wall the maw with timber
+            if not acted and getattr(colony, 'wood', 0) >= 1 and (
+                    self._posture(colony) == "FORTIFY"
+                    or getattr(colony.genome, 'defense_investment', 0.0) > 0.5):
+                acted = self._palisade_step(unit, colony)
 
             # (7) No work known: random dig
             if not acted and random.random() < colony.genome.tunnel_preference:
@@ -2820,6 +3304,44 @@ class SandKingsSimulation:
             # RULE-BASED AI PATH (fallback)
             else:
                 from politics import hostile as _hostile
+                # T44b/T45: rams smash enemy walls; torches fire the fields
+                if colony.at_war:
+                    ram_live = getattr(colony, 'ram_until', 0) > self.step_count
+                    for nx, ny, nz in self.world.get_neighbors_3d(
+                            unit.position, radius=1):
+                        v = self.world.voxels[nx, ny, nz]
+                        owner = int(self.world.ownership[nx, ny, nz])
+                        foe = (owner >= 0 and owner != colony.colony_id
+                               and _hostile(self, colony.colony_id, owner))
+                        if not foe:
+                            continue
+                        if ram_live and v in (VoxelType.WOOD_WALL.value,
+                                              VoxelType.TUNNEL_WALL.value):
+                            self.world.voxels[nx, ny, nz] = VoxelType.SAND.value
+                            self._rot().pop((nx, ny, nz), None)
+                            key = ('ram', colony.colony_id, owner)
+                            if self.step_count - getattr(
+                                    self, '_smash_logged', {}).get(
+                                        key, -10**9) > SEASON_LENGTH:
+                                if not hasattr(self, '_smash_logged'):
+                                    self._smash_logged = {}
+                                self._smash_logged[key] = self.step_count
+                                self._log_event(
+                                    f"Colony {colony.colony_id}'s ram smashes"
+                                    f" Colony {owner}'s walls!")
+                            return
+                        if getattr(unit, 'torch', False) and v in (
+                                VoxelType.CROP.value, VoxelType.CROP_RIPE.value,
+                                VoxelType.WOOD_WALL.value):
+                            self._ignite((nx, ny, nz))
+                            unit.torch = False  # a torch is thrown but once
+                            self._log_event(
+                                f"Colony {colony.colony_id} puts Colony"
+                                f" {owner}'s holdings to the torch!")
+                            self._monitor(colony.colony_id).log_decision(
+                                self.step_count, self._unit_label(unit),
+                                "threw a torch", getattr(unit, 'thought', None))
+                            return
                 # T21: raze an adjacent enemy field (consumes the action)
                 if colony.at_war or random.random() < colony.genome.aggression * 0.1:
                     for nx, ny, nz in self.world.get_neighbors_3d(unit.position, radius=1):

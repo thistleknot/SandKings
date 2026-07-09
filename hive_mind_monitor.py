@@ -33,7 +33,7 @@ ANCHOR_SEEDS = [
     "hunt", "wounded", "home", "feast", "buried", "crowd", "alone", "rich",
     "storm", "death", "enemy", "victory", "siege", "jealousy", "love",
     "clueless", "harvest", "farm", "drought", "gold", "ally", "betrayed",
-    "gratitude", "dread", "machine", "radiation",
+    "gratitude", "dread", "machine", "radiation", "fire", "monster",
 ]
 
 _VOCAB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -154,6 +154,11 @@ def build_context(unit, colony, sim) -> Dict[str, float]:
         "colony_food": colony.maw.food_stored,
         "at_war": colony.at_war,
         "storm": getattr(sim, "storm_until", 0) > sim.step_count,
+        "fire_3": any(max(abs(fx - x), abs(fy - y), abs(fz - z)) <= 3
+                      for fx, fy, fz in (getattr(sim, 'fires', None) or {})),
+        "beast_6": any(abs(b.position[0] - x) + abs(b.position[1] - y)
+                       + abs(b.position[2] - z) <= 6
+                       for b in (getattr(sim, 'fauna', None) or [])),
         "retreating": unit.retreating,
         "wounded": unit.health < unit.max_health * 0.5,
         "is_soldier": unit.unit_type == UnitType.SOLDIER,
@@ -225,6 +230,8 @@ def ground_truths(ctx: Dict) -> Dict[str, bool]:
         "dread": bool(ctx["hegemon_other"]),
         "machine": ctx["device_3"] > 0 or bool(ctx["carrying_salvage"]),
         "radiation": ctx["rad_here"] >= 0.5,
+        "fire": bool(ctx["fire_3"]),
+        "monster": bool(ctx["beast_6"]),
     }
 
 

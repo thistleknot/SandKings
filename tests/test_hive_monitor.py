@@ -40,7 +40,7 @@ def test_vocabulary_covers_all_anchors():
     for seed in ANCHOR_SEEDS:
         assert VOCABULARY[seed], f"no cluster for {seed}"
         assert seed == VOCABULARY[seed][-1] or seed in VOCABULARY[seed] or True
-    assert len(ANCHOR_SEEDS) == 33  # +M10 4, +M11 politics 4, +machine/radiation
+    assert len(ANCHOR_SEEDS) == 35  # +M10 4, +M11 4, +machine/radiation, +M12 fire/monster
 
 
 def test_probe_learns_planted_correlation():

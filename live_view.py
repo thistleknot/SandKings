@@ -62,7 +62,17 @@ GLYPHS = {                 # DF-style terrain glyphs (spec R18/R22)
     VoxelType.GOLD_ORE.value: "$",
     VoxelType.HULL.value: "Ξ",
     VoxelType.SALVAGE.value: "&",
+    VoxelType.WOOD.value: "¶",
+    VoxelType.WOOD_WALL.value: "|",
+    VoxelType.WEB.value: "x",
 }
+FIRE_GLYPH = "^"                    # burning-cell overlay (T46)
+FIRE_COLOR = (255, 120, 0)
+BEAST_GLYPHS = {                    # fauna bestiary (T48)
+    'spider': "x", 'rabbit': "r", 'squirrel': "q", 'bird': "v",
+    'rodent': "n", 'scorpion': "t", 'snake': "S", 'anteater': "A",
+}
+BEAST_COLOR = (200, 80, 220)        # violet: not of any colony
 COPPER_TINT = (184, 115, 51)  # armored soldier letters (R22)
 UNIT_GLYPHS = {UnitType.WORKER: "w", UnitType.SOLDIER: "s", UnitType.SCOUT: "c"}
 MAW_GLYPH = "Ω"
@@ -85,6 +95,22 @@ EVENT_TINTS = (            # substring -> HUD color (spec R19/R24)
     ("coalition", (100, 200, 255)),
     ("raids", (255, 140, 60)),
     ("seethes", (150, 150, 160)),
+    ("fells", (34, 139, 34)),
+    ("palisades", (139, 105, 20)),
+    ("torch", (255, 120, 0)),
+    ("Wildfire", (255, 80, 0)),
+    ("Lightning", (255, 240, 120)),
+    ("ram smashes", (255, 165, 60)),
+    ("slain", (200, 80, 220)),
+    ("incursion", (200, 80, 220)),
+    ("Spiders", (200, 80, 220)),
+    ("rabbit", (200, 80, 220)),
+    ("squirrel", (200, 80, 220)),
+    ("shadow wheels", (200, 80, 220)),
+    ("Rodents", (200, 80, 220)),
+    ("Scorpions", (200, 80, 220)),
+    ("beneath the sand", (200, 80, 220)),
+    ("anteater", (200, 80, 220)),
 )
 PHEROMONE_OVERLAYS = (None, PheromoneType.FOOD_TRAIL, PheromoneType.TERRITORY,
                       PheromoneType.DANGER)  # P-key cycle (spec R17)
@@ -108,6 +134,9 @@ def build_voxel_palette() -> np.ndarray:
     palette[VoxelType.GOLD_ORE.value] = (255, 208, 0)
     palette[VoxelType.HULL.value] = (120, 130, 150)
     palette[VoxelType.SALVAGE.value] = (170, 190, 210)
+    palette[VoxelType.WOOD.value] = (34, 139, 34)
+    palette[VoxelType.WOOD_WALL.value] = (139, 105, 20)
+    palette[VoxelType.WEB.value] = (210, 210, 220)
     return palette
 
 
@@ -380,6 +409,10 @@ def build_manager_entries(sim: SandKingsSimulation,
             entries.append((f"farms:{plots} ({ripe} ripe)"
                             f"  Cu:{ore.get('copper', 0)} Au:{ore.get('gold', 0)}"
                             f"  posture:{posture}", (170, 200, 140)))
+            ram = getattr(colony, 'ram_until', 0) > sim.step_count
+            entries.append((f"wood:{getattr(colony, 'wood', 0)}"
+                            f" bone:{getattr(colony, 'bone', 0)}"
+                            + ("  [RAM]" if ram else ""), (139, 155, 60)))
     else:
         entries.append((f"== MANAGER: Colony {colony_id}: DEAD ==", (140, 60, 60)))
     entries.append((f"mind: {mode}", (140, 140, 150)))
@@ -771,6 +804,32 @@ class LiveViewer:
                                          max(1, int(rect.width * hp_frac)), 3)
                         pygame.draw.rect(self._screen,
                                          (int(255 * (1 - hp_frac)), int(220 * hp_frac), 0), fg)
+
+        # Fire overlay (T46): burning cells flare orange carets
+        for pos in list(getattr(self.sim, 'fires', None) or {}):
+            if self._visible_depth(pos) is None:
+                continue
+            if glyph_mode:
+                self._blit_glyph(FIRE_GLYPH, FIRE_COLOR,
+                                 pos[0] * cell, pos[1] * cell)
+            else:
+                rect = pygame.Rect(pos[0] * cell, pos[1] * cell, cell, cell)
+                pygame.draw.rect(self._screen, FIRE_COLOR, rect, 1)
+
+        # Wild beasts (T48): violet letters of no colony
+        for beast in getattr(self.sim, 'fauna', None) or []:
+            depth = self._visible_depth(beast.position)
+            if depth is None:
+                continue
+            bx, by = beast.position[0], beast.position[1]
+            color = tuple(int(c * depth_shade(depth)) for c in BEAST_COLOR)
+            if glyph_mode:
+                self._blit_glyph(BEAST_GLYPHS.get(beast.species, "?"), color,
+                                 bx * cell, by * cell)
+            else:
+                rect = pygame.Rect(bx * cell + 1, by * cell + 1,
+                                   cell - 2, cell - 2)
+                pygame.draw.rect(self._screen, color, rect)
 
         if getattr(self.sim, 'storm_until', 0) > self.sim.step_count:
             haze = pygame.transform.scale(

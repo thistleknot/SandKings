@@ -1,5 +1,33 @@
 # Sand Kings Changelog
 
+## 2.8.0 - Timber, Bone & Flame (SPEC_TIMBER_AND_FLAME.md T41-T48)
+
+- Trees: palm clusters by the oasis, scrub in the wastes (WOOD voxel,
+  Flood-season regrowth to TREE_CAP). Workers chop when the woodpile
+  runs short; felled crowns lay along the fall line - bridges happen.
+- Bone economy: corpse grabs bank bone; wood + bone arms new soldiers
+  with spears (+4 attack) that splinter after 400 steps. Organic
+  stores rot (metal is forever - why ore stays precious).
+- Palisades: FORTIFY colonies wall their maw with WOOD_WALL rings
+  that rot back to sand; battering rams (3 wood, wartime) smash
+  enemy walls and double maw-siege damage.
+- Fire: thrown torches, Dust-storm lightning, and radiation hot
+  zones ignite; fire spreads through crops/wood/webs, damages
+  units, burns out to scarred sand. Firebreaks are emergent.
+- Fauna bestiary (DF-invader rule - one incursion at a time, always
+  announced, wanders off if unslain): spiders (webs snare), rabbits
+  and squirrels (neutral, fight back; squirrels poach food and slip
+  away unless pinned by two), birds (strike stragglers, wheel away),
+  scorpions (poison DoT), snakes (swim through sand), rodents
+  (corpse-scavengers), anteaters (apex). Slain beasts pay bounty
+  corpses. Spawn odds double in Dust/Chill.
+- Thought layer: +fire, +monster anchors (35 seeds, GloVe rebuilt);
+  beasts flood DANGER pheromone for every colony.
+- Viewer: WOOD/WOOD_WALL/WEB glyphs + palette, violet beast letters,
+  orange fire carets, wood/bone/[RAM] on the manager screen, new
+  event tints for fells/palisades/torch/wildfire/incursions.
+
+
 ## [1.2.1] - 2026-01-23
 
 ### Added

@@ -256,6 +256,22 @@
    "laser",
    "exposure",
    "radiation"
+  ],
+  "fire": [
+   "bombs",
+   "raid",
+   "burning",
+   "blast",
+   "explosion",
+   "fire"
+  ],
+  "monster": [
+   "snake",
+   "robot",
+   "horror",
+   "dragon",
+   "ghost",
+   "monster"
   ]
  }
 }

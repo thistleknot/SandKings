@@ -147,6 +147,10 @@ vs dear-and-durable is the round's economic sentence.
   Fauna die in fire like anything else. Existing danger/enemy/clueless
   anchors read fauna through the unit scans.
 
+  **Minecraft-mob rhythm (user):** fauna spawn probability doubles in the
+  dark seasons (Dust, Chill) — winter belongs to the monsters; caverns
+  are the darkness they crawl from.
+
 ### T48 backlog (user musings, specced for the NEXT fauna batch)
 - **fish** — requires real WATER voxels at the oasis center (a feature in
   itself: swimming, drinking, drowning, fishing); parked until water ships.
@@ -178,4 +182,47 @@ Invariant: every fires key is a FLAMMABLE voxel (purge-first like crops)
 
 ## 5. Reconciliation Log
 
-- (fill in after implementation)
+- 2026-07-08 (commit pending): T41-T48 implemented and soaked.
+  Implementation deltas from the draft, all deliberate:
+  - WEB = VoxelType 16 (flammable, non-solid); snare implemented in
+    `_step_toward` - stepping into silk tears it (WEB->AIR) and costs
+    the move. Spiders lay silk adjacent while hunting (p=0.3/step).
+  - Fauna engine is self-contained: `Beast` dataclass + `sim.fauna`
+    list (lazy `_fauna()` accessor); combat is an adjacent exchange
+    inside `_fauna_tick`/`_beast_combat`, NOT threaded through
+    `_resolve_conflicts`. Soldiers always engage; neutral species
+    (rabbit, squirrel, rodent) strike only once provoked.
+  - Bestiary table is `FAUNA[species] = (weight, hp, atk, pack,
+    hunt_range, bounty)`; hunt_range 0 encodes "neutral".
+  - DF-invader principle enforced: no spawn roll while any beast
+    lives; unslain packs wander off after FAUNA_RAMPAGE=500 steps
+    ("the ... incursion moves on"). Dark-season rhythm: spawn p is
+    FAUNA_SPAWN_P=0.3, FAUNA_SPAWN_P_DARK=0.6 in Dust/Chill.
+  - Monitor integration: beasts deposit DANGER pheromone for every
+    colony each tick (feeds overlays + flee behavior) and a new
+    "monster" anchor (beast within 6) joins "fire" (burning cell
+    within Chebyshev 3) - M12 is TWO anchors, lexicon now 35 seeds.
+    GloVe rebuild: fire -> "bombs raid burning blast explosion";
+    monster -> "snake robot horror dragon ghost" (kept: thematic).
+  - Fire ignition sources shipped: thrown torches (wartime soldiers,
+    one throw each), dry lightning during Dust storms (p=0.02/storm
+    step), and radiation hot zones now IGNITE crops instead of
+    instantly deleting them (T40 coupling).
+  - Fell mechanics: the cut trunk always banks (+1 wood); the crown
+    falls away from the chopper, laying <= FELL_LENGTH trunks into
+    open AIR at cut height (floating logs ARE the bridges); crown
+    voxels with nowhere to fall bank as wood too. Choppers only work
+    when colony wood < 4 (labor stays food-first).
+  - Palisade gate: FORTIFY posture or genome.defense_investment > 0.5
+    (getattr-guarded; the trait finally has a phenotype).
+  - Trees are depth-gated (d >= 8) like ore/caverns: shallow test
+    worlds stay sterile.
+  - Weapons at spawn thread the sim step (`Colony.spawn_unit(type,
+    step)`); spears splinter via the economy-block sweep.
+  Verification: tests/test_timber.py (12 tests) + all 6 prior suites
+  green; 3-year harsh soak PASS - 910 incursion-steps, 91 fire-steps,
+  4 first-fell events, palisades by step 975, 536 armed-soldier
+  steps, snake and squirrel slain, lightning fire, 24 steps/s.
+  Balance watch: colony wood hovers near 0 (consumed by spears/rams
+  as fast as chopped) - rams rare in soak; acceptable scarcity, worth
+  a future knob.
