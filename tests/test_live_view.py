@@ -302,6 +302,39 @@ def test_topdown_cells_consistency():
     assert has[3, 3] and not has[1, 1]
 
 
+def test_manager_entries_content():
+    from live_view import build_manager_entries
+    sim = make_sim()
+    for _ in range(4):  # let instincts populate
+        sim.step()
+    cid = sim.colonies[0].colony_id
+    entries = build_manager_entries(sim, cid)
+    joined = "\n".join(t for t, _ in entries)
+    assert f"MANAGER: Colony {cid}" in joined
+    assert "CONCEPTS" in joined and "TOP SOLDIERS" in joined and "DECISIONS" in joined
+    from hive_mind_monitor import ANCHOR_SEEDS
+    for seed in ANCHOR_SEEDS:
+        assert seed in joined, f"concept {seed} missing from manager"
+    assert "instincts" in joined, "rule-based colony labeled as instincts"
+
+
+def test_manager_keys():
+    import pygame
+    sim = make_sim()
+    viewer = LiveViewer(sim, max_steps=1)
+    assert not viewer.manager_open
+    viewer._handle_event(make_keydown(pygame.K_m))
+    assert viewer.manager_open
+    start = viewer.manager_colony
+    viewer._handle_event(make_keydown(pygame.K_RIGHT))
+    assert viewer.manager_colony != start
+    for _ in range(len(sim.colonies) - 1):
+        viewer._handle_event(make_keydown(pygame.K_RIGHT))
+    assert viewer.manager_colony == start, "RIGHT wraps around"
+    viewer._handle_event(make_keydown(pygame.K_m))
+    assert not viewer.manager_open
+
+
 def test_full_loop_headless_auto_exit():
     sim = make_sim()
     viewer = LiveViewer(sim, steps_per_second=60.0, max_steps=5)

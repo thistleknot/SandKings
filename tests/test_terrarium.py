@@ -380,6 +380,26 @@ def test_checkpoint_roundtrip(tmp_path=None):
         assert loaded.step_count == sim.step_count + 1
 
 
+def test_checkpoint_loads_across_script_module_identity():
+    """A checkpoint saved by `python sandkings.py` (classes under __main__)
+    must load via `import sandkings` (SPEC T13 portability)."""
+    import subprocess
+    import tempfile
+    from sandkings import load_checkpoint
+
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with tempfile.TemporaryDirectory() as tmp:
+        db = os.path.join(tmp, "tank.db")
+        env = dict(os.environ, SDL_VIDEODRIVER="dummy", PYTHONIOENCODING="utf-8")
+        result = subprocess.run(
+            [sys.executable, "sandkings.py", "--live", "--steps", "8",
+             "--persist", db], cwd=repo, env=env, capture_output=True, timeout=300)
+        assert result.returncode == 0, result.stderr.decode(errors="replace")[-500:]
+        sim = load_checkpoint(db)
+        assert sim is not None and sim.step_count == 8
+        sim.step()  # must keep stepping in module context
+
+
 def test_checkpoint_roundtrip_neural():
     import tempfile
     from sandkings import NEURAL_AVAILABLE, load_checkpoint, save_checkpoint

@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.4.0] - 2026-07-08
+
+### Added - Hive Mind Monitor (SPEC_HIVE_MONITOR.md)
+- **Readable thoughts**: 23 measurable anchor concepts (food, war,
+  defense, underground, jealousy, love, clueless, ...) decoded from each
+  soldier's GRU hidden state by per-colony linear probes trained online
+  against ground truth; every anchor passing the probability + accuracy
+  gates emits a word from its embedding-derived cluster, intensity-scaled
+  (mild neighbor -> seed word in CAPS). Untrained minds honestly read "..."
+- **Thought vocabulary**: built once from GloVe wiki-gigaword-50 (top-10k
+  frequency band) by thought_vocabulary.py; committed as
+  thought_vocabulary.json - no runtime dependencies
+- **Instincts**: rule-based colonies (default mode) show the same lexicon
+  evaluated directly on state, so the screen works without --use-neural
+- **Manager screen** (`M`; LEFT/RIGHT cycles colonies): colony mood,
+  concept table with probe accuracies and live active counts, top-soldier
+  roster with per-unit stats (kills, damage, age, fitness) and current
+  thoughts, and a decision log tying outcomes to the thoughts that led
+  to them ("Worker #155 fell in battle -- danger wounded alone jealousy")
+- **Decision log**: kills, battle deaths, war declarations (with the
+  colony's aggregate mood), and siege first-blood all record the actor's
+  thought at that moment
+
+### Fixed
+- Checkpoints saved by `python sandkings.py` (classes pickled under
+  __main__) now load from module context and vice versa
+  (_CheckpointUnpickler; covered by a subprocess test)
+- damage_dealt was never incremented - attackers now credit it, making
+  the soldier-fitness efficiency term live for the first time
+
 ## [2.3.0] - 2026-07-07
 
 ### Added - Dazzle & Drama

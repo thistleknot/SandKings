@@ -46,7 +46,7 @@ with no ground truth).
 
 ## 3. Functional Requirements
 
-- **M1 (anchor lexicon)** The module MUST define ANCHORS — 20 concepts,
+- **M1 (anchor lexicon)** The module MUST define ANCHORS — 23 concepts,
   each a seed word (the M9 cluster key) plus a ground-truth predicate over
   (unit, colony, sim), all measurable per unit per step:
 
@@ -72,6 +72,11 @@ with no ground truth).
   | enemy | enemy unit within foraging_range |
   | victory | soldier with ≥ 1 kill (blooded) |
   | siege | enemy Maw within Chebyshev 2 |
+  | jealousy | some living rival's food > 2 × own colony food |
+  | love | a wounded ally (health < 50%) within Manhattan 2 (tending) |
+  | clueless | enemy within 4 while not retreating and not a soldier — in peril and acting as if not |
+
+  (23 anchors; jealousy/love/clueless added at user request mid-round.)
 
 - **M2 (probes)** Per colony and concept, a logistic readout of the
   soldier's GRU hidden state (32-d): `p = sigmoid(w·h + b)`. When a neural
@@ -177,4 +182,27 @@ sandkings.py additions
 
 ## 6. Reconciliation Log
 
-- (fill in after implementation)
+- 2026-07-08 — Implemented (M1-M9) with deviations, all intent-preserving:
+  - Lexicon grew to 23 anchors mid-round (jealousy / love / clueless, user
+    request); vocabulary rebuilt — the GloVe cluster for clueless
+    ("confused uncomfortable tired scared stupid") shipped unpruned.
+  - Thoughts cache on `unit.thought` (dies with the unit) instead of a
+    monitor-side dict — same contract, automatic garbage collection.
+  - M7 amended: instinct observation runs on a 3-step stagger keyed by
+    unit_id (thoughts stay fresh, cost stays flat); neural soldiers are
+    observed every step (probes need the data). Measured throughput
+    unchanged (21 steps/s at full population).
+  - Combat deaths are logged as "fell in battle" alongside kills (M4's
+    out-of-scope note was too conservative — the hook was free).
+  - `_CheckpointUnpickler` added to `load_checkpoint` (T13): checkpoints
+    saved by `python sandkings.py` (classes under `__main__`) now load
+    from `import sandkings` and vice versa — a portability defect found
+    while verifying M6, covered by a subprocess test.
+  - `damage_dealt` was never incremented anywhere (found via the manager
+    roster showing dmg:0 on veterans); attackers now credit it, making
+    the fitness efficiency term live for the first time.
+  - Verified: 9 monitor tests, 26 viewer tests, terrarium + neural suites
+    green; manager frame visually verified (mood "jealousy enemy
+    underground", roster thoughts like "ALONE HUNTER ... TUNNEL HATRED",
+    a death entry carrying final thoughts); persistence round-trip with
+    monitors; throughput unchanged.

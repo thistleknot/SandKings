@@ -261,8 +261,86 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
         for step, message in events:
             entries.append((f"[{step}] {message}"[:38], event_tint(message)))
     for help_line in ("", "SPACE pause  S step", "+/- speed  </> or UP/DN z",
-                      "TAB view  P pheromones  R style", "G capture  ESC quit"):
+                      "TAB view  P pheromones  R style",
+                      "M manager  G capture  ESC quit"):
         entries.append((help_line, (140, 140, 150)))
+    return entries
+
+
+def build_manager_entries(sim: SandKingsSimulation,
+                          colony_id: int) -> List[Tuple[str, Tuple[int, int, int]]]:
+    """Manager screen content as (text, color) pairs (SPEC_HIVE_MONITOR M5).
+
+    Colony header + mood, the 23-anchor concept table (probe accuracy and
+    live active counts), top soldiers with individual stats and thoughts,
+    and the decision log. Pure: no pygame."""
+    colony = next((c for c in sim.colonies if c.colony_id == colony_id), None)
+    if colony is None:
+        return [("no such colony", HUD_FG)]
+    color = hud_text_color(colony.color)
+    monitor = sim._monitor(colony_id)
+    neural = bool(getattr(colony.genome, 'use_neural', False))
+    mode = "thoughts (decoded from hidden state)" if neural else "instincts (state predicates)"
+
+    entries: List[Tuple[str, Tuple[int, int, int]]] = []
+    war = " [WAR]" if getattr(colony, 'at_war', False) else ""
+    if colony.is_alive():
+        castes = {t: 0 for t in UnitType}
+        for unit in colony.units:
+            castes[unit.unit_type] += 1
+        entries.append((f"== MANAGER: Colony {colony_id}{war} ==", color))
+        entries.append((f"food:{colony.maw.food_stored:.0f}"
+                        f"  maw:{colony.maw.health:.0f}"
+                        f"  W:{castes[UnitType.WORKER]}"
+                        f" S:{castes[UnitType.SOLDIER]}"
+                        f" Sc:{castes[UnitType.SCOUT]}", color))
+        entries.append((f"mood: {monitor.colony_thought(sim, colony)}", (200, 190, 120)))
+    else:
+        entries.append((f"== MANAGER: Colony {colony_id}: DEAD ==", (140, 60, 60)))
+    entries.append((f"mind: {mode}", (140, 140, 150)))
+    entries.append(("", HUD_FG))
+
+    entries.append(("CONCEPTS  acc%/active", (120, 180, 220)))
+    rows = monitor.concept_rows(sim, colony) if colony.is_alive() else []
+    for i in range(0, len(rows), 2):
+        parts = []
+        for name, acc, active in rows[i:i + 2]:
+            marker = "*" if active else " "
+            parts.append(f"{name:>11} {acc * 100:3.0f}% {active:2d}{marker}")
+        entries.append(("  ".join(parts), HUD_FG))
+
+    entries.append(("", HUD_FG))
+    entries.append(("TOP SOLDIERS", (120, 180, 220)))
+    soldiers = [u for u in colony.units if u.unit_type == UnitType.SOLDIER]
+    if neural:
+        soldiers.sort(key=lambda u: (u.brain_layer.get_performance_score()
+                                     if u.brain_layer else 0.0), reverse=True)
+    else:
+        soldiers.sort(key=lambda u: u.health, reverse=True)
+    for unit in soldiers[:5]:
+        uid = getattr(unit, 'unit_id', 0)
+        thought = getattr(unit, 'thought', '...')
+        if neural and unit.brain_layer is not None:
+            b = unit.brain_layer
+            line = (f"#{uid:<4} k:{b.kills} dmg:{b.damage_dealt:.0f}/"
+                    f"{b.damage_taken:.0f} age:{b.steps_alive}"
+                    f" perf:{b.get_performance_score():.2f}  {thought}")
+        else:
+            line = f"#{uid:<4} hp:{unit.health:.0f}/{unit.max_health}  {thought}"
+        entries.append((line[:76], color))
+    if not soldiers:
+        entries.append(("  (no soldiers alive)", (140, 140, 150)))
+
+    entries.append(("", HUD_FG))
+    entries.append(("DECISIONS", (120, 180, 220)))
+    decisions = list(monitor.decisions)[-5:]
+    for step, actor, event, thought in decisions:
+        entries.append((f"[{step}] {actor} {event} -- {thought}"[:76],
+                        event_tint(event) if "war" in event else HUD_FG))
+    if not decisions:
+        entries.append(("  (no recorded decisions yet)", (140, 140, 150)))
+    entries.append(("", HUD_FG))
+    entries.append(("M close   LEFT/RIGHT colony", (140, 140, 150)))
     return entries
 
 
@@ -341,6 +419,8 @@ class LiveViewer:
         self.capturing = False
         self.overlay_index = 0  # index into PHEROMONE_OVERLAYS (spec R17)
         self.render_style = RenderStyle.GLYPH  # dazzle by default (spec R18)
+        self.manager_open = False   # SPEC_HIVE_MONITOR M5
+        self.manager_colony = 0
         self.captured_frames: List[np.ndarray] = []
         self.running = False
         self._screen = None
@@ -428,6 +508,15 @@ class LiveViewer:
                 self.render_style = (RenderStyle.BLOCKS
                                      if self.render_style == RenderStyle.GLYPH
                                      else RenderStyle.GLYPH)
+            elif key == pygame.K_m:
+                self.manager_open = not self.manager_open
+            elif self.manager_open and key in (pygame.K_LEFT, pygame.K_RIGHT):
+                ids = [c.colony_id for c in self.sim.colonies]
+                if ids:
+                    step_by = 1 if key == pygame.K_RIGHT else -1
+                    current = (ids.index(self.manager_colony)
+                               if self.manager_colony in ids else 0)
+                    self.manager_colony = ids[(current + step_by) % len(ids)]
             elif key == pygame.K_k and self.save_path:
                 self._save_terrarium()
                 if hasattr(self.sim, '_log_event'):
@@ -456,6 +545,11 @@ class LiveViewer:
     def _render(self) -> None:
         cell = self.cell_size
         w, h = self.sim.world.width, self.sim.world.height
+
+        if self.manager_open:
+            self._render_manager(w * cell, max(h * cell, 400))
+            return
+
         glyph_mode = (self.render_style == RenderStyle.GLYPH
                       and cell >= GLYPH_MIN_CELL)
 
@@ -547,6 +641,29 @@ class LiveViewer:
                 text = self._font.render(line, True, color)
                 self._screen.blit(text, (hud_x, 10 + i * 18))
 
+        pygame.display.flip()
+
+    def _render_manager(self, area_w: int, area_h: int) -> None:
+        """Manager screen over the map area (SPEC_HIVE_MONITOR M5).
+
+        The HUD panel stays live on the right; overflow rows clip."""
+        self._screen.fill(HUD_BG)
+        pygame.draw.rect(self._screen, (30, 30, 40),
+                         pygame.Rect(0, 0, area_w, area_h), 1)
+        for i, (line, color) in enumerate(
+                build_manager_entries(self.sim, self.manager_colony)):
+            if line:
+                self._screen.blit(self._font.render(line, True, color),
+                                  (14, 10 + i * 17))
+
+        hud_x = area_w + 12
+        for i, (line, color) in enumerate(build_hud_entries(
+                self.sim, self.pacer.steps_per_second,
+                self.paused, self.z_level, self.capturing,
+                self.view_mode, PHEROMONE_OVERLAYS[self.overlay_index])):
+            if line:
+                self._screen.blit(self._font.render(line, True, color),
+                                  (hud_x, 10 + i * 18))
         pygame.display.flip()
 
     def _visible_depth(self, position: Tuple[int, int, int]) -> Optional[int]:

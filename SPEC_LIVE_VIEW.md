@@ -102,6 +102,9 @@ Status: draft → implement → reconcile (see Reconciliation Log at bottom).
   - While `save_path` is set, when `K` is pressed, the viewer MUST save the
     terrarium (R20).
   - When `G` is pressed, the viewer MUST toggle frame capture.
+  - When `M` is pressed, the viewer MUST toggle the manager screen; while
+    it is open, LEFT/RIGHT MUST cycle the inspected colony (wrapping).
+    Content contract: SPEC_HIVE_MONITOR.md M5.
   - When ESC is pressed or the window is closed, the viewer MUST quit.
 - **R8a** DF-style z-navigation: comma/period WITH Shift or Ctrl held —
   i.e. `<` = z+1 (up toward surface, matching DF's `<`) and `>` = z−1 —

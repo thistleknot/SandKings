@@ -73,6 +73,15 @@ python sandkings.py --live --use-neural --sps 10
 # soldier-heavy spawns, cross-map raids on enemy Maws. Fallen colonies
 # become corpse feasts and a new colony arrives in the slot.
 
+# MANAGER SCREEN (M key; LEFT/RIGHT cycles colonies): colony mood,
+# per-unit stats, and READABLE THOUGHTS - 23 measurable concepts
+# (food, war, defense, underground, jealousy, love, clueless, ...)
+# decoded from each soldier's recurrent hidden state by linear probes
+# whose accuracy is always displayed; words come from GloVe-derived
+# clusters and scale with confidence ("anxiety" -> "JEALOUSY").
+# Rule-based colonies show instincts (same lexicon, direct predicates).
+# The decision log ties outcomes to the thoughts that led to them.
+
 # PET MODE: the terrarium lives between sessions (sqlite checkpoint)
 python sandkings.py --live --persist           # resumes terrarium.db if present,
                                                # autosaves on exit; K saves anytime

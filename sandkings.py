@@ -5,6 +5,7 @@ Combines Core War's evolution with 1pageskirmish's tactics in a 3D voxel terrari
 Inspired by GRRM's Sand Kings novella - 4 colored Maw colonies compete for territory
 """
 
+import itertools
 import os
 import pickle
 import random
@@ -351,6 +352,9 @@ class UnitType(Enum):
     SOLDIER = 1  # Fights, defends
     SCOUT = 2    # Fast, explores
 
+_UNIT_SERIAL = itertools.count(1)  # display-only ids (SPEC_HIVE_MONITOR §2)
+
+
 @dataclass
 class SandKing:
     """Individual colony unit (worker/soldier/scout)"""
@@ -364,6 +368,8 @@ class SandKing:
     task_queue: deque = field(default_factory=deque)
     retreating: bool = False  # Morale flag
     forage_target: Optional[Tuple[int, int, int]] = None  # Cached food/corpse goal
+    unit_id: int = field(default_factory=lambda: next(_UNIT_SERIAL))  # display identity
+    thought: str = "..."  # last decoded thought / instincts (SPEC_HIVE_MONITOR M3)
     
     # Neural hive mind extension (soldier's personal layer)
     brain_layer: Optional[SoldierLayer] = None
@@ -789,6 +795,7 @@ class SandKingsSimulation:
         self.step_count = 0
         self.pending_respawns: Dict[int, int] = {}  # colony_id -> due step
         self.events: deque = deque(maxlen=50)  # (step, message) drama feed (SPEC T9)
+        self.monitors: Dict[int, 'HiveMindMonitor'] = {}  # SPEC_HIVE_MONITOR M6
         self.storm_until = 0                   # storm active while > step_count (SPEC T12)
         self._storm_wind = (1, 0)              # per-storm prevailing direction
         
@@ -912,6 +919,10 @@ class SandKingsSimulation:
             colony.at_war = colony.maw.food_stored > threshold
             if colony.at_war and not was_at_war:
                 self._log_event(f"Colony {colony.colony_id} marches to war!")
+                monitor = self._monitor(colony.colony_id)
+                monitor.log_decision(self.step_count, f"Colony {colony.colony_id}",
+                                     "declares war",
+                                     monitor.colony_thought(self, colony))
 
             # BOOTSTRAP: a colony with no units always fields a worker (SPEC T2)
             if not colony.units and colony.maw.food_stored >= 3:
@@ -944,6 +955,18 @@ class SandKingsSimulation:
     def _log_event(self, message: str):
         """Append to the drama feed shown in the live HUD (SPEC T9)."""
         self.events.append((self.step_count, message))
+
+    def _monitor(self, colony_id: int) -> 'HiveMindMonitor':
+        """Lazy per-colony hive-mind monitor (SPEC_HIVE_MONITOR M6/M7).
+
+        Guarded for sims resumed from pre-monitor checkpoints.
+        """
+        from hive_mind_monitor import HiveMindMonitor
+        if not hasattr(self, 'monitors'):
+            self.monitors = {}
+        if colony_id not in self.monitors:
+            self.monitors[colony_id] = HiveMindMonitor(colony_id)
+        return self.monitors[colony_id]
 
     def _feed_terrarium(self) -> int:
         """Scatter FOOD on the surface and floor colony reserves (SPEC T1).
@@ -1075,6 +1098,10 @@ class SandKingsSimulation:
                         if colony.maw.health >= MAW_MAX_HEALTH:  # first blood of a siege
                             self._log_event(f"Colony {enemy_colony.colony_id} besieges"
                                             f" Colony {colony.colony_id}!")
+                            self._monitor(enemy_colony.colony_id).log_decision(
+                                self.step_count, self._unit_label(enemy),
+                                "landed first blood on a Maw",
+                                getattr(enemy, 'thought', None))
                         colony.maw.take_damage(enemy.attack)
 
     def _migrate_threatened_maws(self):
@@ -1209,15 +1236,31 @@ class SandKingsSimulation:
         colony = Colony(colony_id, pos, genome)
         colony.maw.food_stored = RESPAWN_FOOD
         self.colonies[index] = colony
+        if hasattr(self, 'monitors'):  # fresh colony, fresh mind (M6)
+            self.monitors.pop(colony_id, None)
         self.world.set_voxel(*pos, VoxelType.AIR, colony_id=colony_id)
         for _ in range(3):
             colony.spawn_unit(UnitType.WORKER)
         self._log_event(f"A new colony {colony_id} arrives")
         print(f"[+] A new colony {colony_id} has arrived!")
 
+    def _unit_label(self, unit: SandKing) -> str:
+        """Display identity for decision logs and rosters."""
+        return f"{unit.unit_type.name.title()} #{getattr(unit, 'unit_id', 0)}"
+
     def _execute_unit_ai(self, unit: SandKing, colony: Colony):
         """Simple AI for unit behavior - NEURAL or RULE-BASED"""
         x, y, z = unit.position
+
+        # HIVE MONITOR (SPEC_HIVE_MONITOR M7): non-neural units cache
+        # instincts on a 3-step stagger; neural soldiers are observed with
+        # their hidden state inside the neural path below
+        neural_soldier = (unit.unit_type == UnitType.SOLDIER and NEURAL_AVAILABLE
+                          and colony.genome.use_neural
+                          and colony.genome.brain is not None
+                          and unit.brain_layer is not None)
+        if not neural_soldier and (self.step_count + getattr(unit, 'unit_id', 0)) % 3 == 0:
+            self._monitor(colony.colony_id).observe_instincts(unit, colony, self)
         
         # Workers: gather food/corpses with directed foraging (SPEC T3)
         if unit.unit_type == UnitType.WORKER:
@@ -1325,6 +1368,12 @@ class SandKingsSimulation:
                     encoding = colony.genome.brain(state_tensor)
                     action_probs = unit.brain_layer(encoding)
                 
+                # HIVE MONITOR: decode this soldier's mind (SPEC_HIVE_MONITOR M2/M3)
+                if unit.brain_layer.hidden is not None:
+                    hidden_vec = unit.brain_layer.hidden.squeeze(0).numpy()
+                    self._monitor(colony.colony_id).observe_neural(
+                        unit, colony, self, hidden_vec)
+
                 # Decode action
                 action_type, direction = decode_soldier_action(action_probs)
                 
@@ -1428,23 +1477,42 @@ class SandKingsSimulation:
                                     mating_pairs.append((unit, enemy, colony, enemy_colony))
                                 
                                 # COMBAT! Apply damage with resilience
+                                # (attackers credit damage_dealt for fitness)
+                                if enemy.brain_layer is not None:
+                                    enemy.brain_layer.damage_dealt += enemy.attack
+                                if unit.brain_layer is not None:
+                                    unit.brain_layer.damage_dealt += unit.attack
                                 if unit.take_damage(enemy.attack, colony.genome.resilience):
                                     if colony.colony_id not in units_to_remove:
                                         units_to_remove[colony.colony_id] = []
                                     units_to_remove[colony.colony_id].append(unit)
-                                    
+
                                     # Track kill for neural performance
                                     if enemy.brain_layer is not None:
                                         enemy.brain_layer.kills += 1
-                                
+                                    # HIVE MONITOR: outcomes carry thoughts (M4)
+                                    self._monitor(enemy_colony.colony_id).log_decision(
+                                        self.step_count, self._unit_label(enemy),
+                                        "slew an enemy", getattr(enemy, 'thought', None))
+                                    self._monitor(colony.colony_id).log_decision(
+                                        self.step_count, self._unit_label(unit),
+                                        "fell in battle", getattr(unit, 'thought', None))
+
                                 if enemy.take_damage(unit.attack, enemy_colony.genome.resilience):
                                     if enemy_colony.colony_id not in units_to_remove:
                                         units_to_remove[enemy_colony.colony_id] = []
                                     units_to_remove[enemy_colony.colony_id].append(enemy)
-                                    
+
                                     # Track kill for neural performance
                                     if unit.brain_layer is not None:
                                         unit.brain_layer.kills += 1
+                                    # HIVE MONITOR: outcomes carry thoughts (M4)
+                                    self._monitor(colony.colony_id).log_decision(
+                                        self.step_count, self._unit_label(unit),
+                                        "slew an enemy", getattr(unit, 'thought', None))
+                                    self._monitor(enemy_colony.colony_id).log_decision(
+                                        self.step_count, self._unit_label(enemy),
+                                        "fell in battle", getattr(enemy, 'thought', None))
         
         # MAW SIEGE: units adjacent to an enemy Maw damage it (SPEC T4)
         self._apply_maw_siege_damage()
@@ -1520,6 +1588,22 @@ def save_checkpoint(sim: 'SandKingsSimulation', path: str) -> int:
         conn.close()
 
 
+class _CheckpointUnpickler(pickle.Unpickler):
+    """Resolve classes across the script/module identity split.
+
+    A sim pickled by `python sandkings.py` stores classes under
+    '__main__'; one pickled from `import sandkings` stores 'sandkings'.
+    Checkpoints must load from either context.
+    """
+
+    def find_class(self, module, name):
+        try:
+            return super().find_class(module, name)
+        except (AttributeError, ModuleNotFoundError):
+            alt = 'sandkings' if module == '__main__' else '__main__'
+            return super().find_class(alt, name)
+
+
 def load_checkpoint(path: str) -> Optional['SandKingsSimulation']:
     """Latest checkpointed simulation from a sqlite db, or None if absent."""
     if not os.path.exists(path):
@@ -1533,7 +1617,10 @@ def load_checkpoint(path: str) -> Optional['SandKingsSimulation']:
             return None
     finally:
         conn.close()
-    return pickle.loads(row[0]) if row else None
+    if row is None:
+        return None
+    import io
+    return _CheckpointUnpickler(io.BytesIO(row[0])).load()
 
 
 # ============================================================================
