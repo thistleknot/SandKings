@@ -445,3 +445,66 @@ def test_legend_key_exclusive_with_manager():
     assert viewer.manager_open and not viewer.legend_open
     viewer._handle_event(make_keydown(pygame.K_l))
     assert viewer.legend_open and not viewer.manager_open
+
+
+# ---- R36: isometric sprite view ----
+
+def test_sprite_forge_covers_every_voxel_and_species():
+    import pygame
+    pygame.init()
+    from iso_sprites import forge_beast, forge_bug, forge_cube, forge_maw
+    from live_view import BEAST_GLYPHS
+    from sandkings import VoxelType
+    for voxel in VoxelType:
+        if voxel == VoxelType.AIR:
+            continue
+        surf = forge_cube(voxel.value, 12, 6)
+        assert surf.get_size() == (12, 12), voxel
+    for species in BEAST_GLYPHS:
+        assert forge_beast(species, 12).get_width() > 0, species
+    for caste in ("worker", "soldier", "scout"):
+        assert forge_bug(caste, (255, 0, 0), 12).get_width() > 0
+    assert forge_maw((255, 165, 0), 12).get_width() > 0
+    # deterministic + cached: same key returns the same surface object
+    from iso_sprites import forge_cube as fc
+    assert fc(VoxelType.SAND.value, 12, 6) is fc(VoxelType.SAND.value, 12, 6)
+
+
+def test_iso_metrics_fit_and_projection():
+    from live_view import iso_metrics, iso_project
+    w, h, depth = 80, 40, 20
+    area_w, area_h = 960, 480
+    tw, th, zs, ox, oy = iso_metrics(w, h, depth, area_w, area_h)
+    assert tw >= 4 and th == tw // 2 and zs == th
+    assert (w + h) * tw // 2 <= area_w, "projection fits horizontally"
+    assert (w + h) * tw // 4 + depth * tw // 4 + tw <= area_h, "and vertically"
+    # every corner column lands on-canvas at z=0
+    for (x, y) in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)):
+        sx, sy = iso_project(x, y, 0, tw, zs, ox, oy)
+        assert 0 <= sx <= area_w and 0 <= sy <= area_h + tw, (x, y, sx, sy)
+    # +z rises on screen; +x runs down-right; +y down-left
+    sx0, sy0 = iso_project(5, 5, 0, tw, zs, ox, oy)
+    assert iso_project(5, 5, 3, tw, zs, ox, oy)[1] < sy0
+    assert iso_project(6, 5, 0, tw, zs, ox, oy)[0] > sx0
+    assert iso_project(5, 6, 0, tw, zs, ox, oy)[0] < sx0
+
+
+def test_tab_cycles_three_view_modes():
+    import pygame
+    viewer = LiveViewer(make_sim(), max_steps=1)
+    assert viewer.view_mode == ViewMode.TOPDOWN
+    viewer._handle_event(make_keydown(pygame.K_TAB))
+    assert viewer.view_mode == ViewMode.SLICE
+    viewer._handle_event(make_keydown(pygame.K_TAB))
+    assert viewer.view_mode == ViewMode.ISO
+    viewer._handle_event(make_keydown(pygame.K_TAB))
+    assert viewer.view_mode == ViewMode.TOPDOWN
+
+
+def test_iso_full_loop_headless():
+    sim = make_sim()
+    viewer = LiveViewer(sim, max_steps=6, steps_per_second=60.0)
+    viewer.view_mode = ViewMode.ISO
+    viewer.look_mode = True  # exercise the iso cursor path too
+    viewer.run()
+    assert viewer.steps_done == 6, "ISO view runs the loop to completion"

@@ -23,6 +23,7 @@ from sandkings import (MAW_MAX_HEALTH, Colony, PheromoneType, SandKingsSimulatio
 class ViewMode(Enum):
     TOPDOWN = 0   # DF-style: look down z through open space, depth-shaded
     SLICE = 1     # single-z cross-section
+    ISO = 2       # stonesense-style sprite view (R36)
 
 
 class RenderStyle(Enum):
@@ -181,6 +182,33 @@ def slice_color_array(world: VoxelWorld, colonies: List[Colony], z_level: int) -
 def depth_shade(delta: int) -> float:
     """Brightness multiplier for terrain `delta` z-levels below the view level."""
     return max(DEPTH_SHADE_MIN, DEPTH_SHADE_FACTOR ** delta)
+
+
+def iso_metrics(w: int, h: int, depth: int, area_w: int,
+                area_h: int) -> Tuple[int, int, int, int, int]:
+    """R36: largest even tile width whose dimetric projection fits the
+    map area; returns (tile_w, tile_h, z_step, origin_x, origin_y)."""
+    tw = 4
+    for cand in range(4, 65, 2):
+        proj_w = (w + h) * cand // 2
+        proj_h = (w + h) * cand // 4 + depth * cand // 4 + cand
+        if proj_w <= area_w and proj_h <= area_h:
+            tw = cand
+        else:
+            break
+    th = tw // 2
+    zs = th
+    origin_x = (h - 1) * tw // 2   # keeps x=0..w-1, y=h-1 on-canvas
+    origin_y = depth * zs          # room for the tallest cubes
+    return tw, th, zs, origin_x, origin_y
+
+
+def iso_project(x: int, y: int, z: int, tw: int, zs: int, ox: int,
+                oy: int) -> Tuple[int, int]:
+    """R36 dimetric transform: +x runs down-right, +y down-left, +z up."""
+    th = tw // 2
+    return (ox + (x - y) * (tw // 2),
+            oy + (x + y) * (th // 2) - z * zs)
 
 
 def topdown_cells(world: VoxelWorld, z_level: int):
@@ -935,8 +963,9 @@ class LiveViewer:
             elif key == pygame.K_DOWN:
                 self.z_level = max(0, self.z_level - 1)
             elif key == pygame.K_TAB:
-                self.view_mode = (ViewMode.SLICE if self.view_mode == ViewMode.TOPDOWN
-                                  else ViewMode.TOPDOWN)
+                order = (ViewMode.TOPDOWN, ViewMode.SLICE, ViewMode.ISO)
+                self.view_mode = order[(order.index(self.view_mode) + 1)
+                                       % len(order)]
             elif key == pygame.K_g:
                 self.capturing = not self.capturing
             elif key == pygame.K_p:
@@ -1044,6 +1073,22 @@ class LiveViewer:
                 self.z_level = tz
             else:
                 self.follow = False
+
+        # R36: the stonesense path draws its own map area
+        if self.view_mode == ViewMode.ISO:
+            self._screen.fill(HUD_BG)
+            self._render_iso_map(w * cell, max(h * cell, 400))
+            self._draw_look_panel()
+            hud_x = w * cell + 12
+            for i, (line, color) in enumerate(build_hud_entries(
+                    self.sim, self.pacer.steps_per_second,
+                    self.paused, self.z_level, self.capturing,
+                    self.view_mode, PHEROMONE_OVERLAYS[self.overlay_index])):
+                if line:
+                    self._screen.blit(self._font.render(line, True, color),
+                                      (hud_x, 10 + i * 18))
+            pygame.display.flip()
+            return
 
         glyph_mode = (self.render_style == RenderStyle.GLYPH
                       and cell >= GLYPH_MIN_CELL)
@@ -1191,22 +1236,7 @@ class LiveViewer:
                 pygame.draw.rect(self._screen, (255, 255, 255),
                                  pygame.Rect(tx * cell - 2, ty * cell - 2,
                                              cell + 4, cell + 4), 1)
-            panel = build_look_entries(self.sim, cx, cy,
-                                       min(self.z_level,
-                                           self.sim.world.depth - 1))
-            if self.inspected is not None:
-                panel += build_inspect_entries(self.sim, self.inspected)
-                if self.follow:
-                    panel.append(("FOLLOWING (F releases)", (255, 215, 0)))
-            box_h = len(panel) * 17 + 10
-            box = pygame.Surface((330, box_h))
-            box.set_alpha(210)
-            box.fill(HUD_BG)
-            self._screen.blit(box, (6, 6))
-            for i, (line, color) in enumerate(panel):
-                if line:
-                    self._screen.blit(self._font.render(line, True, color),
-                                      (12, 11 + i * 17))
+            self._draw_look_panel()
 
         hud_x = w * cell + 12
         for i, (line, color) in enumerate(build_hud_entries(
@@ -1263,6 +1293,102 @@ class LiveViewer:
                 self._screen.blit(self._font.render(line, True, color),
                                   (hud_x, 10 + i * 18))
         pygame.display.flip()
+
+    def _draw_look_panel(self) -> None:
+        """R32/R33: the translucent look/inspect text box (all views)."""
+        if not self.look_mode:
+            return
+        cx, cy = self.cursor
+        panel = build_look_entries(self.sim, cx, cy,
+                                   min(self.z_level,
+                                       self.sim.world.depth - 1))
+        if self.inspected is not None:
+            panel += build_inspect_entries(self.sim, self.inspected)
+            if self.follow:
+                panel.append(("FOLLOWING (F releases)", (255, 215, 0)))
+        box = pygame.Surface((330, len(panel) * 17 + 10))
+        box.set_alpha(210)
+        box.fill(HUD_BG)
+        self._screen.blit(box, (6, 6))
+        for i, (line, color) in enumerate(panel):
+            if line:
+                self._screen.blit(self._font.render(line, True, color),
+                                  (12, 11 + i * 17))
+
+    def _render_iso_map(self, area_w: int, area_h: int) -> None:
+        """R36: the stonesense-style sprite map (painter's order s=x+y).
+
+        Each column draws its top visible voxel (<= z_level) as a baked
+        iso cube, then its water, fire, inhabitants, and (if placed)
+        the look cursor - correct occlusion by construction.
+        """
+        from iso_sprites import (forge_beast, forge_bug, forge_cube,
+                                 forge_cursor, forge_flame, forge_maw,
+                                 forge_water)
+        sim = self.sim
+        w, h, depth = sim.world.width, sim.world.height, sim.world.depth
+        tw, th, zs, ox, oy = iso_metrics(w, h, depth, area_w, area_h)
+        found, depth_below, has_terrain, _own = topdown_cells(
+            sim.world, self.z_level)
+        occupants: dict = {}
+        for colony in sim.colonies:
+            for unit in colony.units:
+                x, y, z = unit.position
+                if z <= self.z_level:
+                    occupants.setdefault((x, y), []).append(
+                        ('unit', unit, colony))
+            if colony.is_alive() and colony.maw.position[2] <= self.z_level:
+                mx, my, _mz = colony.maw.position
+                occupants.setdefault((mx, my), []).append(
+                    ('maw', colony, None))
+        for beast in getattr(sim, 'fauna', None) or []:
+            x, y, z = beast.position
+            if z <= self.z_level:
+                occupants.setdefault((x, y), []).append(
+                    ('beast', beast, None))
+        fire_cols: dict = {}
+        for (fx, fy, fz) in getattr(sim, 'fires', None) or {}:
+            if fz <= self.z_level:
+                fire_cols[(fx, fy)] = max(fz, fire_cols.get((fx, fy), -1))
+        flooding = getattr(sim, 'flood_until', 0) > sim.step_count
+        flood = getattr(sim, 'flood_cells', None) or set() if flooding \
+            else set()
+        water_z = (min(sim.world.surface_z(w // 2, h // 2) + 1, self.z_level)
+                   if flooding else 0)
+
+        for s in range(w + h - 1):
+            for x in range(max(0, s - h + 1), min(w, s + 1)):
+                y = s - x
+                if not has_terrain[x, y]:
+                    continue
+                z = int(self.z_level - depth_below[x, y])
+                sx, sy = iso_project(x, y, z, tw, zs, ox, oy)
+                self._screen.blit(forge_cube(int(found[x, y]), tw, zs),
+                                  (sx, sy))
+                if (x, y) in flood:
+                    wx, wy = iso_project(x, y, water_z, tw, zs, ox, oy)
+                    self._screen.blit(forge_water(tw), (wx, wy))
+                if (x, y) in fire_cols:
+                    fx, fy = iso_project(x, y, fire_cols[(x, y)] + 1,
+                                         tw, zs, ox, oy)
+                    self._screen.blit(forge_flame(tw), (fx, fy - th))
+                for kind, obj, extra in occupants.get((x, y), ()):
+                    ez = (obj.maw.position[2] if kind == 'maw'
+                          else obj.position[2])
+                    ex, ey = iso_project(x, y, ez + 1, tw, zs, ox, oy)
+                    if kind == 'unit':
+                        sprite = forge_bug(obj.unit_type.name.lower(),
+                                           extra.color, tw)
+                    elif kind == 'maw':
+                        sprite = forge_maw(obj.color, tw)
+                    else:
+                        sprite = forge_beast(obj.species, tw)
+                    self._screen.blit(
+                        sprite, (sx + tw // 2 - sprite.get_width() // 2,
+                                 ey - sprite.get_height() // 2))
+                if self.look_mode and self.cursor == (x, y):
+                    cxp, cyp = iso_project(x, y, z + 1, tw, zs, ox, oy)
+                    self._screen.blit(forge_cursor(tw), (cxp, cyp))
 
     def _render_legend(self, area_w: int, area_h: int) -> None:
         """Legend screen over the map area (R34)."""

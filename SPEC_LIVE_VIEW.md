@@ -239,6 +239,33 @@ this ledger is the canonical resolution.)
 - **R35** (Round 7, SPEC_WEATHER.md W5) Weather surfaces: the HUD
   weather line (active systems, tinted), the hail flicker and frost
   wash overlays, and the translucent blue flood band.
+- **R36 (isometric sprite view)** TAB cycles THREE view modes:
+  TOPDOWN -> SLICE -> ISO. ISO is a stonesense-style dimetric
+  projection (screen_x = (x-y)*tw/2, screen_y = (x+y)*th/2 - z*zs,
+  th = tw/2, zs = th), NON-ASCII: rendered from a procedurally BAKED
+  sprite atlas (`iso_sprites.py` — the "sprite forge"), not glyphs.
+  - Sprites are self-contained (no downloads, no licensing): iso
+    cubes per voxel type with palette-derived top/left/right faces
+    (x1.0 / x0.72 / x0.5) plus per-material pixel detail (sand
+    speckle, stone cracks, ore glints, wood rings, web strands...);
+    creature sprites for the three castes (colony-tinted bug bodies),
+    the maw mound, and every BEAST_GLYPHS species; a translucent
+    water tile for flood cells and a flame sprite for fires.
+    forge functions are deterministic per (kind, size, tint) and
+    cached; the atlas MUST cover every non-AIR VoxelType and every
+    species (asserted in tests, like the legend).
+  - Column model: reuses the R12 `topdown_cells` scan — each (x, y)
+    draws its top visible voxel at or below z_level as a cube, so
+    `<`/`>` slices the world isometrically. Draw order is s = x + y
+    ascending (painter's algorithm); each column's inhabitants
+    (units/maw/beasts, z <= z_level), its fire, and its flood water
+    blit immediately after its cube for correct occlusion.
+  - Tile metrics auto-fit the existing map area: tw = the largest
+    even width such that (w+h)*tw/2 <= area width AND
+    (w+h)*tw/4 + depth*tw/4 <= area height (floor 4 px).
+  - Scope bounds (documented): pheromone/storm overlays and mouse
+    picking are TOPDOWN/SLICE-only; in ISO the look cursor is
+    keyboard-driven and renders as a gold diamond at its column top.
 - **R32 (look cursor)** `I` toggles look mode (closing manager/saga):
   a gold-outlined keyboard cursor appears on the map (arrow keys move
   it, clamped to the map; UP/DOWN move the cursor while look mode is

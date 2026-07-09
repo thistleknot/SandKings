@@ -1,5 +1,22 @@
 # Sand Kings Changelog
 
+## 2.13.0 - Isometric Sprite View (SPEC_LIVE_VIEW R36)
+
+- TAB now cycles THREE views: TOPDOWN -> SLICE -> ISO. The ISO view
+  is a stonesense-style dimetric projection - sprites, not glyphs.
+- The sprite forge (iso_sprites.py): every sprite is procedurally
+  baked from the live palette at load - iso terrain cubes with
+  per-material pixel detail (sand speckle, stone cracks, ore glints,
+  wood rings, web strands, circuitry), colony-tinted bug sprites per
+  caste (soldiers get mandibles), maw mounds, all eight beast
+  species, translucent flood water, and flame. Zero external assets,
+  zero licensing, and coverage of every voxel/species is asserted in
+  tests - a new species can never be sprite-less.
+- </> still slices the world isometrically; fires, floods, units,
+  maws, and beasts all render at their true heights with painter's-
+  order occlusion; the look cursor works in ISO (keyboard-driven).
+
+
 ## 2.12.0 - Desert Weather (SPEC_WEATHER.md W1-W6)
 
 - The Nile inundation: in Flood season the oasis overflows - water
