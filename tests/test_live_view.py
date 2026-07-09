@@ -59,13 +59,14 @@ def test_palette_matches_gif_renderer():
 def test_slice_color_array_shape_and_territory_tint():
     sim = make_sim()
     z = sim.world.depth // 2
-    # Force one known owned-air voxel for colony 0
-    sim.world.voxels[5, 5, z] = VoxelType.AIR.value
-    sim.world.ownership[5, 5, z] = 0
+    # Force one known owned-air voxel for colony 0, OUTSIDE the oasis disc
+    # (oasis columns are teal-blended per R23)
+    sim.world.voxels[2, 2, z] = VoxelType.AIR.value
+    sim.world.ownership[2, 2, z] = 0
     colors = slice_color_array(sim.world, sim.colonies, z)
     assert colors.shape == (sim.world.width, sim.world.height, 3)
     expected = tuple(int(c * 0.3) for c in sim.colonies[0].color)
-    assert tuple(colors[5, 5]) == expected
+    assert tuple(colors[2, 2]) == expected
 
 
 def test_unit_draw_color_retreat_distinct():
@@ -79,8 +80,11 @@ def test_unit_draw_color_retreat_distinct():
     assert unit_draw_color((0, 0, 0), False)[1] == (255, 255, 255)
 
 
-def make_empty_world(w: int = 8, h: int = 6, d: int = 6) -> VoxelWorld:
-    """Deterministic all-air world (terrain gen wiped) for top-down tests."""
+def make_empty_world(w: int = 20, h: int = 14, d: int = 6) -> VoxelWorld:
+    """Deterministic all-air world (terrain gen wiped) for top-down tests.
+
+    Sized so the low-coordinate test cells sit OUTSIDE the oasis disc
+    (center (10,7), r=6 per R23) and keep their un-blended colors."""
     world = VoxelWorld(w, h, d)
     world.voxels[:] = VoxelType.AIR.value
     world.ownership[:] = -1
@@ -92,7 +96,7 @@ def test_topdown_first_nonair_and_depth_shading():
     world.voxels[3, 3, 2] = VoxelType.SAND.value
     world.voxels[4, 4, 4] = VoxelType.STONE.value
     colors = topdown_color_array(world, [], z_level=4)
-    assert colors.shape == (8, 6, 3)
+    assert colors.shape == (20, 14, 3)
     sand = build_voxel_palette()[VoxelType.SAND.value].astype(float)
     expected_sand = (sand * depth_shade(2)).astype(np.uint8)
     assert tuple(colors[3, 3]) == tuple(expected_sand), "sand 2 below must be shaded"

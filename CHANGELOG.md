@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.0] - 2026-07-08
+
+### Added - Seasons & Stone (SPEC_SEASONS_AND_STONE.md, T16-T27)
+- **Seasons**: 400-step Flood/Growth/Dust/Chill cycle (derived from
+  step_count - zero migration); Dust brings storms every 200 steps and
+  surface-food spoilage; Chill kills young crops and stills the winds
+- **Seasonal scarcity**: the keeper's dole shrinks to 25% in Chill
+  (ramped in over 2 years; `--harsh` skips the grace period). Non-farmers
+  winter at ~4 units; the bootstrap floor still guarantees survival
+- **Farming**: till surface sand (within 6 of your maw, 12-plot cap),
+  sow at 5 food, harvest 40 after 300 growing steps - an 8x return IF
+  the field survives; sowing is refused out of season, wild food always
+  tempts first, and a colony under 30 food eats its seed corn by
+  reverting to pure foraging. Ripe crops are plunderable by anyone;
+  at-war soldiers raze enemy fields
+- **The oasis**: a teal disc at map center where crops grow double-speed
+  in every season; one lucky colony wakes beside it; jealousy follows
+- **Ore, DF-style**: copper veins threaded through the stone strata
+  (armor: +10 max HP per soldier, consumed at spawn) and rare deep gold
+  (a hoardable political good - its spend arrives with Round 2 politics);
+  mining takes labor the food economy didn't want; a fallen colony's
+  hoard scatters as re-minable voxels
+- **Colony posture learner**: per-colony tabular TD(0) (FORAGE/FARM/
+  RAID/FORTIFY) whose discount factor is the new EVOLVABLE
+  `ColonyGenome.patience` gene - selection pressure on patience itself.
+  Postures bias the rule baseline (never override it); the manager
+  screen shows each colony's current and learned-best posture
+- **4 new thought anchors**: harvest, farm, drought, gold (27 total)
+- **Viewer**: crop/ore glyphs (~ ; * £ $), oasis tint, season+dole HUD
+  line, farm/ore/posture manager line, copper-tinted armored soldiers
+- 18 new acceptance tests (tests/test_seasons.py) + a 3-year harsh soak
+
 ## [2.4.0] - 2026-07-08
 
 ### Added - Hive Mind Monitor (SPEC_HIVE_MONITOR.md)

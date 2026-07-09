@@ -32,7 +32,7 @@ ANCHOR_SEEDS = [
     "food", "hunger", "war", "defense", "underground", "danger", "flee",
     "hunt", "wounded", "home", "feast", "buried", "crowd", "alone", "rich",
     "storm", "death", "enemy", "victory", "siege", "jealousy", "love",
-    "clueless",
+    "clueless", "harvest", "farm", "drought", "gold",
 ]
 
 _VOCAB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -122,6 +122,11 @@ def build_context(unit, colony, sim) -> Dict[str, float]:
     return {
         "enemy_dist": enemy_dist,
         "enemy_maw_cheb": enemy_maw_cheb,
+        "tilled_2": int((box2 == VoxelType.TILLED.value).sum()),
+        "crop_ripe_2": int((box2 == VoxelType.CROP_RIPE.value).sum()),
+        "season": sim.season_index() if callable(getattr(sim, 'season_index', None)) else 0,
+        "carrying_ore": getattr(unit, 'carrying', None) in ('copper', 'gold'),
+        "colony_gold": getattr(colony, 'ore', {}).get('gold', 0),
         "allies_3": allies_3,
         "allies_6": allies_6,
         "wounded_ally_2": wounded_ally_2,
@@ -174,6 +179,10 @@ def ground_truths(ctx: Dict) -> Dict[str, bool]:
         "love": ctx["wounded_ally_2"] > 0,
         "clueless": (ctx["enemy_dist"] <= 4 and not ctx["retreating"]
                      and not ctx["is_soldier"]),
+        "harvest": ctx["crop_ripe_2"] > 0,
+        "farm": ctx["tilled_2"] > 0,
+        "drought": ctx["season"] in (2, 3),
+        "gold": bool(ctx["carrying_ore"]) or ctx["colony_gold"] >= 1,
     }
 
 
@@ -233,7 +242,8 @@ class HiveMindMonitor:
         truths = ground_truths(ctx)
         emitted: List[Tuple[float, str]] = []
         for seed in ANCHOR_SEEDS:
-            probe = self.probes[seed]
+            # setdefault: monitors resumed from before a lexicon growth (M10)
+            probe = self.probes.setdefault(seed, ConceptProbe())
             p = probe.update(hidden, truths[seed])
             if p >= THOUGHT_MIN_P and probe.accuracy >= THOUGHT_MIN_ACC:
                 emitted.append((p, seed))
@@ -270,5 +280,6 @@ class HiveMindMonitor:
             truths = ground_truths(build_context(unit, colony, sim))
             for seed in ANCHOR_SEEDS:
                 counts[seed] += int(truths[seed])
-        return [(seed, self.probes[seed].accuracy, counts[seed])
+        return [(seed, self.probes.setdefault(seed, ConceptProbe()).accuracy,
+                 counts[seed])
                 for seed in ANCHOR_SEEDS]

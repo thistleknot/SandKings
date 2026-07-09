@@ -73,6 +73,16 @@ python sandkings.py --live --use-neural --sps 10
 # soldier-heavy spawns, cross-map raids on enemy Maws. Fallen colonies
 # become corpse feasts and a new colony arrives in the slot.
 
+# SEASONS & SCARCITY (--harsh skips the 2-year grace ramp): the dole
+# shrinks to 25% in Chill. Colonies must FARM to prosper - till, sow
+# (5 food), wait 300 growing steps, harvest 40 - but only in Flood and
+# Growth, only if the field survives raids and storms. One lucky colony
+# wakes beside the central OASIS where crops grow double in any season.
+# Copper veins (soldier armor) and deep gold (a hoardable prize) hide in
+# the stone. Each colony's posture (forage/farm/raid/fortify) is chosen
+# by a tiny reinforcement learner whose patience (discount factor) is an
+# evolvable gene - watch it on the manager screen.
+
 # MANAGER SCREEN (M key; LEFT/RIGHT cycles colonies): colony mood,
 # per-unit stats, and READABLE THOUGHTS - 23 measurable concepts
 # (food, war, defense, underground, jealousy, love, clueless, ...)

@@ -60,6 +60,32 @@ STORM_CHANCE = 0.5           # probability a roll spawns a storm
 STORM_DURATION = 25          # steps a storm blows
 STORM_COLUMNS_FRACTION = 1 / 50  # surface columns disturbed per storm step
 
+# Seasons & Stone constants (SPEC_SEASONS_AND_STONE.md)
+SEASON_LENGTH = 400          # steps per season (T16)
+SEASONS = ("Flood", "Growth", "Dust", "Chill")
+YEAR_LENGTH = 4 * SEASON_LENGTH
+DOLE_FACTOR = {0: 1.00, 1: 0.75, 2: 0.50, 3: 0.25}   # by season index (T17)
+DOLE_RAMP = (1.00, 0.50, 0.00)                        # per-year floor on the factor
+STORM_INTERVAL_DUST = 200    # Dust season storm cadence (T16)
+SPOIL_INTERVAL = 10          # Dust spoilage sweep cadence
+SPOIL_CHANCE = 0.02          # per exposed FOOD voxel per sweep
+SEED_COST = 5                # food paid at sowing (T19)
+CROP_TICK = 5                # crop growth phase cadence
+CROP_GROWDUR = 300           # grow-steps to ripen (DF GROWDUR range)
+CROP_YIELD = 40              # food per ripe crop harvested
+FARM_RADIUS = 6              # plots within this Chebyshev xy of own maw
+FARM_MAX_PLOTS = 12          # per colony
+FARM_START_FOOD = 60         # farming flag on above this...
+FARM_STOP_FOOD = 30          # ...off below this (hysteresis)
+GROW_SEASONS = (0, 1)        # Flood, Growth (T20)
+OASIS_RADIUS = 6             # disc at map center (T22)
+OASIS_GROWTH_MULT = 2
+OASIS_FEED_BONUS = 2         # keeper voxels placed inside the disc
+COPPER_VEINS_PER_BAND = 2    # ore generation (T23)
+GOLD_CLUSTERS = 3
+MINE_TIME = 5                # worker-steps per ore voxel (T24)
+COPPER_ARMOR_HP = 10         # bonus max HP per armored soldier (T25)
+
 
 class VoxelType(Enum):
     AIR = 0
@@ -69,12 +95,18 @@ class VoxelType(Enum):
     FOOD = 4           # Resource nodes
     CORPSE = 5         # Dead units = food
     TUNNEL_WALL = 6    # Reinforced colony walls
-    
+    TILLED = 7         # Worked soil, plantable (T19)
+    CROP = 8           # Growing plant - not food to anyone
+    CROP_RIPE = 9      # Harvestable - food to everyone
+    COPPER_ORE = 10    # Vein ore in strata stone (T23)
+    GOLD_ORE = 11      # Deep cluster ore, non-renewable
+
     def is_tunnelable(self):
         return self in (VoxelType.SAND, VoxelType.AIR)
-    
+
     def is_solid(self):
-        return self in (VoxelType.STONE, VoxelType.GLASS, VoxelType.TUNNEL_WALL)
+        return self in (VoxelType.STONE, VoxelType.GLASS, VoxelType.TUNNEL_WALL,
+                        VoxelType.COPPER_ORE, VoxelType.GOLD_ORE)
 
 def box_blur(field: np.ndarray, passes: int = 2) -> np.ndarray:
     """Neighbor-mean smoothing via np.roll (wraps at edges); 2D or 3D fields."""
@@ -180,6 +212,31 @@ class VoxelWorld:
             above_cavern[:, :, 0] = False
             roof = above_cavern & (self.voxels == VoxelType.SAND.value)
             self.voxels[roof] = VoxelType.STONE.value
+
+        # Ore (T23): copper veins threaded through the strata bands, gold
+        # clusters at the substrate top. Hosted in STONE only; every vein
+        # face touches diggable sand, so mining exposes the next voxel
+        if d >= 8:
+            for band_base in (substrate_height + 2, int(d * 0.45)):
+                band_top = min(band_base + 2, d)
+                for _ in range(COPPER_VEINS_PER_BAND):
+                    vx = int(rng.integers(2, w - 2))
+                    vy = int(rng.integers(2, h - 2))
+                    for _ in range(int(rng.integers(8, 17))):
+                        vz = int(rng.integers(band_base, band_top))
+                        if self.voxels[vx, vy, vz] == VoxelType.STONE.value:
+                            self.voxels[vx, vy, vz] = VoxelType.COPPER_ORE.value
+                        vx = int(np.clip(vx + rng.integers(-1, 2), 2, w - 3))
+                        vy = int(np.clip(vy + rng.integers(-1, 2), 2, h - 3))
+            for _ in range(GOLD_CLUSTERS):
+                gx = int(rng.integers(2, w - 2))
+                gy = int(rng.integers(2, h - 2))
+                for _ in range(int(rng.integers(3, 7))):
+                    gz = int(rng.integers(max(1, substrate_height - 2), substrate_height))
+                    if self.voxels[gx, gy, gz] == VoxelType.STONE.value:
+                        self.voxels[gx, gy, gz] = VoxelType.GOLD_ORE.value
+                    gx = int(np.clip(gx + rng.integers(-1, 2), 2, w - 3))
+                    gy = int(np.clip(gy + rng.integers(-1, 2), 2, h - 3))
 
         # Glass walls + floor (applied last so they always win)
         self.voxels[0, :, :] = VoxelType.GLASS.value
@@ -314,6 +371,7 @@ class ColonyGenome:
     swarm_threshold: int = 20      # Population for swarming behavior
     fertility: float = 0.5         # Spawn rate modifier
     resilience: float = 0.5        # Damage resistance
+    patience: float = 0.5          # TD discount gamma - evolvable temperament (T26)
     
     # Neural hive mind (Maw brain)
     brain: Optional[HiveMindBrain] = None
@@ -324,8 +382,8 @@ class ColonyGenome:
         mutated = ColonyGenome()
         mutated.use_neural = self.use_neural
         
-        for attr in ['aggression', 'tunnel_preference', 'expansion_rate', 
-                     'defense_investment', 'fertility', 'resilience']:
+        for attr in ['aggression', 'tunnel_preference', 'expansion_rate',
+                     'defense_investment', 'fertility', 'resilience', 'patience']:
             current = getattr(self, attr)
             noise = np.random.normal(0, mutation_rate)
             setattr(mutated, attr, np.clip(current + noise, 0.0, 1.0))
@@ -364,12 +422,15 @@ class SandKing:
     health: int = 10
     max_health: int = 10
     attack: int = 2
-    carrying: Optional[str] = None  # 'food', 'sand', None
+    carrying: Optional[str] = None  # 'food', 'sand', 'copper', 'gold', None
+    armored: bool = False  # copper armor consumed at spawn (T25)
     task_queue: deque = field(default_factory=deque)
     retreating: bool = False  # Morale flag
     forage_target: Optional[Tuple[int, int, int]] = None  # Cached food/corpse goal
     unit_id: int = field(default_factory=lambda: next(_UNIT_SERIAL))  # display identity
     thought: str = "..."  # last decoded thought / instincts (SPEC_HIVE_MONITOR M3)
+    mine_target: Optional[Tuple[int, int, int]] = None  # ore being worked (T24)
+    mine_progress: int = 0
     
     # Neural hive mind extension (soldier's personal layer)
     brain_layer: Optional[SoldierLayer] = None
@@ -466,11 +527,20 @@ class Colony:
         self.color = self.COLORS[colony_id % len(self.COLORS)]
         self.at_war = False  # food hoard > WAR_CHEST drives raids (SPEC T10)
         self.known_food: List[Tuple[int, int, int]] = []  # scout intel (SPEC T11)
+        self.farming = False  # 60/30 hysteresis gate on the farm branch (T18)
+        self.ore = {'copper': 0, 'gold': 0}  # mined stores (T24/T25)
+        self.ore_struck: Set[str] = set()    # first-strike events fired (T24)
         
     def spawn_unit(self, unit_type: UnitType):
-        """Spawn new unit from Maw"""
+        """Spawn new unit from Maw; copper armors new soldiers (T25)"""
         unit = self.maw.spawn_unit(unit_type)
         if unit:
+            if (unit.unit_type == UnitType.SOLDIER
+                    and getattr(self, 'ore', {}).get('copper', 0) >= 1):
+                self.ore['copper'] -= 1
+                unit.max_health += COPPER_ARMOR_HP
+                unit.health = unit.max_health
+                unit.armored = True
             self.units.append(unit)
     
     def remove_unit(self, unit: SandKing):
@@ -641,6 +711,16 @@ class Visualizer:
                     color = (0, 255, 0)
                 elif voxel == VoxelType.CORPSE:
                     color = (128, 0, 0)
+                elif voxel == VoxelType.TILLED:
+                    color = (110, 80, 50)
+                elif voxel == VoxelType.CROP:
+                    color = (80, 160, 60)
+                elif voxel == VoxelType.CROP_RIPE:
+                    color = (190, 220, 60)
+                elif voxel == VoxelType.COPPER_ORE:
+                    color = (184, 115, 51)
+                elif voxel == VoxelType.GOLD_ORE:
+                    color = (255, 208, 0)
                 elif voxel == VoxelType.AIR:
                     if owner >= 0:
                         # Owned air = faint colony color
@@ -813,11 +893,26 @@ class SandKingsSimulation:
         # Minimum distance = 10% of map diagonal
         min_distance = int(0.1 * ((w**2 + h**2)**0.5))
         
-        # Generate positions ensuring min distance
+        # Generate positions ensuring min distance. One lucky colony wakes
+        # beside the oasis (T22); the others start pushed away from it
         positions = []
         max_attempts = 100
-        
+        cx, cy = w // 2, h // 2
+        lucky = random.randrange(num_colonies)
+
         for i in range(num_colonies):
+            if i == lucky:
+                for attempt in range(max_attempts):
+                    angle = random.uniform(0, 2 * np.pi)
+                    ring = OASIS_RADIUS + 1
+                    x = int(np.clip(cx + ring * np.cos(angle), w // 8, 7 * w // 8))
+                    y = int(np.clip(cy + ring * np.sin(angle), h // 8, 7 * h // 8))
+                    pos = (x, y, min(self.world.surface_z(x, y) + 1, d - 1))
+                    if all(((pos[0]-p[0])**2 + (pos[1]-p[1])**2)**0.5 >= min_distance
+                           for p in positions):
+                        positions.append(pos)
+                        break
+                continue
             for attempt in range(max_attempts):
                 # Random position in safe zone (not edges), on the surface
                 x = random.randint(w//8, 7*w//8)
@@ -825,9 +920,12 @@ class SandKingsSimulation:
                 z = min(self.world.surface_z(x, y) + 1, d - 1)
 
                 pos = (x, y, z)
-                
-                # Check distance to existing colonies
-                if all(((pos[0]-p[0])**2 + (pos[1]-p[1])**2)**0.5 >= min_distance 
+
+                # Check distance to existing colonies AND the oasis buffer
+                if (((x - cx)**2 + (y - cy)**2)**0.5 < OASIS_RADIUS + 4
+                        and attempt < max_attempts - 1):
+                    continue
+                if all(((pos[0]-p[0])**2 + (pos[1]-p[1])**2)**0.5 >= min_distance
                        for p in positions):
                     positions.append(pos)
                     break
@@ -838,6 +936,7 @@ class SandKingsSimulation:
             genome.aggression = random.uniform(0.5, 1.0)  # Favor aggression
             genome.tunnel_preference = random.random()
             genome.expansion_rate = random.uniform(0.3, 1.0)  # Spawn threshold bounded [30, 100]
+            genome.patience = random.uniform(0.3, 0.95)  # discount gamma (T26)
             genome.resilience = random.uniform(0.0, 0.3)  # Defense weaker
             
             colony = Colony(i, positions[i], genome)
@@ -850,11 +949,21 @@ class SandKingsSimulation:
             # Spawn initial workers
             for _ in range(3):
                 colony.spawn_unit(UnitType.WORKER)
+
+        holder = self.oasis_holder()
+        if holder is not None:
+            self._log_event(f"Colony {holder} wakes beside the oasis")
     
     def step(self):
         """Execute one simulation step"""
         self.step_count += 1
-        
+
+        # 0. SEASON TICK (T16) - first, so boundary feedings use the new dole
+        if self.step_count % SEASON_LENGTH == 0:
+            name = SEASONS[self.season_index()]
+            self._log_event(f"The {name} season begins"
+                            f" (dole {self.dole_factor() * 100:.0f}%)")
+
         # 1. Physics
         if self.step_count % 5 == 0:  # Apply gravity every 5 steps
             self.world.apply_gravity()
@@ -870,8 +979,12 @@ class SandKingsSimulation:
         if self.step_count % FEED_INTERVAL == 0:
             self._feed_terrarium()
 
-        # 3c. SANDSTORMS: wind reshapes the dunes (SPEC T12); storms never overlap
-        if (self.step_count % STORM_INTERVAL == 0
+        # 3c. SANDSTORMS: wind reshapes the dunes (SPEC T12); storms never
+        # overlap. Seasonal cadence (T16): frequent in Dust, none in Chill
+        season = self.season_index()
+        storm_interval = STORM_INTERVAL_DUST if season == 2 else STORM_INTERVAL
+        if (season != 3
+                and self.step_count % storm_interval == 0
                 and self.storm_until <= self.step_count
                 and random.random() < STORM_CHANCE):
             self.storm_until = self.step_count + STORM_DURATION
@@ -881,6 +994,14 @@ class SandKingsSimulation:
             self._blow_sand()
             if self.storm_until == self.step_count + 1:
                 self._log_event("The sandstorm passes")
+
+        # 3d. CROP GROWTH (T19/T20)
+        if self.step_count % CROP_TICK == 0:
+            self._grow_crops()
+
+        # 3e. DUST SPOILAGE (T16)
+        if season == 2 and self.step_count % SPOIL_INTERVAL == 0:
+            self._spoil_surface_food()
 
         # 4. NEURAL PRUNING: Remove rarely activated weights every 50 steps
         if NEURAL_AVAILABLE and self.step_count % 50 == 0:
@@ -895,6 +1016,26 @@ class SandKingsSimulation:
             if not colony.is_alive():
                 continue
             
+            # Normalize Round-1 attrs for colonies from older checkpoints
+            if not hasattr(colony, 'farming'):
+                colony.farming = False
+                colony.ore = {'copper': 0, 'gold': 0}
+                colony.ore_struck = set()
+
+            # LEARNER decision tick (T26): posture biases gates, never rules
+            if self.step_count % 25 == 0:
+                self._learner(colony.colony_id).decide(
+                    self, colony, getattr(colony.genome, 'patience', 0.5))
+            posture = self._posture(colony)
+
+            # FARMING FLAG hysteresis: on > FARM_START_FOOD, off < FARM_STOP_FOOD
+            # (T18); a FARM posture lowers the entry gate by 25% (T26)
+            start_gate = FARM_START_FOOD * (0.75 if posture == "FARM" else 1.0)
+            if colony.farming:
+                colony.farming = colony.maw.food_stored > FARM_STOP_FOOD
+            else:
+                colony.farming = colony.maw.food_stored > start_gate
+
             # Maintenance cost (SPEC constants)
             colony.maw.food_stored -= len(colony.units) * MAINTENANCE_COST
 
@@ -932,7 +1073,9 @@ class SandKingsSimulation:
                 if random.random() < colony.genome.fertility:
                     roll = random.random()
                     if colony.at_war:  # SPEC T11 mix: 0.30 W / 0.60 S / 0.10 C
-                        unit_type = (UnitType.WORKER if roll < 0.30 else
+                        # RAID posture presses harder: 0.20 W / 0.70 S (T26)
+                        worker_cut = 0.20 if posture == "RAID" else 0.30
+                        unit_type = (UnitType.WORKER if roll < worker_cut else
                                      UnitType.SOLDIER if roll < 0.90 else UnitType.SCOUT)
                     else:              # peacetime: 0.60 W / 0.25 S / 0.15 C
                         unit_type = (UnitType.WORKER if roll < 0.60 else
@@ -956,6 +1099,85 @@ class SandKingsSimulation:
         """Append to the drama feed shown in the live HUD (SPEC T9)."""
         self.events.append((self.step_count, message))
 
+    # ---- Seasons & Stone helpers (SPEC_SEASONS_AND_STONE.md) ----
+
+    def season_index(self) -> int:
+        """Derived season 0-3 (T16); never stored."""
+        return (self.step_count // SEASON_LENGTH) % 4
+
+    def year(self) -> int:
+        return self.step_count // YEAR_LENGTH
+
+    def dole_factor(self) -> float:
+        """Seasonal dole factor with the 2-year ramp floor (T17)."""
+        f = DOLE_FACTOR[self.season_index()]
+        if not getattr(self, 'harsh', False):
+            f = max(f, DOLE_RAMP[min(self.year(), 2)])
+        return f
+
+    def in_oasis(self, x: int, y: int) -> bool:
+        """Pure positional oasis disc (T22); no state, no pickle surface."""
+        cx, cy = self.world.width // 2, self.world.height // 2
+        return (x - cx) ** 2 + (y - cy) ** 2 <= OASIS_RADIUS ** 2
+
+    def oasis_holder(self) -> Optional[int]:
+        """Colony whose living maw sits on/near the oasis, else None."""
+        cx, cy = self.world.width // 2, self.world.height // 2
+        for colony in self.colonies:
+            if not colony.is_alive():
+                continue
+            mx, my, _ = colony.maw.position
+            if (mx - cx) ** 2 + (my - cy) ** 2 <= (OASIS_RADIUS + 2) ** 2:
+                return colony.colony_id
+        return None
+
+    def _crops(self) -> Dict[Tuple[int, int, int], int]:
+        """Sparse crop registry pos -> grow ticks (T19); checkpoint-guarded."""
+        if not hasattr(self, 'crops'):
+            self.crops = {}
+        return self.crops
+
+    def _grow_crops(self):
+        """Crop lifecycle tick (T19/T20 behavioral block); purge-first."""
+        crops = self._crops()
+        season = self.season_index()
+        ripe_at = CROP_GROWDUR // CROP_TICK
+        for pos in list(crops.keys()):
+            x, y, z = pos
+            if self.world.voxels[pos] != VoxelType.CROP.value:
+                del crops[pos]
+                continue
+            if z + 1 < self.world.depth and self.world.voxels[x, y, z + 1] != VoxelType.AIR.value:
+                self.world.voxels[pos] = VoxelType.SAND.value  # buried by drift
+                del crops[pos]
+                continue
+            oasis = self.in_oasis(x, y)
+            if not oasis:
+                if season == 2:      # Dust: stall
+                    continue
+                if season == 3:      # Chill: the frost takes the young crops
+                    self.world.voxels[pos] = VoxelType.SAND.value
+                    del crops[pos]
+                    owner = int(self.world.ownership[pos])
+                    frost_key = (self.year(), owner)
+                    if owner >= 0 and getattr(self, '_frost_logged', None) != frost_key:
+                        self._frost_logged = frost_key
+                        self._log_event(f"The frost takes Colony {owner}'s young crops")
+                    continue
+            crops[pos] += OASIS_GROWTH_MULT if oasis else 1
+            if crops[pos] >= ripe_at:
+                self.world.voxels[pos] = VoxelType.CROP_RIPE.value
+                del crops[pos]
+
+    def _spoil_surface_food(self):
+        """Dust-season spoilage of exposed FOOD (T16)."""
+        food_positions = np.argwhere(self.world.voxels == VoxelType.FOOD.value)
+        d = self.world.depth
+        for x, y, z in food_positions:
+            if z + 1 < d and self.world.voxels[x, y, z + 1] == VoxelType.AIR.value:
+                if random.random() < SPOIL_CHANCE:
+                    self.world.voxels[x, y, z] = VoxelType.AIR.value
+
     def _monitor(self, colony_id: int) -> 'HiveMindMonitor':
         """Lazy per-colony hive-mind monitor (SPEC_HIVE_MONITOR M6/M7).
 
@@ -968,6 +1190,21 @@ class SandKingsSimulation:
             self.monitors[colony_id] = HiveMindMonitor(colony_id)
         return self.monitors[colony_id]
 
+    def _learner(self, colony_id: int) -> 'ColonyLearner':
+        """Lazy per-colony posture learner (T26); checkpoint-guarded."""
+        from colony_learner import ColonyLearner
+        if not hasattr(self, 'learners'):
+            self.learners = {}
+        if colony_id not in self.learners:
+            self.learners[colony_id] = ColonyLearner()
+        return self.learners[colony_id]
+
+    def _posture(self, colony: Colony) -> str:
+        """The colony's current learned posture (FORAGE when unlearned)."""
+        if not hasattr(self, 'learners') or colony.colony_id not in self.learners:
+            return "FORAGE"
+        return self.learners[colony.colony_id].posture
+
     def _feed_terrarium(self) -> int:
         """Scatter FOOD on the surface and floor colony reserves (SPEC T1).
 
@@ -975,13 +1212,20 @@ class SandKingsSimulation:
         over one interval. Returns the number of voxels actually placed.
         """
         w, h, d = self.world.dimensions
+        f = self.dole_factor()  # seasonal scarcity (T17)
         n = round(TARGET_POP * len(self.colonies) * MAINTENANCE_COST
-                  * FEED_INTERVAL / HARVEST_YIELD)
-        n = max(4 * len(self.colonies), min(n, (w * h) // 40))
+                  * FEED_INTERVAL / HARVEST_YIELD * f)
+        # the lower clamp scales too, or Chill silently floors at f=1/3
+        n = max(round(4 * len(self.colonies) * f), min(n, (w * h) // 40))
         placed = 0
-        for _ in range(n):
-            x = random.randint(1, w - 2)
-            y = random.randint(1, h - 2)
+        cx, cy = w // 2, h // 2
+        for i in range(n):
+            if i < OASIS_FEED_BONUS:  # a share always lands in the oasis (T22)
+                x = int(np.clip(cx + random.randint(-OASIS_RADIUS, OASIS_RADIUS), 1, w - 2))
+                y = int(np.clip(cy + random.randint(-OASIS_RADIUS, OASIS_RADIUS), 1, h - 2))
+            else:
+                x = random.randint(1, w - 2)
+                y = random.randint(1, h - 2)
             z = self.world.surface_z(x, y) + 1
             if z < d and self.world.voxels[x, y, z] == VoxelType.AIR.value:
                 self.world.voxels[x, y, z] = VoxelType.FOOD.value
@@ -1001,7 +1245,9 @@ class SandKingsSimulation:
         y0, y1 = max(0, y - radius), min(h, y + radius + 1)
         z0, z1 = max(0, z - radius), min(d, z + radius + 1)
         box = self.world.voxels[x0:x1, y0:y1, z0:z1]
-        hits = np.argwhere((box == VoxelType.FOOD.value) | (box == VoxelType.CORPSE.value))
+        hits = np.argwhere((box == VoxelType.FOOD.value)
+                           | (box == VoxelType.CORPSE.value)
+                           | (box == VoxelType.CROP_RIPE.value))  # ripe = food (T18)
         if len(hits) == 0:
             return None
         coords = hits + np.array([x0, y0, z0])
@@ -1037,12 +1283,172 @@ class SandKingsSimulation:
             self.world.voxels[tx, ty, dst_top + 1] = VoxelType.SAND.value
         self.world.apply_gravity()
 
+    def _milestone(self, colony: Colony, key: str, event_text: str, unit=None):
+        """Once-per-colony milestone events (first sow/harvest, T19)."""
+        if not hasattr(colony, 'milestones'):
+            colony.milestones = set()
+        if key in colony.milestones:
+            return
+        colony.milestones.add(key)
+        self._log_event(event_text)
+        actor = self._unit_label(unit) if unit else f"Colony {colony.colony_id}"
+        self._monitor(colony.colony_id).log_decision(
+            self.step_count, actor, event_text.split(' ', 2)[-1],
+            getattr(unit, 'thought', None) if unit else None)
+
+    def _sow_window_open(self) -> bool:
+        """Non-oasis sowing only when the crop can ripen before Dust (T20)."""
+        if self.season_index() not in GROW_SEASONS:
+            return False
+        window_end = self.year() * YEAR_LENGTH + 2 * SEASON_LENGTH
+        return window_end - self.step_count >= CROP_GROWDUR
+
+    def _farm_counts(self, colony: Colony) -> Tuple[int, int]:
+        """(total plots, ripe plots) owned within the farm box (T18/R24)."""
+        mx, my, _ = colony.maw.position
+        w, h, _d = self.world.dimensions
+        x0, x1 = max(1, mx - FARM_RADIUS), min(w - 1, mx + FARM_RADIUS + 1)
+        y0, y1 = max(1, my - FARM_RADIUS), min(h - 1, my + FARM_RADIUS + 1)
+        box_v = self.world.voxels[x0:x1, y0:y1, :]
+        owned = self.world.ownership[x0:x1, y0:y1, :] == colony.colony_id
+        farm = ((box_v == VoxelType.TILLED.value) | (box_v == VoxelType.CROP.value)
+                | (box_v == VoxelType.CROP_RIPE.value))
+        ripe = box_v == VoxelType.CROP_RIPE.value
+        return int((farm & owned).sum()), int((ripe & owned).sum())
+
+    def _farm_plot_count(self, colony: Colony) -> int:
+        """Owned TILLED/CROP/CROP_RIPE voxels within the farm box (T18)."""
+        return self._farm_counts(colony)[0]
+
+    def _find_farm_site(self, colony: Colony) -> Optional[Tuple[int, int, int]]:
+        """Best tillable surface SAND near the maw: oasis first, then close."""
+        mx, my, _ = colony.maw.position
+        w, h, _d = self.world.dimensions
+        best, best_key = None, None
+        for dx in range(-FARM_RADIUS, FARM_RADIUS + 1):
+            for dy in range(-FARM_RADIUS, FARM_RADIUS + 1):
+                px, py = mx + dx, my + dy
+                if not (1 <= px < w - 1 and 1 <= py < h - 1):
+                    continue
+                pz = self.world.surface_z(px, py)
+                if self.world.voxels[px, py, pz] != VoxelType.SAND.value:
+                    continue
+                key = (not self.in_oasis(px, py), abs(dx) + abs(dy))
+                if best_key is None or key < best_key:
+                    best, best_key = (px, py, pz), key
+        return best
+
+    def _farm_step(self, unit: SandKing, colony: Colony) -> bool:
+        """T18 branch 5: sow an adjacent owned TILLED, else till toward a site."""
+        x, y, z = unit.position
+        if colony.maw.food_stored >= SEED_COST:
+            for nx, ny, nz in self.world.get_neighbors_3d(unit.position, radius=1):
+                if (self.world.voxels[nx, ny, nz] == VoxelType.TILLED.value
+                        and self.world.ownership[nx, ny, nz] == colony.colony_id):
+                    colony.maw.food_stored -= SEED_COST
+                    self.world.voxels[nx, ny, nz] = VoxelType.CROP.value
+                    self._crops()[(nx, ny, nz)] = 0
+                    self._milestone(colony, 'sowed',
+                                    f"Colony {colony.colony_id} sows its first field",
+                                    unit)
+                    return True
+        if self._farm_plot_count(colony) < FARM_MAX_PLOTS:
+            site = self._find_farm_site(colony)
+            if site is not None:
+                sx, sy, sz = site
+                if max(abs(sx - x), abs(sy - y), abs(sz - z)) <= 1:
+                    self.world.voxels[site] = VoxelType.TILLED.value
+                    self.world.ownership[site] = colony.colony_id
+                    return True
+                return self._step_toward(unit, site, colony)
+        return False
+
+    def _haul_step(self, unit: SandKing, colony: Colony) -> bool:
+        """T18 branch 2: carry mined ore to the maw (deposit at Chebyshev 2)."""
+        if unit.carrying not in ('copper', 'gold'):
+            return False
+        mx, my, mz = colony.maw.position
+        x, y, z = unit.position
+        if max(abs(mx - x), abs(my - y), abs(mz - z)) <= 2:
+            colony.ore[unit.carrying] = colony.ore.get(unit.carrying, 0) + 1
+            unit.carrying = None
+            return True
+        self._step_toward(unit, colony.maw.position, colony)
+        return True  # hauling consumes the step even when boxed in
+
+    def _mine_step(self, unit: SandKing, colony: Colony) -> bool:
+        """T24: one step of work on an adjacent, still-valid ore target."""
+        target = getattr(unit, 'mine_target', None)
+        if target is None:
+            return False
+        voxel = self.world.voxels[target]
+        x, y, z = unit.position
+        if (voxel not in (VoxelType.COPPER_ORE.value, VoxelType.GOLD_ORE.value)
+                or max(abs(target[0] - x), abs(target[1] - y), abs(target[2] - z)) > 1):
+            unit.mine_target = None
+            unit.mine_progress = 0
+            return False
+        unit.mine_progress = getattr(unit, 'mine_progress', 0) + 1
+        if unit.mine_progress >= MINE_TIME:
+            kind = 'copper' if voxel == VoxelType.COPPER_ORE.value else 'gold'
+            self.world.voxels[target] = VoxelType.AIR.value
+            unit.carrying = kind
+            unit.mine_target = None
+            unit.mine_progress = 0
+            if kind not in colony.ore_struck:
+                colony.ore_struck.add(kind)
+                self._log_event(f"Colony {colony.colony_id} strikes {kind}!")
+                self._monitor(colony.colony_id).log_decision(
+                    self.step_count, self._unit_label(unit), f"struck {kind}",
+                    getattr(unit, 'thought', None))
+        return True
+
+    def _find_ore_target(self, position: Tuple[int, int, int],
+                         radius: int) -> Optional[Tuple[int, int, int]]:
+        """Nearest EXPOSED ore voxel (>= 1 AIR face) in a clipped box (T24)."""
+        x, y, z = position
+        w, h, d = self.world.dimensions
+        x0, x1 = max(0, x - radius), min(w, x + radius + 1)
+        y0, y1 = max(0, y - radius), min(h, y + radius + 1)
+        z0, z1 = max(0, z - radius), min(d, z + radius + 1)
+        box = self.world.voxels[x0:x1, y0:y1, z0:z1]
+        hits = np.argwhere((box == VoxelType.COPPER_ORE.value)
+                           | (box == VoxelType.GOLD_ORE.value))
+        best, best_dist = None, None
+        for hx, hy, hz in hits:
+            pos = (int(hx) + x0, int(hy) + y0, int(hz) + z0)
+            exposed = any(
+                self.world.in_bounds(pos[0] + dx, pos[1] + dy, pos[2] + dz)
+                and self.world.voxels[pos[0] + dx, pos[1] + dy, pos[2] + dz]
+                == VoxelType.AIR.value
+                for dx, dy, dz in ((1, 0, 0), (-1, 0, 0), (0, 1, 0),
+                                   (0, -1, 0), (0, 0, 1), (0, 0, -1)))
+            if not exposed:
+                continue
+            dist = abs(pos[0] - x) + abs(pos[1] - y) + abs(pos[2] - z)
+            if best_dist is None or dist < best_dist:
+                best, best_dist = pos, dist
+        return best
+
+    def _mine_seek(self, unit: SandKing, colony: Colony) -> bool:
+        """T18 branch 6: move to exposed ore; engage when adjacent."""
+        target = self._find_ore_target(unit.position, colony.genome.foraging_range)
+        if target is None:
+            return False
+        x, y, z = unit.position
+        if max(abs(target[0] - x), abs(target[1] - y), abs(target[2] - z)) <= 1:
+            unit.mine_target = target
+            unit.mine_progress = 0
+            return True
+        return self._step_toward(unit, target, colony)
+
     def _pull_known_food(self, colony: Colony,
                          position: Tuple[int, int, int]) -> Optional[Tuple[int, int, int]]:
         """Nearest still-valid scout-reported food; stale entries dropped (SPEC T11)."""
         valid = []
         for entry in colony.known_food:
-            if self.world.get_voxel(*entry) in (VoxelType.FOOD, VoxelType.CORPSE):
+            if self.world.get_voxel(*entry) in (VoxelType.FOOD, VoxelType.CORPSE,
+                                                VoxelType.CROP_RIPE):
                 valid.append(entry)
         colony.known_food = valid
         if not valid:
@@ -1185,6 +1591,24 @@ class SandKingsSimulation:
                     if self.world.in_bounds(x, y, mz) and VoxelType(
                             self.world.voxels[x, y, mz]) not in (VoxelType.GLASS, VoxelType.STONE):
                         self.world.voxels[x, y, mz] = VoxelType.CORPSE.value
+            # Ore spill (T25): stored ore scatters as re-minable voxels
+            ore = getattr(colony, 'ore', None)
+            if ore:
+                kinds = (['copper'] * ore.get('copper', 0)
+                         + ['gold'] * ore.get('gold', 0))
+                spill_voxel = {'copper': VoxelType.COPPER_ORE.value,
+                               'gold': VoxelType.GOLD_ORE.value}
+                for kind in kinds[:30]:
+                    for _ in range(10):
+                        sx, sy = mx + random.randint(-3, 3), my + random.randint(-3, 3)
+                        sz = mz + random.randint(-1, 1)
+                        if (self.world.in_bounds(sx, sy, sz)
+                                and self.world.voxels[sx, sy, sz]
+                                in (VoxelType.AIR.value, VoxelType.SAND.value)):
+                            self.world.voxels[sx, sy, sz] = spill_voxel[kind]
+                            break
+                ore['copper'] = ore['gold'] = 0
+
             self.world.ownership[self.world.ownership == colony.colony_id] = -1
             self.pheromones.trails[:, :, :, colony.colony_id, :] = 0.0
             self.pending_respawns[colony.colony_id] = self.step_count + RESPAWN_DELAY
@@ -1215,6 +1639,7 @@ class SandKingsSimulation:
             genome.tunnel_preference = random.random()
             genome.expansion_rate = random.uniform(0.3, 1.0)
             genome.resilience = random.uniform(0.0, 0.3)
+            genome.patience = random.uniform(0.3, 0.95)
 
         min_distance = int(0.1 * ((w**2 + h**2)**0.5))
         living_maws = [c.maw.position for c in survivors]
@@ -1238,6 +1663,8 @@ class SandKingsSimulation:
         self.colonies[index] = colony
         if hasattr(self, 'monitors'):  # fresh colony, fresh mind (M6)
             self.monitors.pop(colony_id, None)
+        if hasattr(self, 'learners'):  # and a fresh policy (T26)
+            self.learners.pop(colony_id, None)
         self.world.set_voxel(*pos, VoxelType.AIR, colony_id=colony_id)
         for _ in range(3):
             colony.spawn_unit(UnitType.WORKER)
@@ -1262,31 +1689,48 @@ class SandKingsSimulation:
         if not neural_soldier and (self.step_count + getattr(unit, 'unit_id', 0)) % 3 == 0:
             self._monitor(colony.colony_id).observe_instincts(unit, colony, self)
         
-        # Workers: gather food/corpses with directed foraging (SPEC T3)
+        # Workers: worker AI v2 (SPEC T18) - grab > haul > mine-continue >
+        # forage > farm > mine-seek > dig. Wild food ALWAYS outranks farming
         if unit.unit_type == UnitType.WORKER:
-            # (1) Radius-2 grab (CORPSES EDIBLE)
+            # (1) Radius-2 grab: wild food +15, ripe crops +40 -> TILLED
             neighbors = self.world.get_neighbors_3d(unit.position, radius=2)
             acted = False
             for nx, ny, nz in neighbors:
                 voxel = self.world.get_voxel(nx, ny, nz)
-                if voxel == VoxelType.FOOD or voxel == VoxelType.CORPSE:
+                if voxel in (VoxelType.FOOD, VoxelType.CORPSE):
                     unit.move((nx, ny, nz))
                     self.world.set_voxel(nx, ny, nz, VoxelType.AIR)
                     colony.maw.eat(HARVEST_YIELD)
                     unit.forage_target = None
-
-                    # Track neural performance
                     if unit.brain_layer is not None:
                         unit.brain_layer.food_gathered += 10
-
+                    acted = True
+                    break
+                if voxel == VoxelType.CROP_RIPE:
+                    self.world.voxels[nx, ny, nz] = VoxelType.TILLED.value
+                    colony.maw.eat(CROP_YIELD)
+                    unit.forage_target = None
+                    self._milestone(colony, 'harvested',
+                                    f"Colony {colony.colony_id} reaps its first harvest",
+                                    unit)
+                    if unit.brain_layer is not None:
+                        unit.brain_layer.food_gathered += 10
                     acted = True
                     break
 
-            # (2)+(3) Walk toward a known food target, scanning when needed
+            # (2) Haul carried ore home
+            if not acted:
+                acted = self._haul_step(unit, colony)
+
+            # (3) Continue an adjacent valid mine
+            if not acted:
+                acted = self._mine_step(unit, colony)
+
+            # (4) Forage: cached target -> scan -> scout intel -> step toward
             if not acted:
                 target = unit.forage_target
                 if target is not None and self.world.get_voxel(*target) not in (
-                        VoxelType.FOOD, VoxelType.CORPSE):
+                        VoxelType.FOOD, VoxelType.CORPSE, VoxelType.CROP_RIPE):
                     target = unit.forage_target = None  # stale: someone ate it
                 if target is None:
                     target = self._find_food_target(unit.position,
@@ -1297,7 +1741,16 @@ class SandKingsSimulation:
                 if target is not None:
                     acted = self._step_toward(unit, target, colony)
 
-            # (4) No food known: random dig
+            # (5) Farm: gated by the colony flag, sow window, and plot cap
+            if not acted and getattr(colony, 'farming', False) and (
+                    self._sow_window_open() or self.in_oasis(x, y)):
+                acted = self._farm_step(unit, colony)
+
+            # (6) Seek exposed ore
+            if not acted:
+                acted = self._mine_seek(unit, colony)
+
+            # (7) No work known: random dig
             if not acted and random.random() < colony.genome.tunnel_preference:
                 direction = random.choice([(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)])
                 if self.world.tunnel(unit.position, direction, colony.colony_id):
@@ -1390,6 +1843,28 @@ class SandKingsSimulation:
                 
             # RULE-BASED AI PATH (fallback)
             else:
+                # T21: raze an adjacent enemy field (consumes the action)
+                if colony.at_war or random.random() < colony.genome.aggression * 0.1:
+                    for nx, ny, nz in self.world.get_neighbors_3d(unit.position, radius=1):
+                        v = self.world.voxels[nx, ny, nz]
+                        owner = int(self.world.ownership[nx, ny, nz])
+                        if (v in (VoxelType.TILLED.value, VoxelType.CROP.value)
+                                and owner >= 0 and owner != colony.colony_id):
+                            self.world.voxels[nx, ny, nz] = VoxelType.SAND.value
+                            self._crops().pop((nx, ny, nz), None)
+                            if not hasattr(self, '_raze_logged'):
+                                self._raze_logged = {}
+                            key = (colony.colony_id, owner)
+                            if self.step_count - self._raze_logged.get(key, -10**9) > SEASON_LENGTH:
+                                self._raze_logged[key] = self.step_count
+                                self._log_event(f"Colony {colony.colony_id} razes"
+                                                f" Colony {owner}'s fields!")
+                                self._monitor(colony.colony_id).log_decision(
+                                    self.step_count, self._unit_label(unit),
+                                    "razed an enemy field",
+                                    getattr(unit, 'thought', None))
+                            return
+
                 # Find closest enemy unit
                 closest_enemy = None
                 min_dist = float('inf')
@@ -1440,6 +1915,12 @@ class SandKingsSimulation:
                             and random.random() < colony.genome.aggression):
                         if not self._step_toward(unit, closest_maw.position, colony):
                             pass  # boxed in this step; siege pressure resumes next step
+                    # FORTIFY posture: guard the maw and fields (T26)
+                    elif (self._posture(colony) == "FORTIFY"
+                          and (abs(colony.maw.position[0] - x)
+                               + abs(colony.maw.position[1] - y)
+                               + abs(colony.maw.position[2] - z)) > FARM_RADIUS + 2):
+                        self._step_toward(unit, colony.maw.position, colony)
                     # Random patrol if nothing in range
                     elif random.random() < 0.3:
                         direction = random.choice([(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)])
@@ -1641,6 +2122,9 @@ def main():
     parser.add_argument('--persist', nargs='?', const='terrarium.db', default=None,
                         metavar='DB', help='Resume from and autosave to a sqlite '
                         'terrarium (default file: terrarium.db). Live mode: K saves.')
+    parser.add_argument('--harsh', action='store_true',
+                        help='Skip the 2-year dole ramp: full seasonal scarcity '
+                        'from step 0 (T17)')
     parser.add_argument('--num-colonies', type=int, default=0, help='Number of colonies (0=random 3-5)')
     parser.add_argument('--width', type=int, default=80, help='World width')
     parser.add_argument('--height', type=int, default=40, help='World height')
@@ -1666,6 +2150,7 @@ def main():
     if fresh:
         sim = SandKingsSimulation(width=args.width, height=args.height,
                                  depth=args.depth, num_colonies=args.num_colonies)
+    sim.harsh = args.harsh  # T17 ramp control (applies to resumed sims too)
 
     # Enable neural mode if requested (fresh sims only - resumed sims keep
     # their evolved brains)

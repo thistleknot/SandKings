@@ -47,7 +47,7 @@ HUD_FG = (220, 220, 220)
 EVENT_LINES = 4            # drama-feed entries shown in the HUD (spec R15)
 GLYPH_BG_DIM = 0.45        # background dimming under glyphs (spec R18)
 GLYPH_MIN_CELL = 8         # px; below this glyphs are illegible -> BLOCKS
-GLYPHS = {                 # DF-style terrain glyphs (spec R18)
+GLYPHS = {                 # DF-style terrain glyphs (spec R18/R22)
     VoxelType.AIR.value: " ",
     VoxelType.SAND.value: "░",
     VoxelType.STONE.value: "▓",
@@ -55,14 +55,27 @@ GLYPHS = {                 # DF-style terrain glyphs (spec R18)
     VoxelType.FOOD.value: "•",
     VoxelType.CORPSE.value: "%",
     VoxelType.TUNNEL_WALL.value: "≡",
+    VoxelType.TILLED.value: "~",
+    VoxelType.CROP.value: ";",
+    VoxelType.CROP_RIPE.value: "*",
+    VoxelType.COPPER_ORE.value: "£",
+    VoxelType.GOLD_ORE.value: "$",
 }
+COPPER_TINT = (184, 115, 51)  # armored soldier letters (R22)
 UNIT_GLYPHS = {UnitType.WORKER: "w", UnitType.SOLDIER: "s", UnitType.SCOUT: "c"}
 MAW_GLYPH = "Ω"
-EVENT_TINTS = (            # substring -> HUD color (spec R19)
+EVENT_TINTS = (            # substring -> HUD color (spec R19/R24)
     ("Keeper", (120, 210, 120)),
     ("besieges", (255, 165, 60)),
     ("fallen", (255, 85, 85)),
     ("arrives", (90, 200, 255)),
+    ("season begins", (200, 190, 120)),
+    ("strikes", (255, 208, 0)),
+    ("razes", (255, 120, 60)),
+    ("harvest", (170, 220, 90)),
+    ("sows", (120, 200, 90)),
+    ("frost", (150, 190, 230)),
+    ("oasis", (80, 200, 170)),
 )
 PHEROMONE_OVERLAYS = (None, PheromoneType.FOOD_TRAIL, PheromoneType.TERRITORY,
                       PheromoneType.DANGER)  # P-key cycle (spec R17)
@@ -79,7 +92,25 @@ def build_voxel_palette() -> np.ndarray:
     palette[VoxelType.FOOD.value] = (0, 255, 0)
     palette[VoxelType.CORPSE.value] = (128, 0, 0)
     palette[VoxelType.TUNNEL_WALL.value] = (139, 90, 43)
+    palette[VoxelType.TILLED.value] = (110, 80, 50)
+    palette[VoxelType.CROP.value] = (80, 160, 60)
+    palette[VoxelType.CROP_RIPE.value] = (190, 220, 60)
+    palette[VoxelType.COPPER_ORE.value] = (184, 115, 51)
+    palette[VoxelType.GOLD_ORE.value] = (255, 208, 0)
     return palette
+
+
+def oasis_blend(world, colors: np.ndarray) -> np.ndarray:
+    """Blend oasis-disc columns 35% toward teal (spec R23); both view modes."""
+    from sandkings import OASIS_RADIUS
+    w, h = world.width, world.height
+    cx, cy = w // 2, h // 2
+    xs, ys = np.meshgrid(np.arange(w), np.arange(h), indexing='ij')
+    mask = (xs - cx) ** 2 + (ys - cy) ** 2 <= OASIS_RADIUS ** 2
+    teal = np.array((70, 160, 140), dtype=np.float32)
+    blended = colors.astype(np.float32)
+    blended[mask] = 0.65 * blended[mask] + 0.35 * teal
+    return blended.astype(np.uint8)
 
 
 def slice_color_array(world: VoxelWorld, colonies: List[Colony], z_level: int) -> np.ndarray:
@@ -94,7 +125,7 @@ def slice_color_array(world: VoxelWorld, colonies: List[Colony], z_level: int) -
         if mask.any():
             tint = tuple(int(c * TERRITORY_TINT) for c in colony.color)
             colors[mask] = tint
-    return colors
+    return oasis_blend(world, colors)
 
 
 def depth_shade(delta: int) -> float:
@@ -138,7 +169,7 @@ def topdown_color_array(world: VoxelWorld, colonies: List[Colony], z_level: int)
             colors[mask] = (1 - TERRITORY_TINT) * colors[mask] + TERRITORY_TINT * tint
 
     colors[~has_terrain] = VOID_COLOR
-    return colors.astype(np.uint8)
+    return oasis_blend(world, colors.astype(np.uint8))
 
 
 def unit_visible_depth(world: VoxelWorld, position: Tuple[int, int, int],
@@ -232,6 +263,17 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
          + (f"  Pher: {overlay.name}" if overlay else ""), HUD_FG),
         ("", HUD_FG),
     ]
+    if callable(getattr(sim, 'season_index', None)):  # Round-1 sims (R23)
+        season_tints = ((80, 200, 170), (120, 210, 120),
+                        (200, 180, 110), (150, 190, 230))
+        si = sim.season_index()
+        from sandkings import SEASONS
+        entries.insert(3, (f"Year {sim.year()} - {SEASONS[si]}"
+                           f"  (dole {sim.dole_factor() * 100:.0f}%)",
+                           season_tints[si]))
+        holder = sim.oasis_holder()
+        entries.insert(4, ("Oasis: " + (f"Colony {holder}" if holder is not None
+                                        else "unclaimed"), (80, 200, 170)))
     for colony in sim.colonies:
         color = hud_text_color(colony.color)
         if not colony.is_alive():
@@ -295,6 +337,20 @@ def build_manager_entries(sim: SandKingsSimulation,
                         f" S:{castes[UnitType.SOLDIER]}"
                         f" Sc:{castes[UnitType.SCOUT]}", color))
         entries.append((f"mood: {monitor.colony_thought(sim, colony)}", (200, 190, 120)))
+        if hasattr(sim, '_farm_counts'):  # Round-1 economy line (R24)
+            plots, ripe = sim._farm_counts(colony)
+            ore = getattr(colony, 'ore', {})
+            learner = (sim.learners.get(colony_id)
+                       if hasattr(sim, 'learners') else None)
+            if learner is not None:
+                from colony_learner import observe_state
+                posture = (f"{learner.posture}"
+                           f" (best:{learner.best_posture(observe_state(sim, colony))})")
+            else:
+                posture = "FORAGE"
+            entries.append((f"farms:{plots} ({ripe} ripe)"
+                            f"  Cu:{ore.get('copper', 0)} Au:{ore.get('gold', 0)}"
+                            f"  posture:{posture}", (170, 200, 140)))
     else:
         entries.append((f"== MANAGER: Colony {colony_id}: DEAD ==", (140, 60, 60)))
     entries.append((f"mind: {mode}", (140, 140, 150)))
@@ -598,7 +654,12 @@ class LiveViewer:
                 fill = tuple(int(c * depth_shade(depth)) for c in fill)
                 if glyph_mode:
                     char = UNIT_GLYPHS.get(unit.unit_type, "?")
-                    color = border if unit.retreating else hud_text_color(fill)
+                    if unit.retreating:
+                        color = border
+                    elif getattr(unit, 'armored', False):  # copper armor (R22)
+                        color = tuple(int(c * depth_shade(depth)) for c in COPPER_TINT)
+                    else:
+                        color = hud_text_color(fill)
                     self._blit_glyph(char, color, ux * cell, uy * cell)
                 else:
                     rect = pygame.Rect(ux * cell + 1, uy * cell + 1, cell - 2, cell - 2)
