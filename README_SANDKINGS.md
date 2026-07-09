@@ -239,6 +239,10 @@ Visualizer
 - Core War MARS simulation architecture
 - 1pageskirmish tactical combat patterns
 - MapElites algorithm (Mouret & Clune, 2015)
+- The full lineage — SimAnt, Dwarf Fortress (+stonesense), NetHack,
+  The Sims, SimCity, Factorio, Minecraft, Neopets, Framsticks, Game
+  of Thrones, Axelrod/Waltz/Ostrom, Sutton & Barto, and more — is
+  mapped to specific mechanics in [INSPIRATIONS.md](INSPIRATIONS.md)
 
 ## License
 
