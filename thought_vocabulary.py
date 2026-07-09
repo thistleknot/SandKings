@@ -38,7 +38,8 @@ ANCHOR_SEEDS = [
     "food", "hunger", "war", "defense", "underground", "danger", "flee",
     "hunt", "wounded", "home", "feast", "buried", "crowd", "alone", "rich",
     "storm", "death", "enemy", "victory", "siege", "jealousy", "love",
-    "clueless", "harvest", "farm", "drought", "gold",
+    "clueless", "harvest", "farm", "drought", "gold", "ally", "betrayed",
+    "gratitude", "dread",
 ]
 
 # Manual pruning: embedding neighbors that read wrong for the game
@@ -112,6 +113,10 @@ FALLBACK = {
     "farm": ["till", "field", "cultivate", "farm"],
     "drought": ["dry", "lean", "parched", "drought"],
     "gold": ["ore", "treasure", "riches", "gold"],
+    "ally": ["friend", "pact", "comrade", "ally"],
+    "betrayed": ["deceived", "stabbed", "forsaken", "betrayed"],
+    "gratitude": ["thanks", "debt", "grateful", "gratitude"],
+    "dread": ["unease", "terror", "doom", "dread"],
 }
 
 

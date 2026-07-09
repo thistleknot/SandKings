@@ -156,8 +156,8 @@
    "siege"
   ],
   "jealousy": [
-   "grief",
-   "anxiety",
+   "suspicion",
+   "sexual",
    "emotion",
    "rage",
    "hatred",
@@ -210,6 +210,36 @@
    "diamond",
    "silver",
    "gold"
+  ],
+  "ally": [
+   "opposition",
+   "embattled",
+   "supporter",
+   "leader",
+   "allies",
+   "ally"
+  ],
+  "betrayed": [
+   "tortured",
+   "convinced",
+   "shame",
+   "deeply",
+   "believing",
+   "betrayed"
+  ],
+  "gratitude": [
+   "praise",
+   "wishes",
+   "expressing",
+   "appreciation",
+   "sympathy",
+   "gratitude"
+  ],
+  "dread": [
+   "breath",
+   "smell",
+   "anxiety",
+   "dread"
   ]
  }
 }
