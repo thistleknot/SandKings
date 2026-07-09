@@ -37,7 +37,8 @@ MIN_SIMILARITY = 0.5
 ANCHOR_SEEDS = [
     "food", "hunger", "war", "defense", "underground", "danger", "flee",
     "hunt", "wounded", "home", "feast", "buried", "crowd", "alone", "rich",
-    "storm", "death", "enemy", "victory", "siege",
+    "storm", "death", "enemy", "victory", "siege", "jealousy", "love",
+    "clueless",
 ]
 
 # Manual pruning: embedding neighbors that read wrong for the game
@@ -62,6 +63,8 @@ BLOCKLIST = {
     "crowd": {"crowds", "watched", "greeted"},
     "alone": {"still", "than", "now", "just", "actually"},
     "rich": {"particularly", "especially"},
+    "jealousy": {"guilt", "emotions", "feelings"},
+    "love": {"me", "loves", "my"},
 }
 # Words too generic/odd to ever use, regardless of anchor
 GLOBAL_BLOCK = {"the", "of", "and", "a", "to", "in", "is", "it", "he",
@@ -98,6 +101,9 @@ FALLBACK = {
     "enemy": ["foe", "rival", "hostile", "enemy"],
     "victory": ["triumph", "win", "glory", "victory"],
     "siege": ["assault", "blockade", "onslaught", "siege"],
+    "jealousy": ["envy", "resentment", "covet", "jealousy"],
+    "love": ["care", "devotion", "tenderness", "love"],
+    "clueless": ["oblivious", "unaware", "naive", "clueless"],
 }
 
 

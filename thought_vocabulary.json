@@ -154,6 +154,30 @@
    "barracks",
    "retreat",
    "siege"
+  ],
+  "jealousy": [
+   "grief",
+   "anxiety",
+   "emotion",
+   "rage",
+   "hatred",
+   "jealousy"
+  ],
+  "love": [
+   "loving",
+   "mind",
+   "dreams",
+   "life",
+   "dream",
+   "love"
+  ],
+  "clueless": [
+   "confused",
+   "uncomfortable",
+   "tired",
+   "scared",
+   "stupid",
+   "clueless"
   ]
  }
 }
