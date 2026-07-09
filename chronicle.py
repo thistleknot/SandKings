@@ -149,3 +149,31 @@ def saga_rows(rows: List[Tuple[int, str, int]], min_salience: int = 4,
     or above `min_salience`, in chronological order."""
     picked = [r for r in rows if r[2] >= min_salience]
     return picked[-limit:]
+
+
+def write_saga(sim, path: str) -> int:
+    """D11: export the full chronicle as a readable text saga.
+
+    Returns the number of rows written. The whole record goes out
+    (min_salience 1) - the book keeps what the screen elides.
+    """
+    from sandkings import SEASONS, SEASON_LENGTH, YEAR_LENGTH
+    rows = getattr(sim, 'chronicle', None) or []
+    epithets = getattr(sim, 'house_epithets', None) or {}
+    lines = ["THE SAGA OF THE TERRARIUM", "=" * 40, ""]
+    if epithets:
+        lines.append("The houses, as history judged them:")
+        for house, epithet in sorted(epithets.items()):
+            lines.append(f"  House {house}, {epithet}")
+        lines.append("")
+    last_year = -1
+    for step, text, _salience in rows:
+        year = step // YEAR_LENGTH
+        if year != last_year:
+            last_year = year
+            lines += ["", f"-- In the year {year + 1} --"]
+        season = SEASONS[(step // SEASON_LENGTH) % 4]
+        lines.append(f"  {season:>6}: {text}")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    return len(rows)

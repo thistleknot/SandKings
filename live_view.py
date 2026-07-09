@@ -398,7 +398,7 @@ def build_saga_entries(sim: SandKingsSimulation
         color = event_tint(text) if salience >= 7 else (185, 185, 190)
         entries.append((f" {season:>6}: {text}"[:76], color))
     entries.append(("", HUD_FG))
-    entries.append(("H close   M manager", (140, 140, 150)))
+    entries.append(("H close   E export saga   M manager", (140, 140, 150)))
     return entries
 
 
@@ -742,6 +742,10 @@ class LiveViewer:
             elif key == pygame.K_h:
                 self.saga_open = not self.saga_open
                 self.manager_open = False
+            elif key == pygame.K_e:  # D11: the terrarium writes its book
+                from chronicle import write_saga
+                count = write_saga(self.sim, "terrarium_saga.txt")
+                print(f"[saga] {count} rows written to terrarium_saga.txt")
             elif self.manager_open and key in (pygame.K_LEFT, pygame.K_RIGHT):
                 ids = [c.colony_id for c in self.sim.colonies]
                 if ids:

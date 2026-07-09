@@ -114,8 +114,15 @@ lives beside the --persist checkpoint db; all new state pickles.
   - D7: delivered as the D3 feud bonus. The spec'd leaderless last
     stand conflicts with T5 (maw death = immediate corpse feast);
     T5 wins - recorded as a rejected sub-feature.
-  - D8–D11 remain backlog (relics, oaths, epithet vocabulary, saga
-    export). D12 soak: PASSED - 5 harsh years, 23.8 sps, 423
+  - D9 CLOSED BY RECONCILIATION: betrayal is only possible under an
+    active truce (P6), so every betrayal is already oathbreaking; its
+    price is the -60/-20 trust hit, the grudge lock, AND the eternal
+    D3 house grudge. A separate oath object would double-count.
+  - D11 SHIPPED: E key on the saga screen exports the full chronicle
+    (all salience) to terrarium_saga.txt via chronicle.write_saga(),
+    with the houses-as-history-judged-them preface.
+  - D8 (relic ownership formalization) and D10 (epithet vocabulary
+    via GloVe) remain backlog. D12 soak: PASSED - 5 harsh years, 23.8 sps, 423
     chronicle rows, 3 epithets earned, a generation-2 cadet house,
     saga readable (truces, tributes, coalitions, the ancient machine
     passing between houses). All 9 test suites green incl. new
