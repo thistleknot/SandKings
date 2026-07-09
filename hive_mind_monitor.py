@@ -153,7 +153,9 @@ def build_context(unit, colony, sim) -> Dict[str, float]:
         "below_surface": z < world.surface_z(x, y),
         "colony_food": colony.maw.food_stored,
         "at_war": colony.at_war,
-        "storm": getattr(sim, "storm_until", 0) > sim.step_count,
+        "storm": any(getattr(sim, until, 0) > sim.step_count  # any weather (W4)
+                     for until in ("storm_until", "hail_until",
+                                   "cold_until", "flood_until")),
         "fire_3": any(max(abs(fx - x), abs(fy - y), abs(fz - z)) <= 3
                       for fx, fy, fz in (getattr(sim, 'fires', None) or {})),
         "beast_6": any(abs(b.position[0] - x) + abs(b.position[1] - y)

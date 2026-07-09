@@ -113,6 +113,11 @@ EVENT_TINTS = (            # substring -> HUD color (spec R19/R24)
     ("anteater", (200, 80, 220)),
     ("too strange", (200, 80, 220)),
     ("dream", (150, 180, 255)),
+    ("flash flood", (90, 140, 255)),
+    ("floodwaters", (90, 140, 255)),
+    ("Hail", (235, 235, 245)),
+    ("hail relents", (235, 235, 245)),
+    ("frost settles", (170, 210, 255)),
     ("blood feud", (255, 60, 120)),
     ("will be remembered", (230, 210, 140)),
     ("rises (", (230, 210, 140)),
@@ -319,6 +324,16 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
         holder = sim.oasis_holder()
         entries.insert(4, ("Oasis: " + (f"Colony {holder}" if holder is not None
                                         else "unclaimed"), (80, 200, 170)))
+        # W5: the weather line (nothing when clear)
+        active = [(name, tint) for attr, name, tint in (
+            ("storm_until", "sandstorm", (200, 180, 110)),
+            ("hail_until", "hail", (235, 235, 245)),
+            ("flood_until", "flash flood", (90, 140, 255)),
+            ("cold_until", "killing frost", (170, 210, 255)),
+        ) if getattr(sim, attr, 0) > sim.step_count]
+        if active:
+            entries.insert(5, ("Weather: " + ", ".join(n for n, _t in active),
+                               active[0][1]))
     for colony in sim.colonies:
         color = hud_text_color(colony.color)
         if not colony.is_alive():
@@ -1144,6 +1159,25 @@ class LiveViewer:
                 pygame.surfarray.make_surface(storm_haze_array((w, h))),
                 (w * cell, h * cell))
             self._screen.blit(haze, (0, 0), special_flags=pygame.BLEND_ADD)
+
+        # W5 weather overlays: hail flicker, frost wash, the flood band
+        step = self.sim.step_count
+        if getattr(self.sim, 'hail_until', 0) > step:
+            wash = pygame.Surface((w * cell, h * cell))
+            wash.fill((240, 240, 255))
+            wash.set_alpha(20 + (step % 3) * 12)  # flicker
+            self._screen.blit(wash, (0, 0))
+        if getattr(self.sim, 'cold_until', 0) > step:
+            wash = pygame.Surface((w * cell, h * cell))
+            wash.fill((150, 190, 255))
+            wash.set_alpha(38)
+            self._screen.blit(wash, (0, 0))
+        if getattr(self.sim, 'flood_until', 0) > step:
+            for x in self.sim._flood_band():
+                surge = pygame.Surface((cell, h * cell))
+                surge.fill((40, 90, 220))
+                surge.set_alpha(110)
+                self._screen.blit(surge, (x * cell, 0))
 
         # R32/R33: look cursor, target highlight, and the inspect panel
         if self.look_mode:

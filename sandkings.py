@@ -143,6 +143,22 @@ RESONANCE_TICK = 2           # cadence of the resonance phase
 ALLY_RESONANCE_FACTOR = 0.3  # cross-colony damping (conspecific allies)
 SPECIATION_DIST = 0.35       # mean trait distance beyond which no mingling
 DREAM_REPLAYS = 3            # offline TD updates per Chill decision tick
+
+# Desert Weather constants (SPEC_WEATHER.md W1-W3)
+FLOOD_INTERVAL = 150         # Flood-season surge roll cadence (in-season
+                             # rolls; 600 resonated with YEAR_LENGTH and
+                             # yielded ~1 eligible roll per 3 years)
+FLOOD_CHANCE = 0.2
+FLOOD_WIDTH = 4              # surge band width (columns)
+FLOOD_DAMAGE = 2             # per step to exposed units in the band
+FLOOD_SILT_P = 0.08          # receding water tills the sand (Nile silt)
+HAIL_SHARE = 0.35            # Growth/Dust storm rolls that become hail
+HAIL_TICK = 5                # exposed-unit damage cadence under hail
+HAIL_SMASH_P = 0.04          # per crop per hail tick
+COLD_INTERVAL = 500          # cold-snap roll cadence (Chill; Dust halved)
+COLD_CHANCE = 0.5
+COLD_DURATION = 40           # the desert night's ambassador
+COLD_TICK = 5
 FAUNA_SPAWN_P = 0.3          # incursion chance per MARAUDER_INTERVAL roll...
 FAUNA_SPAWN_P_DARK = 0.6     # ...doubled in Dust/Chill (monsters own winter)
 
@@ -1172,10 +1188,16 @@ class SandKingsSimulation:
         if (season != 3
                 and self.step_count % storm_interval == 0
                 and self.storm_until <= self.step_count
+                and getattr(self, 'hail_until', 0) <= self.step_count
                 and random.random() < STORM_CHANCE):
-            self.storm_until = self.step_count + STORM_DURATION
-            self._storm_wind = random.choice([(1, 0), (-1, 0), (0, 1), (0, -1)])
-            self._log_event("A sandstorm rises!")
+            # W2: in Growth/Dust the storm roll may come down as hail
+            if season in (1, 2) and random.random() < HAIL_SHARE:
+                self.hail_until = self.step_count + STORM_DURATION
+                self._log_event("Hail hammers the dunes!")
+            else:
+                self.storm_until = self.step_count + STORM_DURATION
+                self._storm_wind = random.choice([(1, 0), (-1, 0), (0, 1), (0, -1)])
+                self._log_event("A sandstorm rises!")
         if self.storm_until > self.step_count:
             self._blow_sand()
             # T45: dry lightning rides the Dust storms
@@ -1189,6 +1211,9 @@ class SandKingsSimulation:
                     self._log_event("Lightning splits the sky - fire!")
             if self.storm_until == self.step_count + 1:
                 self._log_event("The sandstorm passes")
+
+        # 3c-w. DESERT WEATHER (SPEC_WEATHER W1-W3): flood, hail, frost
+        self._weather_tick(season)
 
         # 3d. CROP GROWTH (T19/T20)
         if self.step_count % CROP_TICK == 0:
@@ -1444,6 +1469,7 @@ class SandKingsSimulation:
             colony.house = make_house_name()
             colony.generation = 1
             colony.founded_step = self.step_count
+            self._kin_epoch = getattr(self, '_kin_epoch', 0) + 1
         return colony.house
 
     def _house(self, colony: Colony) -> str:
@@ -1689,6 +1715,108 @@ class SandKingsSimulation:
                             " around its maw", unit)
             return True
         return self._step_toward(unit, best, colony)
+
+    # ---- Desert Weather helpers (SPEC_WEATHER.md) ----
+
+    def _exposed(self, unit: SandKing) -> bool:
+        """W4: at or above the surface - weather's shared mechanic.
+        Tunnels are shelter; the desert teaches everyone to dig."""
+        x, y, z = unit.position
+        return z >= self.world.surface_z(x, y)
+
+    def _weather_kill(self, unit: SandKing, colony: Colony, damage: int):
+        if unit.take_damage(damage, 0.0):
+            colony.remove_unit(unit)
+            self.world.set_voxel(*unit.position, VoxelType.CORPSE)
+
+    def _flood_band(self) -> List[int]:
+        """Columns currently under the surge (direction-aware, clipped)."""
+        w = self.world.width
+        head = getattr(self, 'flood_head', 0)
+        if getattr(self, 'flood_edge', 1) == 1:
+            cols = range(head - FLOOD_WIDTH + 1, head + 1)
+        else:
+            cols = range(head, head + FLOOD_WIDTH)
+        return [x for x in cols if 0 <= x < w]
+
+    def _weather_tick(self, season: int):
+        """W1-W3: flood surge, hail, and cold snaps. All state is plain
+        ints behind getattr (old checkpoints resume clear-skied)."""
+        step = self.step_count
+
+        # W3 cold snap: Chill always eligible, Dust at half chance
+        if (getattr(self, 'cold_until', 0) <= step and step
+                and step % COLD_INTERVAL == 0
+                and (season == 3 or (season == 2 and random.random() < 0.5))
+                and random.random() < COLD_CHANCE):
+            self.cold_until = step + COLD_DURATION
+            self._log_event("A killing frost settles over the sands")
+        if getattr(self, 'cold_until', 0) > step and step % COLD_TICK == 0:
+            for colony in self.colonies:
+                for unit in colony.units[:]:
+                    if self._exposed(unit):
+                        self._weather_kill(unit, colony, 1)
+
+        # W2 hail: stones from the sky spare the tunnelers
+        if getattr(self, 'hail_until', 0) > step:
+            if step % HAIL_TICK == 0:
+                for colony in self.colonies:
+                    for unit in colony.units[:]:
+                        if self._exposed(unit):
+                            self._weather_kill(unit, colony, 1)
+                crops = np.argwhere(np.isin(
+                    self.world.voxels,
+                    (VoxelType.CROP.value, VoxelType.CROP_RIPE.value)))
+                for pos in crops:
+                    if random.random() < HAIL_SMASH_P:
+                        p = tuple(int(v) for v in pos)
+                        self.world.voxels[p] = VoxelType.TILLED.value
+                        self._crops().pop(p, None)
+            if getattr(self, 'hail_until', 0) == step + 1:
+                self._log_event("The hail relents")
+
+        # W1 flash flood: Flood season's water arrives as a wall
+        if (season == 0 and getattr(self, 'flood_until', 0) <= step
+                and step and step % FLOOD_INTERVAL == 0
+                and random.random() < FLOOD_CHANCE):
+            w = self.world.width
+            self.flood_edge = random.choice([1, -1])
+            self.flood_head = 0 if self.flood_edge == 1 else w - 1
+            self.flood_until = step + 2 * (w + FLOOD_WIDTH)
+            self._log_event("A flash flood roars across the terrarium!")
+        if getattr(self, 'flood_until', 0) > step:
+            if step % 2 == 0:
+                self.flood_head += self.flood_edge
+            band = self._flood_band()
+            if not band:
+                self.flood_until = 0
+                self._log_event("The floodwaters recede, leaving black silt")
+            else:
+                band_set = set(band)
+                for pos in list(self._fires()):
+                    if pos[0] in band_set:  # water beats fire
+                        del self.fires[pos]
+                for colony in self.colonies:
+                    for unit in colony.units[:]:
+                        if (unit.position[0] in band_set
+                                and self._exposed(unit)):
+                            self._weather_kill(unit, colony, FLOOD_DAMAGE)
+                for x in band:
+                    for y in range(self.world.height):
+                        z = self.world.surface_z(x, y)
+                        if not (0 <= z < self.world.depth):
+                            continue
+                        v = self.world.voxels[x, y, z]
+                        if v == VoxelType.FOOD.value and random.random() < 0.5:
+                            self.world.voxels[x, y, z] = VoxelType.AIR.value
+                        elif (v == VoxelType.SAND.value
+                              and random.random() < FLOOD_SILT_P):
+                            self.world.voxels[x, y, z] = VoxelType.TILLED.value
+                        elif random.random() < 0.02:
+                            zz = z + 1
+                            if (zz < self.world.depth and self.world.voxels
+                                    [x, y, zz] == VoxelType.AIR.value):
+                                self.world.voxels[x, y, zz] = VoxelType.FOOD.value
 
     # ---- Sentience Arc helpers (SPEC_SENTIENCE.md) ----
 
@@ -3292,6 +3420,7 @@ class SandKingsSimulation:
             colony.generation = getattr(parent, 'generation', 1) + 1
         colony.founded_step = self.step_count
         self.colonies[index] = colony
+        self._kin_epoch = getattr(self, '_kin_epoch', 0) + 1  # kin map stale
         self._log_event(f"House {self._house_name(colony)} rises"
                         f" (generation {getattr(colony, 'generation', 1)})"
                         f" as Colony {colony_id}")

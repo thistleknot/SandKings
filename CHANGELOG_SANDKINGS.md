@@ -1,5 +1,22 @@
 # Sand Kings Changelog
 
+## 2.12.0 - Desert Weather (SPEC_WEATHER.md W1-W6)
+
+- Flash floods: in Flood season a wall of water sweeps the map -
+  drowning the exposed, extinguishing fires, washing food away, and
+  leaving Nile silt (tilled bands + deposits) in its wake.
+- Hail: Growth/Dust storm rolls may come down as stones - exposed
+  units battered, standing crops smashed to tilled soil.
+- Cold snaps: the desert night's ambassador - killing frosts in
+  Chill (and sometimes Dust) that harm only the exposed.
+- One shared law: underground is shelter. Weather selects for
+  colonies that dig.
+- HUD weather line, hail/frost/flood overlays, weather events in the
+  chronicle; the `storm` thought now reads any active weather.
+- Perf: fixed a kin-check regression in hostile() (O(1) house map;
+  24 -> 15 -> 18.7 sps across the dynasty rounds).
+
+
 ## 2.11.0 - Look, Inspect, Follow & Legend (SPEC_LIVE_VIEW R32-R34)
 
 - Look cursor (I, or just click a cell): DF-style inspection - the

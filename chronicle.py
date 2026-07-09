@@ -44,6 +44,10 @@ SALIENCE = [
     ("ram smashes", 6),
     ("too strange", 8),
     ("incursion", 5),
+    ("flash flood", 6),
+    ("Hail", 4),
+    ("frost settles", 4),
+    ("floodwaters", 3),
     ("dream", 3),
     ("strikes", 5),        # ore strikes
     ("tribute", 5),

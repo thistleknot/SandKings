@@ -154,10 +154,17 @@ def hostile(sim, a: int, b: int) -> bool:
     diplomacy = getattr(sim, 'diplomacy', None)
     if diplomacy is None:
         return True
-    ca = next((c for c in sim.colonies if c.colony_id == a), None)
-    cb = next((c for c in sim.colonies if c.colony_id == b), None)
-    if (ca is not None and cb is not None and getattr(ca, 'house', '')
-            and getattr(ca, 'house', '') == getattr(cb, 'house', '')):
+    # kin check (D1) via an O(1) map - hostile() runs millions of times
+    # per soak inside the combat loops; the map rebuilds only when a
+    # house is founded or a slot respawns (sim._kin_epoch bumps)
+    epoch = getattr(sim, '_kin_epoch', 0)
+    cache = getattr(sim, '_kin_map', None)
+    if cache is None or cache[0] != epoch:
+        cache = (epoch, {c.colony_id: getattr(c, 'house', '')
+                         for c in sim.colonies})
+        sim._kin_map = cache
+    house_a = cache[1].get(a, '')
+    if house_a and house_a == cache[1].get(b, ''):
         return False  # kin (D1)
     step = sim.step_count
     if diplomacy.truce_active(a, b, step):

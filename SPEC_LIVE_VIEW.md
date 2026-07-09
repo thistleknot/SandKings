@@ -236,6 +236,9 @@ this ledger is the canonical resolution.)
 - **R31** (Round 6, SPEC_SENTIENCE.md S5) Sentience surface: the
   manager `resonance: 0.NN across K soldiers` line for neural
   colonies with >= 2 live hidden states.
+- **R35** (Round 7, SPEC_WEATHER.md W5) Weather surfaces: the HUD
+  weather line (active systems, tinted), the hail flicker and frost
+  wash overlays, and the translucent blue flood band.
 - **R32 (look cursor)** `I` toggles look mode (closing manager/saga):
   a gold-outlined keyboard cursor appears on the map (arrow keys move
   it, clamped to the map; UP/DOWN move the cursor while look mode is
