@@ -12,21 +12,33 @@ select for colonies whose labor happens below ground during the danger
 seasons. Weather never touches the evolution sim (step() override inert,
 as always).
 
-## W1 — Flash flood (the desert's water is a wall)
-During Flood season, every FLOOD_INTERVAL steps, with p FLOOD_CHANCE, a
-flood surge enters at one map edge and sweeps across the x-axis: a band
-FLOOD_WIDTH columns wide advancing FLOOD_SPEED columns/step until it
-exits. Within the band, at surface level:
-- exposed units take FLOOD_DAMAGE/step (drowning; underground is safe),
-- every burning cell in the band is EXTINGUISHED (fires purged),
-- exposed surface FOOD washes away (p 0.5/step in band),
-- receding water leaves SILT: surface SAND becomes TILLED with
-  p FLOOD_SILT_P, and FOOD deposits with p 0.02 — Nile agriculture:
-  the flood that drowns you feeds next season's fields.
-Events: "A flash flood roars across the terrarium!" / "The floodwaters
-recede, leaving black silt". Constants: FLOOD_INTERVAL 150,
-FLOOD_CHANCE 0.2, FLOOD_WIDTH 4, FLOOD_SPEED 1 (per 2 steps),
-FLOOD_DAMAGE 2, FLOOD_SILT_P 0.08.
+## W1 — The Nile inundation (user: "think nile flooding, that oasis
+will turn into a flood — and give maws an opportunity to build dams
+and runoff channels if they learn to terraform properly")
+During Flood season, every FLOOD_INTERVAL steps with p FLOOD_CHANCE,
+the OASIS OVERFLOWS. The water spreads by literal flood fill from the
+map center: BFS over surface columns, reaching any column whose
+surface sits at/below the water line (oasis surface + FLOOD_RISE) AND
+which is REACHABLE through such columns. The consequences:
+- DAMS ARE REAL: a closed ring of raised ground — palisades, DEPOSIT
+  banks, piled sand, tunnel walls — parts the water; breach it and
+  the water pours through. RUNOFF CHANNELS ARE REAL: a trench dug
+  through high ground carries the flood past it. No new AI: the
+  terraforming verbs already exist (worker digging, palisades, the
+  GEO cartridge's EXCAVATE/DEPOSIT actuators) — colonies that use
+  them "properly" keep their fields; selection does the learning.
+- The reach grows 1 column per 2 steps to FLOOD_RADIUS_MAX, holds,
+  then recedes (FLOOD_DURATION total).
+- Under water: exposed units take FLOOD_DAMAGE/step (underground is
+  safe), fires are extinguished, surface FOOD is swept away.
+- Receding water leaves SILT on the cells it releases: SAND becomes
+  TILLED with p FLOOD_SILT_P, FOOD deposits with p 0.02 — Nile
+  agriculture: the flood that drowns you feeds next season's fields,
+  and the oasis ring gets the richest silt AND the greatest danger.
+Events: "The oasis overflows - a flash flood spreads across the
+basin!" / "The floodwaters recede, leaving black silt".
+Constants: FLOOD_INTERVAL 150, FLOOD_CHANCE 0.2, FLOOD_RADIUS_MAX 16,
+FLOOD_DURATION 100, FLOOD_RISE 2, FLOOD_DAMAGE 2, FLOOD_SILT_P 0.08.
 
 ## W2 — Hail (stones from the sky)
 In Growth and Dust, a storm roll (existing T12/T16 cadence) becomes a
@@ -48,8 +60,9 @@ COLD_CHANCE 0.5, COLD_DURATION 40, COLD_TICK 5.
 
 ## W4 — State, exposure, and compatibility
 - New sim state (all checkpoint-guarded via getattr, plain ints):
-  `hail_until`, `cold_until`, `flood_until`, `flood_edge` (+1/-1
-  direction), `flood_head` (leading x column).
+  `hail_until`, `cold_until`, `flood_until`, and `flood_cells`
+  (the set of (x, y) columns currently under water, recomputed every
+  2 steps from the BFS; pickles as a plain set).
 - `exposed(unit)` helper: z >= world.surface_z(x, y). Weather deaths
   leave corpses (the frost feeds the rodents).
 - Sandstorms (T12) unchanged; at most one of sandstorm/hail active
@@ -93,3 +106,11 @@ observed; liveness holds; sps within 10% of baseline.
   - W6 soak: PASSED - 3 harsh years, flood + hail + cold snap all
     observed, liveness held (4/4 slots), 18.7 sps. All 11 suites green
     including tests/test_weather.py (7 tests).
+- 2026-07-09 (same session): W1 REDESIGNED per user direction from an
+  edge-surge band to the Nile inundation (oasis-centric BFS hydrology
+  with real dams and runoff channels). tests/test_weather.py grew to
+  9 tests including test_dam_parts_the_water and
+  test_channel_carries_water_past_high_ground. 5-year soak: PASSED at
+  21.5 sps, flood + hail + cold snap all observed, liveness held.
+  Note: hail is a 0.35 sub-roll of storm successes — 3-year windows
+  can legitimately miss it; the soak criterion window is 5 years.

@@ -149,8 +149,11 @@ FLOOD_INTERVAL = 150         # Flood-season surge roll cadence (in-season
                              # rolls; 600 resonated with YEAR_LENGTH and
                              # yielded ~1 eligible roll per 3 years)
 FLOOD_CHANCE = 0.2
-FLOOD_WIDTH = 4              # surge band width (columns)
-FLOOD_DAMAGE = 2             # per step to exposed units in the band
+FLOOD_RADIUS_MAX = 16        # the inundation's furthest reach from the oasis
+FLOOD_DURATION = 100         # grow -> hold -> recede, steps
+FLOOD_RISE = 2               # water line = oasis surface + FLOOD_RISE;
+                             # banks raised above it are DAMS
+FLOOD_DAMAGE = 2             # per step to exposed units under water
 FLOOD_SILT_P = 0.08          # receding water tills the sand (Nile silt)
 HAIL_SHARE = 0.35            # Growth/Dust storm rolls that become hail
 HAIL_TICK = 5                # exposed-unit damage cadence under hail
@@ -1729,15 +1732,47 @@ class SandKingsSimulation:
             colony.remove_unit(unit)
             self.world.set_voxel(*unit.position, VoxelType.CORPSE)
 
-    def _flood_band(self) -> List[int]:
-        """Columns currently under the surge (direction-aware, clipped)."""
-        w = self.world.width
-        head = getattr(self, 'flood_head', 0)
-        if getattr(self, 'flood_edge', 1) == 1:
-            cols = range(head - FLOOD_WIDTH + 1, head + 1)
-        else:
-            cols = range(head, head + FLOOD_WIDTH)
-        return [x for x in cols if 0 <= x < w]
+    def _flood_radius(self) -> int:
+        """W1: the inundation's reach - grows 1/2 steps, holds, recedes."""
+        remaining = getattr(self, 'flood_until', 0) - self.step_count
+        if remaining <= 0:
+            return 0
+        elapsed = FLOOD_DURATION - remaining
+        rising = min(FLOOD_RADIUS_MAX, elapsed // 2)
+        falling = min(FLOOD_RADIUS_MAX, remaining // 2)
+        return max(0, min(rising, falling))
+
+    def _compute_flood_cells(self) -> Set[Tuple[int, int]]:
+        """W1: Nile hydrology by flood fill (literally) from the oasis.
+
+        Water spreads column-to-column from the map center to any surface
+        at/below the water line (oasis surface + FLOOD_RISE) it can REACH:
+        a closed ring of raised ground - palisades, DEPOSIT banks, piled
+        sand - is a DAM the water cannot cross, and a dug trench is a
+        runoff channel it pours into. Terraforming is flood control.
+        """
+        radius = self._flood_radius()
+        if radius <= 0:
+            return set()
+        w, h = self.world.width, self.world.height
+        cx, cy = w // 2, h // 2
+        water_line = self.world.surface_z(cx, cy) + FLOOD_RISE
+        seen = {(cx, cy)}
+        frontier = [(cx, cy)]
+        r2 = radius * radius
+        while frontier:
+            x, y = frontier.pop()
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nx, ny = x + dx, y + dy
+                if (nx, ny) in seen or not (0 <= nx < w and 0 <= ny < h):
+                    continue
+                if (nx - cx) ** 2 + (ny - cy) ** 2 > r2:
+                    continue
+                if self.world.surface_z(nx, ny) > water_line:
+                    continue  # a dam, a bank, high ground: the water parts
+                seen.add((nx, ny))
+                frontier.append((nx, ny))
+        return seen
 
     def _weather_tick(self, season: int):
         """W1-W3: flood surge, hail, and cold snaps. All state is plain
@@ -1775,48 +1810,52 @@ class SandKingsSimulation:
             if getattr(self, 'hail_until', 0) == step + 1:
                 self._log_event("The hail relents")
 
-        # W1 flash flood: Flood season's water arrives as a wall
+        # W1 Nile inundation: the oasis overflows; dams and channels
+        # (raised banks / dug trenches) steer the water - terraforming
+        # IS flood control
         if (season == 0 and getattr(self, 'flood_until', 0) <= step
                 and step and step % FLOOD_INTERVAL == 0
                 and random.random() < FLOOD_CHANCE):
-            w = self.world.width
-            self.flood_edge = random.choice([1, -1])
-            self.flood_head = 0 if self.flood_edge == 1 else w - 1
-            self.flood_until = step + 2 * (w + FLOOD_WIDTH)
-            self._log_event("A flash flood roars across the terrarium!")
+            self.flood_until = step + FLOOD_DURATION
+            self.flood_cells = set()
+            self._log_event("The oasis overflows - a flash flood"
+                            " spreads across the basin!")
         if getattr(self, 'flood_until', 0) > step:
-            if step % 2 == 0:
-                self.flood_head += self.flood_edge
-            band = self._flood_band()
-            if not band:
-                self.flood_until = 0
+            previous = getattr(self, 'flood_cells', None) or set()
+            if step % 2 == 0 or not previous:
+                self.flood_cells = self._compute_flood_cells()
+            cells = self.flood_cells
+            # receding water leaves silt on the cells it releases
+            for (x, y) in previous - cells:
+                z = self.world.surface_z(x, y)
+                if not (0 <= z < self.world.depth):
+                    continue
+                v = self.world.voxels[x, y, z]
+                if (v == VoxelType.SAND.value
+                        and random.random() < FLOOD_SILT_P):
+                    self.world.voxels[x, y, z] = VoxelType.TILLED.value
+                elif random.random() < 0.02:
+                    zz = z + 1
+                    if (zz < self.world.depth and self.world.voxels[x, y, zz]
+                            == VoxelType.AIR.value):
+                        self.world.voxels[x, y, zz] = VoxelType.FOOD.value
+            for pos in list(self._fires()):
+                if (pos[0], pos[1]) in cells:  # water beats fire
+                    del self.fires[pos]
+            for colony in self.colonies:
+                for unit in colony.units[:]:
+                    if (unit.position[:2] in cells
+                            and self._exposed(unit)):
+                        self._weather_kill(unit, colony, FLOOD_DAMAGE)
+            if random.random() < 0.02:  # the water takes what it finds
+                for (x, y) in list(cells)[:40]:
+                    z = self.world.surface_z(x, y)
+                    if (0 <= z < self.world.depth and self.world.voxels
+                            [x, y, z] == VoxelType.FOOD.value):
+                        self.world.voxels[x, y, z] = VoxelType.AIR.value
+            if getattr(self, 'flood_until', 0) == step + 1:
+                self.flood_cells = set()
                 self._log_event("The floodwaters recede, leaving black silt")
-            else:
-                band_set = set(band)
-                for pos in list(self._fires()):
-                    if pos[0] in band_set:  # water beats fire
-                        del self.fires[pos]
-                for colony in self.colonies:
-                    for unit in colony.units[:]:
-                        if (unit.position[0] in band_set
-                                and self._exposed(unit)):
-                            self._weather_kill(unit, colony, FLOOD_DAMAGE)
-                for x in band:
-                    for y in range(self.world.height):
-                        z = self.world.surface_z(x, y)
-                        if not (0 <= z < self.world.depth):
-                            continue
-                        v = self.world.voxels[x, y, z]
-                        if v == VoxelType.FOOD.value and random.random() < 0.5:
-                            self.world.voxels[x, y, z] = VoxelType.AIR.value
-                        elif (v == VoxelType.SAND.value
-                              and random.random() < FLOOD_SILT_P):
-                            self.world.voxels[x, y, z] = VoxelType.TILLED.value
-                        elif random.random() < 0.02:
-                            zz = z + 1
-                            if (zz < self.world.depth and self.world.voxels
-                                    [x, y, zz] == VoxelType.AIR.value):
-                                self.world.voxels[x, y, zz] = VoxelType.FOOD.value
 
     # ---- Sentience Arc helpers (SPEC_SENTIENCE.md) ----
 

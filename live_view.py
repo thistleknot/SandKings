@@ -1173,11 +1173,11 @@ class LiveViewer:
             wash.set_alpha(38)
             self._screen.blit(wash, (0, 0))
         if getattr(self.sim, 'flood_until', 0) > step:
-            for x in self.sim._flood_band():
-                surge = pygame.Surface((cell, h * cell))
-                surge.fill((40, 90, 220))
-                surge.set_alpha(110)
-                self._screen.blit(surge, (x * cell, 0))
+            water = pygame.Surface((cell, cell))
+            water.fill((40, 90, 220))
+            water.set_alpha(110)
+            for (x, y) in getattr(self.sim, 'flood_cells', None) or ():
+                self._screen.blit(water, (x * cell, y * cell))
 
         # R32/R33: look cursor, target highlight, and the inspect panel
         if self.look_mode:

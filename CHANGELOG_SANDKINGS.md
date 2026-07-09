@@ -2,9 +2,12 @@
 
 ## 2.12.0 - Desert Weather (SPEC_WEATHER.md W1-W6)
 
-- Flash floods: in Flood season a wall of water sweeps the map -
-  drowning the exposed, extinguishing fires, washing food away, and
-  leaving Nile silt (tilled bands + deposits) in its wake.
+- The Nile inundation: in Flood season the oasis overflows - water
+  spreads by real flood-fill hydrology from the basin. Dams part the
+  water (palisades, DEPOSIT banks, piled sand); dug channels carry it
+  past high ground - terraforming IS flood control, and the colonies
+  already own the tools. The receding water drowns, extinguishes,
+  and leaves the richest silt on the oasis ring.
 - Hail: Growth/Dust storm rolls may come down as stones - exposed
   units battered, standing crops smashed to tilled soil.
 - Cold snaps: the desert night's ambassador - killing frosts in
