@@ -89,6 +89,28 @@ SALVAGE_MINE_TIME = 8        # worker-steps per SALVAGE voxel (T28)
 WRECK_NOTICE_RANGE = 6       # Chebyshev: exposed hull becomes known (T29)
 BUILD_MIN_FOOD = 60          # no machine work while poor (T37)
 
+# Timber, Bone & Flame constants (SPEC_TIMBER_AND_FLAME.md T41-T48)
+TREE_CAP = 40                # world WOOD ceiling (regrowth stops)
+TREE_REGROWTH_P = 0.02       # per WOOD voxel per Flood feeding tick
+CHOP_TIME = 4                # worker-steps to fell a trunk
+FELL_LENGTH = 3              # trunk voxels laid along the fall line
+ROT_INTERVAL = 100           # organic stores lose 1 per interval; ore never
+PALISADE_RING = 2            # wall ring radius around the maw (T43)
+WALL_ROT = 800               # steps before a palisade rots to sand
+SPEAR_ATTACK = 4             # bonus attack while armed (T44)
+SPEAR_LIFE = 400             # steps before it splinters
+RAM_COST = 3                 # wood for a battering ram (T44b)
+RAM_LIFE = 600               # steps before the ram rots
+RAM_SIEGE_MULT = 2           # maw-siege damage multiplier with a ram
+FIRE_TICK = 5                # fire cadence (rides the crop/machine tick)
+FIRE_BURN = 8                # ticks a cell burns
+FIRE_SPREAD_P = 0.5          # per adjacent flammable per tick
+FIRE_DAMAGE = 2              # per tick to units within Chebyshev 1
+MARAUDER_INTERVAL = 700      # pack-spawn roll cadence (T48)
+MARAUDER_PACK = (2, 3)
+MARAUDER_BOUNTY = 3          # corpse voxels per slain marauder
+FLAMMABLE_VOXELS = (8, 9, 14, 15)  # CROP, CROP_RIPE, WOOD, WOOD_WALL
+
 
 class VoxelType(Enum):
     AIR = 0
@@ -105,6 +127,8 @@ class VoxelType(Enum):
     GOLD_ORE = 11      # Deep cluster ore, non-renewable
     HULL = 12          # Crashed wreck shell (T28)
     SALVAGE = 13       # Wreck components - minable, non-renewable
+    WOOD = 14          # Palm/scrub trunk - choppable, flammable (T41)
+    WOOD_WALL = 15     # Palisade - rots, burns; the poor colony's wall (T43)
 
     def is_tunnelable(self):
         return self in (VoxelType.SAND, VoxelType.AIR)
@@ -112,7 +136,8 @@ class VoxelType(Enum):
     def is_solid(self):
         return self in (VoxelType.STONE, VoxelType.GLASS, VoxelType.TUNNEL_WALL,
                         VoxelType.COPPER_ORE, VoxelType.GOLD_ORE,
-                        VoxelType.HULL, VoxelType.SALVAGE)
+                        VoxelType.HULL, VoxelType.SALVAGE, VoxelType.WOOD,
+                        VoxelType.WOOD_WALL)
 
 def box_blur(field: np.ndarray, passes: int = 2) -> np.ndarray:
     """Neighbor-mean smoothing via np.roll (wraps at edges); 2D or 3D fields."""
@@ -286,6 +311,24 @@ class VoxelWorld:
         self.voxels[:, 0, :] = VoxelType.GLASS.value
         self.voxels[:, -1, :] = VoxelType.GLASS.value
         self.voxels[:, :, 0] = VoxelType.GLASS.value
+
+        # Trees (T41): palm clusters near the oasis, scattered scrub
+        cx2, cy2 = w // 2, h // 2
+        for cluster in range(5):
+            if cluster < 3:  # oasis ring
+                angle = rng.random() * 2 * np.pi
+                r = 4 + rng.random() * 5
+                tx = int(np.clip(cx2 + r * np.cos(angle), 2, w - 3))
+                ty = int(np.clip(cy2 + r * np.sin(angle), 2, h - 3))
+            else:            # scrub
+                tx = int(rng.integers(2, w - 2))
+                ty = int(rng.integers(2, h - 2))
+            for _ in range(int(rng.integers(2, 5))):
+                px = int(np.clip(tx + rng.integers(-2, 3), 2, w - 3))
+                py = int(np.clip(ty + rng.integers(-2, 3), 2, h - 3))
+                pz = self.surface_z(px, py) + 1
+                if pz < d and self.voxels[px, py, pz] == VoxelType.AIR.value:
+                    self.voxels[px, py, pz] = VoxelType.WOOD.value
 
         # Surface food patches
         for _ in range(4):
@@ -478,6 +521,8 @@ class SandKing:
     gift_amount: float = 0.0   # escrowed tribute an envoy carries (P3)
     gift_kind: str = ""        # 'food' | 'gold'
     gift_to: int = -1          # recipient colony id (-1 = not an envoy)
+    weapon_expires: int = 0    # spear splinter step; 0 = unarmed (T44)
+    torch: bool = False        # can put fields to the torch (T44/T45)
     
     # Neural hive mind extension (soldier's personal layer)
     brain_layer: Optional[SoldierLayer] = None
@@ -1086,6 +1131,34 @@ class SandKingsSimulation:
                                   ('controllers', None), ('devices', None)):
                 if not hasattr(colony, attr):  # Round-3 attrs (T37)
                     setattr(colony, attr, default if default is not None else [])
+            for attr in ('wood', 'bone', 'ram_until'):  # Round-4 (T41-T44)
+                if not hasattr(colony, attr):
+                    setattr(colony, attr, 0)
+
+            # Organic rot (T42): timber and bone decay; metal is forever
+            if self.step_count % ROT_INTERVAL == 0:
+                colony.wood = max(0, colony.wood - 1)
+                colony.bone = max(0, colony.bone - 1)
+
+            # Spear expiry (T44): organic weapons splinter
+            for unit in colony.units:
+                exp = getattr(unit, 'weapon_expires', 0)
+                if exp and self.step_count >= exp:
+                    unit.attack -= SPEAR_ATTACK
+                    unit.weapon_expires = 0
+                    self._monitor(colony.colony_id).log_decision(
+                        self.step_count, self._unit_label(unit),
+                        "his spear splinters", getattr(unit, 'thought', None))
+
+            # Battering ram (T44b): craft at war, rots on schedule/peace
+            if colony.at_war and colony.wood >= RAM_COST and not (
+                    getattr(colony, 'ram_until', 0) > self.step_count):
+                colony.wood -= RAM_COST
+                colony.ram_until = self.step_count + RAM_LIFE
+                self._log_event(f"Colony {colony.colony_id} builds a"
+                                " battering ram from a fallen palm")
+            if not colony.at_war:
+                colony.ram_until = 0
 
             # LEARNER decision tick (T26): posture biases gates, never rules
             if self.step_count % 25 == 0:
@@ -1332,6 +1405,19 @@ class SandKingsSimulation:
             if colony.is_alive():
                 colony.maw.food_stored = max(colony.maw.food_stored, BOOTSTRAP_FLOOR)
         self._log_event(f"Keeper scatters {placed} food")
+
+        # Flood regrowth (T41): living palms seed adjacent surface sand
+        if self.season_index() == 0:
+            wood_cells = np.argwhere(self.world.voxels == VoxelType.WOOD.value)
+            if 0 < len(wood_cells) < TREE_CAP:
+                for tx, ty, tz in wood_cells:
+                    if random.random() >= TREE_REGROWTH_P:
+                        continue
+                    nx = int(np.clip(tx + random.randint(-1, 1), 1, w - 2))
+                    ny = int(np.clip(ty + random.randint(-1, 1), 1, h - 2))
+                    nz = self.world.surface_z(nx, ny) + 1
+                    if nz < d and self.world.voxels[nx, ny, nz] == VoxelType.AIR.value:
+                        self.world.voxels[nx, ny, nz] = VoxelType.WOOD.value
         return placed
 
     def _find_food_target(self, position: Tuple[int, int, int],
