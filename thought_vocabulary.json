@@ -1,0 +1,159 @@
+{
+ "source": "glove-wiki-gigaword-50 top 10000",
+ "clusters": {
+  "food": [
+   "eating",
+   "cooking",
+   "vegetables",
+   "foods",
+   "meat",
+   "food"
+  ],
+  "hunger": [
+   "homeless",
+   "bloodshed",
+   "unrest",
+   "poverty",
+   "epidemic",
+   "hunger"
+  ],
+  "war": [
+   "wartime",
+   "military",
+   "fighting",
+   "conflict",
+   "occupation",
+   "war"
+  ],
+  "defense": [
+   "guard",
+   "protect",
+   "shield",
+   "defense"
+  ],
+  "underground": [
+   "stream",
+   "stations",
+   "rock",
+   "pipe",
+   "tunnel",
+   "underground"
+  ],
+  "danger": [
+   "risk",
+   "serious",
+   "pose",
+   "fear",
+   "threat",
+   "danger"
+  ],
+  "flee": [
+   "evacuate",
+   "escape",
+   "fearing",
+   "fled",
+   "fleeing",
+   "flee"
+  ],
+  "hunt": [
+   "wolf",
+   "hunters",
+   "kill",
+   "hunting",
+   "hunter",
+   "hunt"
+  ],
+  "wounded": [
+   "injuring",
+   "killing",
+   "soldiers",
+   "wounding",
+   "killed",
+   "wounded"
+  ],
+  "home": [
+   "nest",
+   "hearth",
+   "haven",
+   "home"
+  ],
+  "feast": [
+   "celebrating",
+   "celebrations",
+   "celebration",
+   "thanksgiving",
+   "celebrate",
+   "feast"
+  ],
+  "buried": [
+   "discovered",
+   "graves",
+   "ruins",
+   "burned",
+   "cemetery",
+   "buried"
+  ],
+  "crowd": [
+   "angry",
+   "waving",
+   "applause",
+   "fans",
+   "spectators",
+   "crowd"
+  ],
+  "alone": [
+   "lost",
+   "isolated",
+   "lonely",
+   "alone"
+  ],
+  "rich": [
+   "valuable",
+   "wealth",
+   "fields",
+   "vast",
+   "natural",
+   "rich"
+  ],
+  "storm": [
+   "waves",
+   "rains",
+   "flooding",
+   "winds",
+   "hurricane",
+   "storm"
+  ],
+  "death": [
+   "victims",
+   "murder",
+   "victim",
+   "survived",
+   "died",
+   "death"
+  ],
+  "enemy": [
+   "armed",
+   "capture",
+   "attacking",
+   "captured",
+   "forces",
+   "enemy"
+  ],
+  "victory": [
+   "beat",
+   "wins",
+   "winning",
+   "triumph",
+   "win",
+   "victory"
+  ],
+  "siege": [
+   "raids",
+   "garrison",
+   "surrender",
+   "barracks",
+   "retreat",
+   "siege"
+  ]
+ }
+}
