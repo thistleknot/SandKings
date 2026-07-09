@@ -1,5 +1,24 @@
 # Sand Kings Changelog
 
+## 2.15.0 - The Keeper's Console (SPEC_DASHBOARD.md DB1-DB8)
+
+- A web dashboard: `python dashboard.py` serves a designed
+  "Keeper's Console" at http://127.0.0.1:8000 - watch the terrarium
+  in a browser and act as its god from anywhere on the machine.
+- Live terrarium image, House cards (attitude dot, mood, war/awakened
+  badges, utterances), the streaming Saga, and a keeper control bar
+  (bounty / creatures / wrath / gifts). Click the sand to drop food;
+  select a breached House to speak to it.
+- SAFETY BY CONSTRUCTION (the reason this exists instead of the
+  rejected code-exec/internet path): the console only READS a
+  snapshot and injects the existing keeper verbs. No endpoint runs
+  code, evaluates strings, touches the filesystem, or makes any
+  outbound request; uvicorn binds 127.0.0.1 only; a strict CSP header
+  and fully-inlined assets mean zero external resources. A test
+  asserts the module imports no subprocess/socket/urllib and calls no
+  eval/exec. The breach/terminal stays in-sim fiction.
+
+
 ## 2.14.0 - The Keeper (SPEC_KEEPER.md K1-K12)
 
 - YOU are the keeper now. Keys: 1 drops food at the cursor, 2/3/4

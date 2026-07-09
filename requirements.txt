@@ -9,3 +9,5 @@ pygame==2.6.1
 torch==2.11.0
 matplotlib==3.10.0
 Pillow==10.4.0
+fastapi==0.115.14
+uvicorn==0.44.0
