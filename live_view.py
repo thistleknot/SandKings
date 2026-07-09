@@ -375,6 +375,7 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
             entries.append((f"[{step}] {shown}"[:38], event_tint(message)))
     for help_line in ("", "SPACE pause  S step", "+/- speed  </> or UP/DN z",
                       "TAB view  P pheromones  R style",
+                      "I inspect (click too)  F follow  L legend",
                       "M manager  H saga  G capture  ESC quit"):
         entries.append((help_line, (140, 140, 150)))
     return entries
@@ -404,6 +405,172 @@ def build_saga_entries(sim: SandKingsSimulation
         entries.append((f" {season:>6}: {text}"[:76], color))
     entries.append(("", HUD_FG))
     entries.append(("H close   E export saga   M manager", (140, 140, 150)))
+    return entries
+
+
+VOXEL_LEGEND = {  # R34: every non-AIR GLYPHS row gets a name
+    VoxelType.SAND.value: "sand (tunnelable)",
+    VoxelType.STONE.value: "stone substrate",
+    VoxelType.GLASS.value: "terrarium glass",
+    VoxelType.FOOD.value: "food",
+    VoxelType.CORPSE.value: "corpse (edible)",
+    VoxelType.TUNNEL_WALL.value: "reinforced tunnel wall",
+    VoxelType.TILLED.value: "tilled soil",
+    VoxelType.CROP.value: "growing crop",
+    VoxelType.CROP_RIPE.value: "ripe crop (harvestable)",
+    VoxelType.COPPER_ORE.value: "copper ore (soldier armor)",
+    VoxelType.GOLD_ORE.value: "gold ore (tribute hoard)",
+    VoxelType.HULL.value: "ancient wreck hull",
+    VoxelType.SALVAGE.value: "salvage (machine parts)",
+    VoxelType.WOOD.value: "palm trunk (choppable)",
+    VoxelType.WOOD_WALL.value: "palisade (rots, burns)",
+    VoxelType.WEB.value: "spider silk (snares)",
+}
+
+
+def column_inhabitants(sim: SandKingsSimulation, x: int,
+                       y: int) -> List[Tuple[str, object]]:
+    """Everything living at column (x, y), highest z first (R32)."""
+    found: List[Tuple[int, Tuple[str, object]]] = []
+    for colony in sim.colonies:
+        if colony.is_alive() and colony.maw.position[:2] == (x, y):
+            found.append((colony.maw.position[2], ('maw', colony)))
+        for unit in colony.units:
+            if unit.position[0] == x and unit.position[1] == y:
+                found.append((unit.position[2], ('unit', unit)))
+    for beast in getattr(sim, 'fauna', None) or []:
+        if beast.position[0] == x and beast.position[1] == y:
+            found.append((beast.position[2], ('beast', beast)))
+    return [t for _z, t in sorted(found, key=lambda p: -p[0])]
+
+
+def target_alive(sim: SandKingsSimulation, target) -> bool:
+    """R33: object references validated per frame, never stale indices."""
+    kind, obj = target
+    if kind == 'unit':
+        colony = next((c for c in sim.colonies
+                       if c.colony_id == obj.colony_id), None)
+        return colony is not None and obj in colony.units
+    if kind == 'maw':
+        return obj in sim.colonies and obj.is_alive()
+    return obj in (getattr(sim, 'fauna', None) or [])
+
+
+def target_position(target) -> Tuple[int, int, int]:
+    kind, obj = target
+    return obj.maw.position if kind == 'maw' else obj.position
+
+
+def build_inspect_entries(sim: SandKingsSimulation,
+                          target) -> List[Tuple[str, Tuple[int, int, int]]]:
+    """R33 inspect panel content as (text, color) pairs. Pure: no pygame."""
+    kind, obj = target
+    if not target_alive(sim, target):
+        gone = "has fallen" if kind != 'beast' else "is gone"
+        return [(f"[{kind}] {gone}", (200, 90, 90))]
+    entries: List[Tuple[str, Tuple[int, int, int]]] = []
+    step = sim.step_count
+    if kind == 'unit':
+        colony = next(c for c in sim.colonies if c.colony_id == obj.colony_id)
+        label = (sim._unit_label(obj) if hasattr(sim, '_unit_label')
+                 else obj.unit_type.name.lower())
+        house = sim._house(colony) if hasattr(sim, '_house') else ""
+        color = hud_text_color(colony.color)
+        entries.append((f"{label} of House {house}"[:44], color))
+        entries.append((f"HP {obj.health:.0f}/{obj.max_health}"
+                        f"  ATK {obj.attack}"
+                        + (" (spear)" if getattr(obj, 'weapon_expires', 0) > step
+                           else ""), color))
+        flags = [f for f, on in (
+            ("armored", getattr(obj, 'armored', False)),
+            ("torch", getattr(obj, 'torch', False)),
+            ("POISONED", getattr(obj, 'poisoned_until', 0) > step),
+            ("retreating", obj.retreating)) if on]
+        if flags:
+            entries.append(("  " + ", ".join(flags), (230, 160, 90)))
+        if obj.carrying:
+            entries.append((f"  carrying {obj.carrying}", (200, 200, 140)))
+        if obj.brain_layer is not None:
+            entries.append((f"  kills {obj.brain_layer.kills}"
+                            f"  steps {obj.brain_layer.steps_alive}",
+                            (150, 180, 255)))
+        entries.append((f"  thinks: {getattr(obj, 'thought', '...')}"[:44],
+                        (200, 190, 120)))
+    elif kind == 'maw':
+        house = sim._house(obj) if hasattr(sim, '_house') else str(obj.colony_id)
+        color = hud_text_color(obj.color)
+        entries.append((f"MAW of House {house}"[:44], color))
+        entries.append((f"HP {obj.maw.health:.0f}/{MAW_MAX_HEALTH}"
+                        f"  food {obj.maw.food_stored:.0f}"
+                        f"  units {len(obj.units)}", color))
+        posture = sim._posture(obj) if hasattr(sim, '_posture') else "?"
+        entries.append((f"  posture {posture}", (170, 200, 140)))
+        g = obj.genome
+        entries.append((f"  agg {g.aggression:.2f} pat "
+                        f"{getattr(g, 'patience', 0.5):.2f} loy "
+                        f"{getattr(g, 'loyalty', 0.5):.2f} pla "
+                        f"{getattr(g, 'plasticity', 0.5):.2f}",
+                        (150, 180, 255)))
+    else:  # beast
+        entries.append((f"{obj.species.upper()} (wild)", BEAST_COLOR))
+        entries.append((f"HP {obj.health}  ATK {obj.attack}"
+                        f"  bounty {obj.bounty}", BEAST_COLOR))
+        moods = [f for f, on in (("provoked", obj.provoked),
+                                 ("fleeing", obj.fleeing)) if on]
+        if moods:
+            entries.append(("  " + ", ".join(moods), (230, 160, 90)))
+    return entries
+
+
+def build_look_entries(sim: SandKingsSimulation, x: int,
+                       y: int, z: int) -> List[Tuple[str, Tuple[int, int, int]]]:
+    """R32: what the look cursor sees at its cell. Pure: no pygame."""
+    v = int(sim.world.voxels[x, y, z])
+    name = VOXEL_LEGEND.get(v, "open air")
+    owner = int(sim.world.ownership[x, y, z])
+    line = f"({x},{y},{z}) {name}"
+    if owner >= 0:
+        line += f" [Colony {owner}]"
+    if (x, y, z) in (getattr(sim, 'fires', None) or {}):
+        line += " ON FIRE"
+    entries = [(line[:46], (230, 210, 140))]
+    kinds = column_inhabitants(sim, x, y)
+    if kinds:
+        entries.append((f"here: {len(kinds)} "
+                        f"(V/ENTER cycles, F follows)", (150, 150, 160)))
+    return entries
+
+
+def build_legend_entries() -> List[Tuple[str, Tuple[int, int, int]]]:
+    """R34: the legend, enumerated from the LIVE glyph dicts so nothing
+    can silently go missing. Pure: no pygame."""
+    palette = build_voxel_palette()
+    entries: List[Tuple[str, Tuple[int, int, int]]] = [
+        ("== LEGEND ==", (230, 210, 140)), ("", HUD_FG),
+        ("-- terrain --", (150, 150, 160))]
+    for value, glyph in GLYPHS.items():
+        if value == VoxelType.AIR.value:
+            continue
+        name = VOXEL_LEGEND.get(value, f"voxel {value}")
+        entries.append((f" {glyph}  {name}", tuple(int(c) for c in palette[value])))
+    entries.append(("", HUD_FG))
+    entries.append(("-- creatures --", (150, 150, 160)))
+    for unit_type, glyph in UNIT_GLYPHS.items():
+        entries.append((f" {glyph}  {unit_type.name.lower()}"
+                        " (colony-colored)", HUD_FG))
+    entries.append((f" {MAW_GLYPH}  maw (the queen; health bar when hurt)",
+                    MAW_COLOR))
+    for species, glyph in BEAST_GLYPHS.items():
+        entries.append((f" {glyph}  {species} (wild)", BEAST_COLOR))
+    entries.append((f" {FIRE_GLYPH}  fire", FIRE_COLOR))
+    entries.append(("", HUD_FG))
+    entries.append(("-- colors --", (150, 150, 160)))
+    entries.append((" copper letter = armored soldier", COPPER_TINT))
+    entries.append((" magenta = retreating", (255, 0, 255)))
+    entries.append((" gold w = tribute envoy", (255, 200, 60)))
+    entries.append((" violet = wild beast", BEAST_COLOR))
+    entries.append(("", HUD_FG))
+    entries.append(("L close   I inspect cursor", (140, 140, 150)))
     return entries
 
 
@@ -662,6 +829,12 @@ class LiveViewer:
         self.manager_open = False   # SPEC_HIVE_MONITOR M5
         self.manager_colony = 0
         self.saga_open = False      # SPEC_DYNASTIES D5
+        self.legend_open = False    # R34
+        self.look_mode = False      # R32 look cursor
+        self.cursor = (sim.world.width // 2, sim.world.height // 2)
+        self.inspected = None       # ('unit'|'maw'|'beast', object) (R33)
+        self.follow = False         # R33 follow mode
+        self._select_cycle = 0      # V/ENTER cycles column inhabitants
         self.captured_frames: List[np.ndarray] = []
         self.running = False
         self._screen = None
@@ -734,6 +907,14 @@ class LiveViewer:
                 self.pacer.faster()
             elif key in (pygame.K_MINUS, pygame.K_COMMA, pygame.K_KP_MINUS):
                 self.pacer.slower()
+            elif self.look_mode and key in (pygame.K_UP, pygame.K_DOWN,
+                                            pygame.K_LEFT, pygame.K_RIGHT):
+                dx = {pygame.K_LEFT: -1, pygame.K_RIGHT: 1}.get(key, 0)
+                dy = {pygame.K_UP: -1, pygame.K_DOWN: 1}.get(key, 0)
+                self.cursor = (
+                    max(0, min(self.sim.world.width - 1, self.cursor[0] + dx)),
+                    max(0, min(self.sim.world.height - 1, self.cursor[1] + dy)))
+                self.follow = False  # steering the cursor breaks the leash
             elif key == pygame.K_UP:
                 self.z_level = min(self.sim.world.depth - 1, self.z_level + 1)
             elif key == pygame.K_DOWN:
@@ -752,9 +933,31 @@ class LiveViewer:
             elif key == pygame.K_m:
                 self.manager_open = not self.manager_open
                 self.saga_open = False
+                self.legend_open = False
             elif key == pygame.K_h:
                 self.saga_open = not self.saga_open
                 self.manager_open = False
+                self.legend_open = False
+            elif key == pygame.K_l:  # R34 legend
+                self.legend_open = not self.legend_open
+                self.manager_open = False
+                self.saga_open = False
+            elif key == pygame.K_i:  # R32 look cursor
+                self.look_mode = not self.look_mode
+                self.manager_open = False
+                self.saga_open = False
+                self.legend_open = False
+                if not self.look_mode:
+                    self.inspected = None
+                    self.follow = False
+            elif self.look_mode and key in (pygame.K_v, pygame.K_RETURN):
+                targets = column_inhabitants(self.sim, *self.cursor)
+                if targets:
+                    self.inspected = targets[self._select_cycle % len(targets)]
+                    self._select_cycle += 1
+                    self.follow = False
+            elif key == pygame.K_f and self.inspected is not None:
+                self.follow = not self.follow  # R33
             elif key == pygame.K_e:  # D11: the terrarium writes its book
                 from chronicle import write_saga
                 count = write_saga(self.sim, "terrarium_saga.txt")
@@ -770,6 +973,19 @@ class LiveViewer:
                 self._save_terrarium()
                 if hasattr(self.sim, '_log_event'):
                     self.sim._log_event("The keeper preserves the terrarium")
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            # R32: a click IS the look cursor
+            if not (self.manager_open or self.saga_open or self.legend_open):
+                x = event.pos[0] // self.cell_size
+                y = event.pos[1] // self.cell_size
+                if (0 <= x < self.sim.world.width
+                        and 0 <= y < self.sim.world.height):
+                    self.look_mode = True
+                    self.cursor = (x, y)
+                    self.follow = False
+                    targets = column_inhabitants(self.sim, x, y)
+                    self.inspected = targets[0] if targets else None
+                    self._select_cycle = 1
 
     def _glyph(self, char: str, color: Tuple[int, int, int],
                big: bool = False) -> "pygame.Surface":
@@ -801,6 +1017,18 @@ class LiveViewer:
         if self.saga_open:
             self._render_saga(w * cell, max(h * cell, 400))
             return
+        if self.legend_open:
+            self._render_legend(w * cell, max(h * cell, 400))
+            return
+
+        # R33 follow: the leash updates cursor and z before drawing
+        if self.inspected is not None and self.follow:
+            if target_alive(self.sim, self.inspected):
+                tx, ty, tz = target_position(self.inspected)
+                self.cursor = (tx, ty)
+                self.z_level = tz
+            else:
+                self.follow = False
 
         glyph_mode = (self.render_style == RenderStyle.GLYPH
                       and cell >= GLYPH_MIN_CELL)
@@ -917,6 +1145,35 @@ class LiveViewer:
                 (w * cell, h * cell))
             self._screen.blit(haze, (0, 0), special_flags=pygame.BLEND_ADD)
 
+        # R32/R33: look cursor, target highlight, and the inspect panel
+        if self.look_mode:
+            cx, cy = self.cursor
+            pygame.draw.rect(self._screen, (255, 215, 0),
+                             pygame.Rect(cx * cell - 1, cy * cell - 1,
+                                         cell + 2, cell + 2), 2)
+            if (self.inspected is not None
+                    and target_alive(self.sim, self.inspected)):
+                tx, ty, _tz = target_position(self.inspected)
+                pygame.draw.rect(self._screen, (255, 255, 255),
+                                 pygame.Rect(tx * cell - 2, ty * cell - 2,
+                                             cell + 4, cell + 4), 1)
+            panel = build_look_entries(self.sim, cx, cy,
+                                       min(self.z_level,
+                                           self.sim.world.depth - 1))
+            if self.inspected is not None:
+                panel += build_inspect_entries(self.sim, self.inspected)
+                if self.follow:
+                    panel.append(("FOLLOWING (F releases)", (255, 215, 0)))
+            box_h = len(panel) * 17 + 10
+            box = pygame.Surface((330, box_h))
+            box.set_alpha(210)
+            box.fill(HUD_BG)
+            self._screen.blit(box, (6, 6))
+            for i, (line, color) in enumerate(panel):
+                if line:
+                    self._screen.blit(self._font.render(line, True, color),
+                                      (12, 11 + i * 17))
+
         hud_x = w * cell + 12
         for i, (line, color) in enumerate(build_hud_entries(
                 self.sim, self.pacer.steps_per_second,
@@ -960,6 +1217,25 @@ class LiveViewer:
         max_rows = max(4, (area_h - 20) // 16)
         head, tail = entries[:3], entries[3:]
         for i, (line, color) in enumerate(head + tail[-(max_rows - 3):]):
+            if line:
+                self._screen.blit(self._font.render(line, True, color),
+                                  (14, 10 + i * 16))
+        hud_x = area_w + 12
+        for i, (line, color) in enumerate(build_hud_entries(
+                self.sim, self.pacer.steps_per_second,
+                self.paused, self.z_level, self.capturing,
+                self.view_mode, PHEROMONE_OVERLAYS[self.overlay_index])):
+            if line:
+                self._screen.blit(self._font.render(line, True, color),
+                                  (hud_x, 10 + i * 18))
+        pygame.display.flip()
+
+    def _render_legend(self, area_w: int, area_h: int) -> None:
+        """Legend screen over the map area (R34)."""
+        self._screen.fill(HUD_BG)
+        pygame.draw.rect(self._screen, (36, 36, 30),
+                         pygame.Rect(0, 0, area_w, area_h), 1)
+        for i, (line, color) in enumerate(build_legend_entries()):
             if line:
                 self._screen.blit(self._font.render(line, True, color),
                                   (14, 10 + i * 16))

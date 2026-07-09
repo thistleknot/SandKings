@@ -110,6 +110,11 @@ Status: draft → implement → reconcile (see Reconciliation Log at bottom).
     exclusive — opening one closes the other.
   - When `E` is pressed, the viewer MUST export the full chronicle to
     `terrarium_saga.txt` (R30; SPEC_DYNASTIES.md D11).
+  - When `I` is pressed, the viewer MUST toggle look mode (R32); while
+    it is open, arrow keys move the cursor and `V`/ENTER select.
+  - When `F` is pressed with a target selected, the viewer MUST toggle
+    follow (R33).
+  - When `L` is pressed, the viewer MUST toggle the legend (R34).
   - When ESC is pressed or the window is closed, the viewer MUST quit.
 - **R8a** DF-style z-navigation: comma/period WITH Shift or Ctrl held —
   i.e. `<` = z+1 (up toward surface, matching DF's `<`) and `>` = z−1 —
@@ -231,6 +236,36 @@ this ledger is the canonical resolution.)
 - **R31** (Round 6, SPEC_SENTIENCE.md S5) Sentience surface: the
   manager `resonance: 0.NN across K soldiers` line for neural
   colonies with >= 2 live hidden states.
+- **R32 (look cursor)** `I` toggles look mode (closing manager/saga):
+  a gold-outlined keyboard cursor appears on the map (arrow keys move
+  it, clamped to the map; UP/DOWN move the cursor while look mode is
+  open — `<`/`>` keep z). A mouse click in the map area MUST set the
+  cursor to the clicked cell and select there (entering look mode if
+  needed). The look panel names the cursor cell's voxel, its owner,
+  and every inhabitant at that column (units, maws, beasts).
+- **R33 (inspect + follow)** With the cursor placed, `V` or ENTER
+  selects the column's inhabitants, repeated presses cycling through
+  them. The inspect panel (pure `build_inspect_entries(sim, target)`,
+  overlay box on the map, HUD stays live) MUST show, per target kind:
+  units — label + house, type, HP/max, attack (spear flagged until
+  weapon_expires), armored/torch/poisoned/retreating flags, carrying,
+  and the last decoded thought; maws — house label, HP, food, spawn
+  posture, and headline genome traits (aggression, patience, loyalty,
+  plasticity); beasts — species, HP, attack, provoked/fleeing.
+  `F` toggles FOLLOW of the selected target: each frame the viewer
+  re-centers the cursor on it, sets z_level to its z, and draws the
+  highlight; when the target dies or despawns the panel MUST say so
+  ("has fallen" / "is gone") and follow MUST disarm. Selections are
+  object references validated per frame (unit in its colony roster,
+  beast in sim.fauna, maw alive) — never stale indices.
+- **R34 (legend)** `L` toggles a legend screen (mutually exclusive
+  with manager/saga) built by pure `build_legend_entries()`: every
+  GLYPHS terrain row with its meaning, unit letters w/s/c + maw Omega,
+  the eight beast letters, the fire caret, and the color semantics
+  (colony colors, copper = armored, magenta = retreating, gold =
+  envoy, violet = beast). The legend MUST enumerate from the live
+  GLYPHS/BEAST_GLYPHS dicts so a new voxel or species cannot silently
+  miss the legend (asserted in tests).
 
 ## 4. Structural Spec
 

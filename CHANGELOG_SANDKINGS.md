@@ -1,5 +1,21 @@
 # Sand Kings Changelog
 
+## 2.11.0 - Look, Inspect, Follow & Legend (SPEC_LIVE_VIEW R32-R34)
+
+- Look cursor (I, or just click a cell): DF-style inspection - the
+  panel names the voxel, its owner, whether it burns, and everyone
+  standing in that column.
+- Inspect (V/ENTER cycles targets): full unit sheets - HP, attack
+  (spear flagged), armor/torch/poison/retreat flags, cargo, kills,
+  and the unit's current decoded thought. Maw sheets show house,
+  posture, and genome temperament; beasts show species and mood.
+- Follow (F): leash the camera to a unit - the cursor and z-level
+  track it every frame until it falls, DF follow-creature style.
+- Legend (L): every terrain glyph, unit letter, beast letter, and
+  color rule on one screen, enumerated from the live glyph tables so
+  new voxels/species can never silently miss it.
+
+
 ## 2.10.0 - The Sentience Arc (SPEC_SENTIENCE.md S1-S6)
 
 - Resonance (S1): soldiers of one colony within earshot blend GRU

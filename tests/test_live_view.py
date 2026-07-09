@@ -359,3 +359,89 @@ if __name__ == "__main__":
             fn()
             print(f"PASS {name}")
     print("all live view tests passed")
+
+
+# ---- R32-R34: look cursor, inspect + follow, legend ----
+
+def test_legend_covers_every_glyph_and_species():
+    from live_view import (BEAST_GLYPHS, GLYPHS, build_legend_entries)
+    from sandkings import VoxelType
+    joined = "\n".join(t for t, _c in build_legend_entries())
+    for value, glyph in GLYPHS.items():
+        if value == VoxelType.AIR.value:
+            continue
+        assert glyph in joined, f"glyph {glyph!r} missing from legend"
+    for species in BEAST_GLYPHS:
+        assert species in joined, f"{species} missing from legend"
+    assert "fire" in joined and "armored" in joined
+
+
+def test_column_inhabitants_orders_by_height_and_inspect_reads():
+    from live_view import (build_inspect_entries, column_inhabitants,
+                           target_alive)
+    from sandkings import Beast, SandKing, UnitType
+    sim = make_sim()
+    colony = sim.colonies[0]
+    low = SandKing(colony.colony_id, (5, 5, 1), UnitType.WORKER)
+    high = SandKing(colony.colony_id, (5, 5, 3), UnitType.SOLDIER)
+    colony.units += [low, high]
+    beast = Beast('spider', (5, 5, 2), 25, 8, 20, 2)
+    sim._fauna().append(beast)
+    targets = column_inhabitants(sim, 5, 5)
+    assert [t[0] for t in targets] == ['unit', 'beast', 'unit']
+    assert targets[0][1] is high, "highest z first"
+    text = "\n".join(t for t, _c in build_inspect_entries(sim, ('unit', high)))
+    assert "HP 20/20" in text and "House" in text and "thinks:" in text
+    text = "\n".join(t for t, _c in build_inspect_entries(sim, ('beast', beast)))
+    assert "SPIDER" in text and "bounty" in text
+    colony.remove_unit(high)
+    assert not target_alive(sim, ('unit', high))
+    text = "\n".join(t for t, _c in build_inspect_entries(sim, ('unit', high)))
+    assert "has fallen" in text
+
+
+def test_inspect_maw_shows_posture_and_traits():
+    from live_view import build_inspect_entries
+    sim = make_sim()
+    colony = sim.colonies[0]
+    text = "\n".join(t for t, _c in build_inspect_entries(sim, ('maw', colony)))
+    assert "MAW of House" in text and "posture" in text
+    assert "agg" in text and "pla" in text, "genome traits shown"
+
+
+def test_look_keys_cursor_select_follow():
+    import pygame
+    from sandkings import SandKing, UnitType
+    sim = make_sim()
+    colony = sim.colonies[0]
+    viewer = LiveViewer(sim, max_steps=1)
+    viewer._handle_event(make_keydown(pygame.K_i))
+    assert viewer.look_mode
+    start = viewer.cursor
+    viewer._handle_event(make_keydown(pygame.K_RIGHT))
+    viewer._handle_event(make_keydown(pygame.K_UP))
+    assert viewer.cursor == (start[0] + 1, max(0, start[1] - 1))
+    for _ in range(100):  # clamped at the map edge
+        viewer._handle_event(make_keydown(pygame.K_LEFT))
+    assert viewer.cursor[0] == 0
+    unit = SandKing(colony.colony_id, (0, viewer.cursor[1], 2), UnitType.WORKER)
+    colony.units.append(unit)
+    viewer._handle_event(make_keydown(pygame.K_v))
+    assert viewer.inspected == ('unit', unit)
+    viewer._handle_event(make_keydown(pygame.K_f))
+    assert viewer.follow
+    viewer._handle_event(make_keydown(pygame.K_RIGHT))
+    assert not viewer.follow, "steering the cursor breaks the leash"
+    viewer._handle_event(make_keydown(pygame.K_i))
+    assert not viewer.look_mode and viewer.inspected is None
+
+
+def test_legend_key_exclusive_with_manager():
+    import pygame
+    viewer = LiveViewer(make_sim(), max_steps=1)
+    viewer._handle_event(make_keydown(pygame.K_l))
+    assert viewer.legend_open
+    viewer._handle_event(make_keydown(pygame.K_m))
+    assert viewer.manager_open and not viewer.legend_open
+    viewer._handle_event(make_keydown(pygame.K_l))
+    assert viewer.legend_open and not viewer.manager_open
