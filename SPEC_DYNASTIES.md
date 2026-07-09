@@ -78,8 +78,45 @@ Same contract as every round: lazy accessors + getattr guards for old
 checkpoints; EnhancedSandKingsSimulation stays inert; chronicle sqlite
 lives beside the --persist checkpoint db; all new state pickles.
 
-## Status
+## Status / Reconciliation Log
 - Drafted 2026-07-08 immediately after Round 4 (commit 2b50ec9).
-- Next: validate D1–D7 against the spec skill, then implement in
-  order D1 -> D4 -> D3 -> D2 -> D5 -> D6 -> D7 (identity before
-  memory before drama; the saga screen needs chronicle rows to read).
+- 2026-07-08 (same day): D1–D7 IMPLEMENTED. Deltas, all deliberate:
+  - D1: names live in `chronicle.py` (syllable grammar); houses found
+    lazily via `sim._house_name()` so pre-dynasty checkpoints earn
+    names on first use. Respawn = CADET BRANCH of the genome parent
+    (same house, generation+1, roman-numeral label) - the respawn
+    already inherits a survivor's mutated genome, so the house follows
+    the blood. KIN AMENDMENT: same-house colonies are never hostile()
+    (single-gate change in politics.py) and never targeted (P5 filter).
+  - D2: epithets are weighted deed scores (betrayal 5 > machine 4 >
+    beast/fire/wall 3 > truce/tribute/harvest/delve/palisade 2 >
+    warlord 1) so one betrayal brands harder than two harvests;
+    judged at death, scoped to the reign via founded_step.
+  - D3: delivered as `sim.house_grudges` (victim_house, traitor_house)
+    -> step, set at betrayal, NEVER decaying, +0.3 target-score feud
+    bonus and a throttled "blood feud flares" event. The P12 trust
+    shadow multiplier was left untouched (simpler, same drama).
+  - D4: the chronicle is a plain pickled list on the sim (whole-sim
+    pickling already persists across --persist restarts; the spec's
+    sqlite table was unnecessary). Rows are house-substituted AT WRITE
+    TIME so history stays attributed after slots change hands, and
+    deduplicated within a season (war-declaration flapping is one
+    fact, not eleven rows). Salience prune at 900 -> ROW_CAP 800,
+    rows >= salience 7 never pruned.
+  - D5: H key toggles the saga screen (build_saga_entries: year/season
+    framing over saga_rows(min_salience=4)); HUD events and the
+    colony roster also speak in houses; manager header is
+    "== HOUSE Vex-Karn II, the Oath-Broken (Colony 2) ==".
+  - D6: pride/vengeance/legacy are colony-level DIRECT predicates on
+    the manager screen ("House X broods on vengeance"), not GRU
+    probes - they are colony facts, not hidden-state decodes; the
+    35-anchor probe lexicon is unchanged.
+  - D7: delivered as the D3 feud bonus. The spec'd leaderless last
+    stand conflicts with T5 (maw death = immediate corpse feast);
+    T5 wins - recorded as a rejected sub-feature.
+  - D8–D11 remain backlog (relics, oaths, epithet vocabulary, saga
+    export). D12 soak: PASSED - 5 harsh years, 23.8 sps, 423
+    chronicle rows, 3 epithets earned, a generation-2 cadet house,
+    saga readable (truces, tributes, coalitions, the ancient machine
+    passing between houses). All 9 test suites green incl. new
+    tests/test_dynasties.py (8 tests).

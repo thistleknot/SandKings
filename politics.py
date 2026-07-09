@@ -142,7 +142,11 @@ class Diplomacy:
 
 
 def hostile(sim, a: int, b: int) -> bool:
-    """The single combat gate (P9). All-hostile when no diplomacy exists."""
+    """The single combat gate (P9). All-hostile when no diplomacy exists.
+
+    D1 amendment: colonies of the same house are kin - never hostile.
+    Kinship outranks even grievance; a house does not war on itself.
+    """
     if a == b:
         return False
     if a < 0 or b < 0:
@@ -150,6 +154,11 @@ def hostile(sim, a: int, b: int) -> bool:
     diplomacy = getattr(sim, 'diplomacy', None)
     if diplomacy is None:
         return True
+    ca = next((c for c in sim.colonies if c.colony_id == a), None)
+    cb = next((c for c in sim.colonies if c.colony_id == b), None)
+    if (ca is not None and cb is not None and getattr(ca, 'house', '')
+            and getattr(ca, 'house', '') == getattr(cb, 'house', '')):
+        return False  # kin (D1)
     step = sim.step_count
     if diplomacy.truce_active(a, b, step):
         return False

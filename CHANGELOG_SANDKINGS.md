@@ -1,5 +1,26 @@
 # Sand Kings Changelog
 
+## 2.9.0 - Dynasties & Chronicle (SPEC_DYNASTIES.md D1-D7)
+
+- Houses: every maw belongs to a named dynasty ("House Vex-Karn").
+  Respawns are cadet branches of the genome parent's house
+  (generation numerals: Vex-Karn II). Kin never fight kin.
+- Epithets: a house is judged at the death of its maw - the reign's
+  weighted deeds earn "the Oath-Broken", "the Machine-Waker",
+  "the Farmer-King", "the Beast-Slayer", "the Burned"...
+- Blood feuds: betrayal is remembered between HOUSES, forever -
+  it biases war-target choice across generations and announces
+  "The blood feud between House X and House Y flares again!"
+- The Chronicle: every event is scored for salience and written to
+  a pruned, house-attributed historical record that survives
+  checkpoints. Low drama fades; deaths, betrayals, and machine
+  wakings are never forgotten.
+- The Saga screen (H key): the terrarium narrates its own history -
+  year by year, season by season, in the names of its houses.
+- HUD roster and manager speak in houses; the manager shows the
+  house's self-model: "House Vex-Karn broods on vengeance, pride."
+
+
 ## 2.8.0 - Timber, Bone & Flame (SPEC_TIMBER_AND_FLAME.md T41-T48)
 
 - Trees: palm clusters by the oasis, scrub in the wastes (WOOD voxel,

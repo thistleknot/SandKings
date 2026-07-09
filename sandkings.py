@@ -674,6 +674,9 @@ class Colony:
         self.farming = False  # 60/30 hysteresis gate on the farm branch (T18)
         self.ore = {'copper': 0, 'gold': 0}  # mined stores (T24/T25)
         self.ore_struck: Set[str] = set()    # first-strike events fired (T24)
+        self.house = ""        # dynasty name; founded lazily (D1)
+        self.generation = 1    # cadet-branch depth within the bloodline
+        self.founded_step = 0  # reign start - scopes epithet judgment (D2)
         
     def spawn_unit(self, unit_type: UnitType, step: int = 0):
         """Spawn new unit from Maw; copper armors, timber arms (T25/T44).
@@ -1111,6 +1114,8 @@ class SandKingsSimulation:
             genome.resilience = random.uniform(0.0, 0.3)  # Defense weaker
             
             colony = Colony(i, positions[i], genome)
+            from chronicle import make_house_name
+            colony.house = make_house_name()  # D1: the founding houses
             self.colonies.append(colony)
             
             # Mark starting position
@@ -1356,8 +1361,72 @@ class SandKingsSimulation:
         self._process_respawns()
 
     def _log_event(self, message: str):
-        """Append to the drama feed shown in the live HUD (SPEC T9)."""
+        """Append to the drama feed (SPEC T9) and the chronicle (D4).
+
+        Chronicle rows are house-substituted AT WRITE TIME so history
+        stays correctly attributed after the slot's house changes."""
         self.events.append((self.step_count, message))
+        from chronicle import prune, salience_of
+        rows = self._chronicle()
+        text = self._substitute_houses(message)
+        # dedup: a repeated line within a season is one historical fact
+        for pstep, ptext, _ps in rows[-30:]:
+            if ptext == text and self.step_count - pstep < SEASON_LENGTH:
+                return
+        rows.append((self.step_count, text, salience_of(message)))
+        if len(rows) > 900:
+            self.chronicle = prune(rows)
+
+    def _substitute_houses(self, text: str) -> str:
+        """D1: 'Colony 2' reads as 'House Vex-Karn II' wherever it appears."""
+        import re
+        from chronicle import house_label
+
+        def repl(match):
+            colony = self._colony_by_id(int(match.group(1)))
+            if colony is None:
+                return match.group(0)
+            return "House " + house_label(self._house_name(colony),
+                                          getattr(colony, 'generation', 1))
+        return re.sub(r"Colony (\d+)", repl, text)
+
+    # ---- Dynasties & Chronicle helpers (SPEC_DYNASTIES.md) ----
+
+    def _chronicle(self) -> List[Tuple[int, str, int]]:
+        """Append-only saga rows (step, text, salience) (D4); guarded."""
+        if not hasattr(self, 'chronicle'):
+            self.chronicle = []
+        return self.chronicle
+
+    def _house_epithets(self) -> Dict[str, str]:
+        """Earned epithets by house name (D2); checkpoint-guarded."""
+        if not hasattr(self, 'house_epithets'):
+            self.house_epithets = {}
+        return self.house_epithets
+
+    def _house_grudges(self) -> Dict[Tuple[str, str], int]:
+        """(victim_house, traitor_house) -> step of betrayal (D3).
+        Never decays per-step: blood remembers what trust forgets."""
+        if not hasattr(self, 'house_grudges'):
+            self.house_grudges = {}
+        return self.house_grudges
+
+    def _house_name(self, colony: Colony) -> str:
+        """Raw house name (D1); lazily founded so colonies from
+        pre-dynasty checkpoints earn names on first use."""
+        from chronicle import make_house_name
+        if not getattr(colony, 'house', ''):
+            colony.house = make_house_name()
+            colony.generation = 1
+            colony.founded_step = self.step_count
+        return colony.house
+
+    def _house(self, colony: Colony) -> str:
+        """Display label: 'Vex-Karn II, the Oath-Broken' (D1/D2)."""
+        from chronicle import house_label
+        name = self._house_name(colony)
+        return house_label(name, getattr(colony, 'generation', 1),
+                           self._house_epithets().get(name, ""))
 
     # ---- Seasons & Stone helpers (SPEC_SEASONS_AND_STONE.md) ----
 
@@ -2159,22 +2228,37 @@ class SandKingsSimulation:
             hegemon = self._colony_by_id(d.hegemon)
             if hegemon is not None and hegemon.is_alive():
                 return d.hegemon
+        my_house = self._house_name(colony)
         eligible = [c for c in self.colonies
                     if c.colony_id != cid and c.is_alive()
                     and not d.truce_active(cid, c.colony_id, self.step_count)
                     and not d.ally(cid, c.colony_id)
-                    and not d.co_belligerents(cid, c.colony_id)]
+                    and not d.co_belligerents(cid, c.colony_id)
+                    and self._house_name(c) != my_house]  # kin is kin (D1)
         if not eligible:
             return None
         max_wealth = max(c.maw.food_stored for c in eligible) or 1.0
         max_power = max(power(c) for c in eligible) or 1.0
+        grudges = self._house_grudges()
 
         def score(c):
             hatred = max(0.0, -d.trust(cid, c.colony_id)) / 100.0
-            return (0.45 * hatred
+            # D3: vengeance directs the spear across generations
+            feud = 0.3 if (my_house, self._house_name(c)) in grudges else 0.0
+            return (0.45 * hatred + feud
                     + 0.35 * c.maw.food_stored / max_wealth
                     - 0.20 * power(c) / max_power)
-        return max(eligible, key=score).colony_id
+        target = max(eligible, key=score).colony_id
+        target_colony = self._colony_by_id(target)
+        if (target_colony is not None
+                and (my_house, self._house_name(target_colony)) in grudges):
+            key = frozenset((my_house, self._house_name(target_colony)))
+            if getattr(self, '_feud_logged', None) != key:
+                self._feud_logged = key
+                self._log_event(f"The blood feud between House {my_house}"
+                                f" and House {self._house_name(target_colony)}"
+                                " flares again!")
+        return target
 
     def _dispatch_gift(self, colony: Colony, recipient_id: int,
                        kind: str = 'food') -> bool:
@@ -2264,6 +2348,11 @@ class SandKingsSimulation:
         d.war_target[cid] = target_id
         colony.at_war = True
         d.last_betrayal[cid] = self.step_count
+        # D3: the victim's HOUSE remembers, beyond death and respawn
+        target_colony = self._colony_by_id(target_id)
+        if target_colony is not None:
+            self._house_grudges()[(self._house_name(target_colony),
+                                   self._house_name(colony))] = self.step_count
         self._log_event(f"Colony {cid} betrays Colony {target_id}!")
         monitor = self._monitor(cid)
         monitor.log_decision(self.step_count, f"Colony {cid}",
@@ -3001,6 +3090,14 @@ class SandKingsSimulation:
                                   strongest.colony_id).adjust(VICTORS_QUARREL)
             d.clear_slot(colony.colony_id, self.step_count)
 
+            # D2: judge the reign - the house earns its epithet in death
+            from chronicle import derive_epithet
+            house = self._house_name(colony)
+            epithet = derive_epithet(self._chronicle(), house,
+                                     getattr(colony, 'founded_step', 0))
+            self._house_epithets()[house] = epithet
+            self._log_event(f"House {house} will be remembered as {epithet}")
+
             self.pending_respawns[colony.colony_id] = self.step_count + RESPAWN_DELAY
             self._log_event(f"Colony {colony.colony_id} has fallen!")
             print(f"[x] Colony {colony.colony_id} has fallen! A new colony arrives in {RESPAWN_DELAY} steps")
@@ -3059,7 +3156,16 @@ class SandKingsSimulation:
         index = next(i for i, c in enumerate(self.colonies) if c.colony_id == colony_id)
         colony = Colony(colony_id, pos, genome)
         colony.maw.food_stored = RESPAWN_FOOD
+        # D1: the arrival is the parent lineage's cadet branch - same
+        # house, next generation. A fresh genome founds a new house.
+        if survivors:
+            colony.house = self._house_name(parent)
+            colony.generation = getattr(parent, 'generation', 1) + 1
+        colony.founded_step = self.step_count
         self.colonies[index] = colony
+        self._log_event(f"House {self._house_name(colony)} rises"
+                        f" (generation {getattr(colony, 'generation', 1)})"
+                        f" as Colony {colony_id}")
         if hasattr(self, 'monitors'):  # fresh colony, fresh mind (M6)
             self.monitors.pop(colony_id, None)
         if hasattr(self, 'learners'):  # and a fresh policy (T26)

@@ -347,7 +347,13 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
                 marks += " T:" + ",".join(truced)
             if allies:
                 marks += " A:" + ",".join(allies)
-        entries.append((f"Colony {colony.colony_id}{war}{marks}", color))
+        if getattr(colony, 'house', ''):
+            from chronicle import house_label
+            name = house_label(colony.house, getattr(colony, 'generation', 1))
+            entries.append((f"{colony.colony_id}:{name}{war}{marks}"[:38],
+                            color))
+        else:
+            entries.append((f"Colony {colony.colony_id}{war}{marks}", color))
         entries.append((f"  W:{castes[UnitType.WORKER]} S:{castes[UnitType.SOLDIER]}"
                         f" Sc:{castes[UnitType.SCOUT]} retreat:{retreating}", color))
         maw_line = f"  food:{colony.maw.food_stored:.0f} maw:{colony.maw.health:.0f}"
@@ -358,12 +364,41 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
     events = list(getattr(sim, 'events', []))[-EVENT_LINES:]
     if events:
         entries.append(("", HUD_FG))
+        sub = getattr(sim, '_substitute_houses', None)
         for step, message in events:
-            entries.append((f"[{step}] {message}"[:38], event_tint(message)))
+            shown = sub(message) if callable(sub) else message
+            entries.append((f"[{step}] {shown}"[:38], event_tint(message)))
     for help_line in ("", "SPACE pause  S step", "+/- speed  </> or UP/DN z",
                       "TAB view  P pheromones  R style",
-                      "M manager  G capture  ESC quit"):
+                      "M manager  H saga  G capture  ESC quit"):
         entries.append((help_line, (140, 140, 150)))
+    return entries
+
+
+def build_saga_entries(sim: SandKingsSimulation
+                       ) -> List[Tuple[str, Tuple[int, int, int]]]:
+    """The saga screen (D5): the chronicle rendered as readable history.
+
+    Rows are already house-substituted at write time; this just frames
+    them by year and season. Pure: no pygame."""
+    from chronicle import saga_rows
+    from sandkings import SEASONS, SEASON_LENGTH, YEAR_LENGTH
+    entries: List[Tuple[str, Tuple[int, int, int]]] = [
+        ("== THE SAGA OF THE TERRARIUM ==", (230, 210, 140)), ("", HUD_FG)]
+    rows = saga_rows(getattr(sim, 'chronicle', None) or [])
+    if not rows:
+        entries.append(("The chronicle is yet unwritten.", (140, 140, 150)))
+    last_year = -1
+    for step, text, salience in rows:
+        year = step // YEAR_LENGTH
+        if year != last_year:
+            last_year = year
+            entries.append((f"-- In the year {year + 1} --", (150, 150, 160)))
+        season = SEASONS[(step // SEASON_LENGTH) % 4]
+        color = event_tint(text) if salience >= 7 else (185, 185, 190)
+        entries.append((f" {season:>6}: {text}"[:76], color))
+    entries.append(("", HUD_FG))
+    entries.append(("H close   M manager", (140, 140, 150)))
     return entries
 
 
@@ -388,13 +423,33 @@ def build_manager_entries(sim: SandKingsSimulation,
         castes = {t: 0 for t in UnitType}
         for unit in colony.units:
             castes[unit.unit_type] += 1
-        entries.append((f"== MANAGER: Colony {colony_id}{war} ==", color))
+        house = (sim._house(colony) if hasattr(sim, '_house')
+                 else f"Colony {colony_id}")
+        entries.append((f"== HOUSE {house} (Colony {colony_id}){war} ==",
+                        color))
         entries.append((f"food:{colony.maw.food_stored:.0f}"
                         f"  maw:{colony.maw.health:.0f}"
                         f"  W:{castes[UnitType.WORKER]}"
                         f" S:{castes[UnitType.SOLDIER]}"
                         f" Sc:{castes[UnitType.SCOUT]}", color))
         entries.append((f"mood: {monitor.colony_thought(sim, colony)}", (200, 190, 120)))
+        # D6: the house's self-model - pride, vengeance, legacy
+        moods = []
+        my_house = getattr(colony, 'house', '')
+        grudges = getattr(sim, 'house_grudges', None) or {}
+        if any(victim == my_house for (victim, _t) in grudges):
+            moods.append("vengeance")
+        holder = (sim.oasis_holder()
+                  if callable(getattr(sim, 'oasis_holder', None)) else None)
+        diplo = getattr(sim, 'diplomacy', None)
+        if colony_id in (holder, getattr(diplo, 'hegemon', None)):
+            moods.append("pride")
+        if (getattr(colony, 'generation', 1) >= 3
+                and colony.maw.health < MAW_MAX_HEALTH * 0.5):
+            moods.append("legacy")
+        if moods and my_house:
+            entries.append((f"House {my_house} broods on "
+                            + ", ".join(moods), (200, 150, 220)))
         if hasattr(sim, '_farm_counts'):  # Round-1 economy line (R24)
             plots, ripe = sim._farm_counts(colony)
             ore = getattr(colony, 'ore', {})
@@ -593,6 +648,7 @@ class LiveViewer:
         self.render_style = RenderStyle.GLYPH  # dazzle by default (spec R18)
         self.manager_open = False   # SPEC_HIVE_MONITOR M5
         self.manager_colony = 0
+        self.saga_open = False      # SPEC_DYNASTIES D5
         self.captured_frames: List[np.ndarray] = []
         self.running = False
         self._screen = None
@@ -682,6 +738,10 @@ class LiveViewer:
                                      else RenderStyle.GLYPH)
             elif key == pygame.K_m:
                 self.manager_open = not self.manager_open
+                self.saga_open = False
+            elif key == pygame.K_h:
+                self.saga_open = not self.saga_open
+                self.manager_open = False
             elif self.manager_open and key in (pygame.K_LEFT, pygame.K_RIGHT):
                 ids = [c.colony_id for c in self.sim.colonies]
                 if ids:
@@ -720,6 +780,9 @@ class LiveViewer:
 
         if self.manager_open:
             self._render_manager(w * cell, max(h * cell, 400))
+            return
+        if self.saga_open:
+            self._render_saga(w * cell, max(h * cell, 400))
             return
 
         glyph_mode = (self.render_style == RenderStyle.GLYPH
@@ -861,6 +924,28 @@ class LiveViewer:
                 self._screen.blit(self._font.render(line, True, color),
                                   (14, 10 + i * 17))
 
+        hud_x = area_w + 12
+        for i, (line, color) in enumerate(build_hud_entries(
+                self.sim, self.pacer.steps_per_second,
+                self.paused, self.z_level, self.capturing,
+                self.view_mode, PHEROMONE_OVERLAYS[self.overlay_index])):
+            if line:
+                self._screen.blit(self._font.render(line, True, color),
+                                  (hud_x, 10 + i * 18))
+        pygame.display.flip()
+
+    def _render_saga(self, area_w: int, area_h: int) -> None:
+        """Saga screen over the map area (SPEC_DYNASTIES D5)."""
+        self._screen.fill(HUD_BG)
+        pygame.draw.rect(self._screen, (40, 36, 26),
+                         pygame.Rect(0, 0, area_w, area_h), 1)
+        entries = build_saga_entries(self.sim)
+        max_rows = max(4, (area_h - 20) // 16)
+        head, tail = entries[:3], entries[3:]
+        for i, (line, color) in enumerate(head + tail[-(max_rows - 3):]):
+            if line:
+                self._screen.blit(self._font.render(line, True, color),
+                                  (14, 10 + i * 16))
         hud_x = area_w + 12
         for i, (line, color) in enumerate(build_hud_entries(
                 self.sim, self.pacer.steps_per_second,

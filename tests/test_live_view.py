@@ -139,8 +139,9 @@ def test_hud_lines_content():
     assert f"Step {sim.step_count}" in joined
     assert "PAUSED" in joined
     assert "TOPDOWN" in joined, "HUD must name the active view mode (R14)"
-    for colony in sim.colonies:
-        assert f"Colony {colony.colony_id}" in joined
+    for colony in sim.colonies:  # D1: roster leads with slot id + house
+        assert (f"{colony.colony_id}:{colony.house}" in joined
+                or f"Colony {colony.colony_id}" in joined)
     assert "food:" in joined and "maw:" in joined and "retreat:" in joined
 
 
@@ -277,11 +278,16 @@ def test_hud_entries_colors_and_hp_bar():
                         (2, "Colony 1 besieges Colony 0!")], maxlen=50)
     entries = build_hud_entries(sim, sps=5.0, paused=False, z_level=2, capturing=False)
     by_text = {text: color for text, color in entries}
-    assert by_text[f"Colony {wounded.colony_id}"] == hud_text_color(wounded.color)
+    # D1: the roster line leads with the slot id, speaks in houses
+    roster = next(t for t in by_text
+                  if t.startswith(f"{wounded.colony_id}:")
+                  or t == f"Colony {wounded.colony_id}")
+    assert by_text[roster] == hud_text_color(wounded.color)
     maw_line = next(t for t in by_text if t.startswith("  food:") and "[" in t)
     assert "=" in maw_line and "." in maw_line, "damaged maw shows text hp bar"
     assert by_text["[1] Keeper scatters 40 food"] == event_tint("Keeper")
-    assert by_text["[2] Colony 1 besieges Colony 0!"] == event_tint("besieges")
+    siege = next(t for t in by_text if t.startswith("[2] ") and "besieges" in t)
+    assert by_text[siege] == event_tint("besieges"), "house-substituted tint"
 
 
 def test_r_key_toggles_render_style():
@@ -314,7 +320,7 @@ def test_manager_entries_content():
     cid = sim.colonies[0].colony_id
     entries = build_manager_entries(sim, cid)
     joined = "\n".join(t for t, _ in entries)
-    assert f"MANAGER: Colony {cid}" in joined
+    assert f"HOUSE {sim._house(sim.colonies[0])} (Colony {cid})" in joined
     assert "CONCEPTS" in joined and "TOP SOLDIERS" in joined and "DECISIONS" in joined
     from hive_mind_monitor import ANCHOR_SEEDS
     for seed in ANCHOR_SEEDS:
