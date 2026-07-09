@@ -82,6 +82,11 @@ interfaces — see N9, N10, and section 6.)
   inputs as before.
   *Rationale:* implements the "Memory: temporal patterns" future-work item
   (GRU over LSTM: one gate fewer, same temporal reach at this scale).
+  *S1 amendment (SPEC_SENTIENCE): between forward passes, resonance may
+  blend a soldier's hidden state toward in-range squadmates' states
+  (vectorized `(1-a)H + a(W @ H)`, detached). The hidden state remains
+  runtime-only and never a Parameter, so probes (N2), folding (N9), and
+  mating compose unchanged.*
 
 ## 4. Behavioral Spec — `HiveMindBrain.forward`
 

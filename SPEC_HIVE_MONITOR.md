@@ -139,7 +139,20 @@ with no ground truth).
   `sim.diplomacy` via guarded helpers. `build_context`'s rival scans
   (`enemy_dist`/`enemy_maw_cheb`) are hostility-filtered per P9; the
   `jealousy` richest-rival read deliberately is NOT (envying allies feeds
-  betrayal). Vocabulary rebuilt (31 seeds).
+  betrayal). Vocabulary rebuilt (31 seeds at this round; see M13 for
+  the canonical count).
+- **M12 (Round 3 anchors, owned by SPEC_MACHINE_AGE.md)** The lexicon
+  grows 31 → 33: `machine` (within Chebyshev 3 of an own device OR
+  carrying salvage), `radiation` (field ≥ 0.5 at the unit's column).
+- **M13 (Round 4 anchors, owned by SPEC_TIMBER_AND_FLAME.md T46)** The
+  lexicon grows 33 → 35: `fire` (a burning cell within Chebyshev 3),
+  `monster` (a beast within Manhattan 6). **Canonical count: 35 seeds**,
+  asserted by tests/test_hive_monitor.py.
+- **Later manager-screen surfaces owned elsewhere:** the D6 colony
+  moods line (pride/vengeance/legacy — SPEC_DYNASTIES.md, direct
+  colony-level predicates, not probes) and the S5 resonance line
+  (SPEC_SENTIENCE.md) render on the M5 manager screen but are specced
+  in their owning rounds.
 - **M9 (vocabulary builder)** `thought_vocabulary.py` (build-time, run
   manually, stdlib + numpy only — no gensim) MUST: download the GloVe
   wiki-gigaword-50 vectors (gensim-data GitHub release asset, ~66MB, cached

@@ -81,6 +81,10 @@ capability, not intent; victors quarrel); Ostrom common-pool cultivation
   `Colony {a} declares war on Colony {b}!` (replaces the T10 text; the
   "war" tint substring still matches). Cross-map sieges (T10) apply ONLY
   to the target (and the hegemon under coalition).
+  *D1/D3 amendment (SPEC_DYNASTIES): same-house kin are excluded from
+  eligibility, and an outstanding house grudge adds +0.3 to the target
+  score (the blood feud directs the spear across generations; a
+  throttled "blood feud flares" event fires on selection).*
 - **P6 (betrayal)** The only attack path under a truce. Gates (all):
   active truce; aggression > 0.75 and loyalty < 0.35; jealousy (target
   food > 2× mine — the EXISTING anchor predicate); my power > 1.5×
@@ -103,6 +107,8 @@ capability, not intent; victors quarrel); Ostrom common-pool cultivation
 - **P9 (combat gating)** One pure `hostile(sim, a, b)`: False for self,
   active truce, latched allies, or co-belligerents; True otherwise —
   and True universally when the sim has no diplomacy (evolution sims).
+  *D1 amendment (SPEC_DYNASTIES): same-house colonies are kin —
+  hostile() returns False for them before any trust logic.*
   Gated sites (ALL SEVEN): `_resolve_conflicts` pair loop;
   `_apply_maw_siege_damage`; soldier rule-based enemy/maw scans; scout
   alarm (T11); maw-migration threat scan (T15); monitor `build_context`
@@ -128,6 +134,9 @@ capability, not intent; victors quarrel); Ostrom common-pool cultivation
   successor) = `clamp(0.25 · old, −15, +15)` (folk memory of the banner);
   truces, war targets, and grudges involving the slot are cleared at the
   T5 death cascade.
+  *D3 note (SPEC_DYNASTIES): house-level grudges (`sim.house_grudges`,
+  keyed by house names) never decay and survive respawn; the 0.25x
+  trust shadow above is unchanged.*
 - **P13 (surfacing)** Event catalog per the texts above + crop raid
   `Colony {a} raids Colony {b}'s fields!`. EVENT_TINTS: "betrays" pink-red,
   "truce" green, "tribute"/"envoy" gold, "coalition" blue, "raids"
@@ -141,7 +150,7 @@ capability, not intent; victors quarrel); Ostrom common-pool cultivation
   betrayed (my colony betrayed within 300 steps), gratitude (gift
   received within 300 steps), dread (a hegemon exists and it is not us).
   Colony-level context bools from `sim._diplomacy()`; probes setdefault;
-  vocabulary rebuild (31 seeds).
+  vocabulary rebuild (31 seeds at this round; 35 as of M13).
 - **P15 (compatibility)** Old checkpoints: `_diplomacy()` lazy-creates
   neutral state; `war_target`/`at_war` read via guards in view code.
   Evolution sims: no diplomacy phase (fitness stays pure combat);

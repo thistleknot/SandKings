@@ -129,6 +129,11 @@ the underground should hold DF-style discoveries.
   in range (guard posture); FORAGE → neutral. Q-tables pickle with the
   sim; the manager screen MUST show the current posture and the learned
   best posture per current state.
+  *S3/S4 amendment (SPEC_SENTIENCE): the effective learn rate is
+  `LEARN_RATE * (0.5 + genome.plasticity)` and the exploration floor
+  `EPSILON_FLOOR * (1.5 - plasticity)` (meta-learning); a replay memory
+  (REPLAY_CAP 40) consolidates via offline TD updates during Chill
+  dreams.*
 - **T27 (acceptance)** The §5 unit tests plus the 3-year harsh soak
   (4800 steps, `--harsh`): population never 0 and every slot
   alive-or-pending; ≥ 1 sowing by step 800 and ≥ 1 harvest event by 1600;
@@ -188,4 +193,10 @@ Invariant: every key of crops maps to a CROP voxel (checked by purge-first)
 
 ## 6. Reconciliation Log
 
-- (fill in after implementation)
+- Shipped in 2.5.0 and verified by tests/test_seasons.py + the 3-year
+  harsh soak (first sow @26, first harvest @180, copper strike year 1).
+  Balance note from the soak: standing fields are rare (eaten/razed/
+  frosted quickly) while populations pin at cap — farming works as
+  pressure relief, not as visible agriculture; accepted drama.
+- 2026-07-08: T26 amended by SPEC_SENTIENCE S3 (plasticity-scaled
+  learning) and S4 (Chill dream replay) — see the T26 note above.

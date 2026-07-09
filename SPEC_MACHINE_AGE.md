@@ -2,7 +2,7 @@
 
 STATUS: **DRAFT — Round 3, implements after SPEC_POLITICS.** Owns shared
 T-numbers **T28–T40**. Governs: `machines.py` (new), wreck terrain stage,
-step phase 3f, worker AI v3, viewer R25–R27, anchor M11 (`machine`).
+step phase 3f, worker AI v3, viewer R28 (see SPEC_LIVE_VIEW R25-R31 ledger), anchors M12 (`machine`, `radiation`; renumbered from a drafted "M11" that collided with the politics anchors).
 User-approved additions beyond the base design: **T39 LIBRARY CARTRIDGES**
 and **T40 RADIATION** (see end).
 
@@ -116,7 +116,7 @@ line numbers ×10, last-tick register footer, SENSE values as inline
 comments, last honored ACT highlighted, tinkerer line
 (`U=+0.41 (ema +0.22) · reviews 17 · last: kept`). EVENT_TINTS: wreck/
 machine/controller/salvage/sputters/gate-slams → steel (150,200,220).
-Anchor M11: `machine` — within Chebyshev 3 of an own device OR carrying
+Anchor M12: `machine` — within Chebyshev 3 of an own device OR carrying
 salvage (context: device_3 count). `spark` rejected: no measurable ground
 truth. Vocabulary regen for the seed (fallback covers the gap).
 
@@ -171,7 +171,7 @@ trap (RAD+VALVE), hyperevolution lineage (reactor-adjacent maw).
 ## Cross-amendments on implementation
 T9 event catalog += machine rows; T18 → worker AI v3; T23 += wreck stage;
 T24 += SALVAGE mask; T25 += salvage spill + artifact drop; T26 note;
-R25–R27; M11.
+R28; M12.
 
 ## Reconciliation Log
 - 2026-07-08 — Implemented T28–T40 with deviations, intent-preserving:

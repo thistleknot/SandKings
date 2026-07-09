@@ -411,7 +411,8 @@ def build_manager_entries(sim: SandKingsSimulation,
                           colony_id: int) -> List[Tuple[str, Tuple[int, int, int]]]:
     """Manager screen content as (text, color) pairs (SPEC_HIVE_MONITOR M5).
 
-    Colony header + mood, the 23-anchor concept table (probe accuracy and
+    Colony header + mood, the 35-anchor concept table (SPEC_HIVE_MONITOR
+    M1-M13; probe accuracy and
     live active counts), top soldiers with individual stats and thoughts,
     and the decision log. Pure: no pygame."""
     colony = next((c for c in sim.colonies if c.colony_id == colony_id), None)

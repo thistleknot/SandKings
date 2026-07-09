@@ -54,7 +54,7 @@ Lin 1992/DQN lineage). Once per year the chronicle notes "The maws
 dream through the long frost" (salience 3). Dreaming colonies enter
 spring with consolidated Q-tables at zero food cost.
 
-## S5 — Surfacing
+## S5 — Surfacing (viewer surface R31, see SPEC_LIVE_VIEW ledger)
 - Manager (neural colonies): "resonance: 0.NN across K soldiers" —
   mean pairwise cosine similarity of live hidden states; the number
   literally reports how much the hive is of one mind.

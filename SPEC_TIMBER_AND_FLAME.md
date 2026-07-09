@@ -3,7 +3,7 @@
 Layer: **Requirements** + **Behavioral** (fire spread). Owns shared
 T-numbers **T41–T47**. Governs: trees, bone/wood stores, palisade
 fortifications, crafted weapons with organic decay, and fire in
-`sandkings.py`; viewer surface R28; anchors M12. Status: draft →
+`sandkings.py`; viewer surface R29 (SPEC_LIVE_VIEW R25-R31 ledger); anchors M13. Status: draft →
 implement → reconcile (log at bottom).
 
 ## 1. Intent (user's words)
@@ -21,7 +21,8 @@ vs dear-and-durable is the round's economic sentence.
 - Voxels: `WOOD = 14` (palm/scrub trunk; solid, not tunnelable,
   FLAMMABLE), `WOOD_WALL = 15` (palisade; solid, not tunnelable,
   flammable, ROTS). Both added to all five rendering/spec surfaces.
-- `TREE_CLUSTERS = 5` at generation: 3 in the oasis ring (r ∈ [4, 9] of
+- `TREE_CLUSTERS = 5` (inline at the generation site; not a named
+  code constant) at generation: 3 in the oasis ring (r ∈ [4, 9] of
   center), 2 scattered scrub; each 2–4 trunks on the surface.
 - `TREE_REGROWTH_P = 0.02` — per Flood-season feeding tick, each living
   WOOD voxel may sprout one new trunk on adjacent surface sand (world
@@ -31,12 +32,13 @@ vs dear-and-durable is the round's economic sentence.
 - Organic store rot: every `ROT_INTERVAL = 100` steps, `colony.wood` and
   `colony.bone` each lose 1 (floor 0). Metals (`colony.ore`) never rot.
 - `PALISADE_RING = 2` (Chebyshev ring radius around the maw),
-  `PALISADE_COST = 1` wood per WOOD_WALL voxel, `WALL_ROT = 800` steps
+  `PALISADE_COST = 1` wood per WOOD_WALL voxel (inline at site), `WALL_ROT = 800` steps
   (2 seasons) tracked in a sparse registry `sim.rot: pos -> expiry`.
 - Weapons (consumed at soldier spawn, copper-armor pattern):
-  `SPEAR_COST = (1 wood, 1 bone)` → `SPEAR_ATTACK = 4` bonus;
+  `SPEAR_COST = (1 wood, 1 bone)` (inline in Colony.spawn_unit) →
+  `SPEAR_ATTACK = 4` bonus;
   `SPEAR_LIFE = 400` steps, then it splinters (decision-log entry,
-  attack bonus removed). `TORCH_COST = 1 wood` → at-war soldiers carry a
+  attack bonus removed). `TORCH_COST = 1 wood` (inline in Colony.spawn_unit) → at-war soldiers carry a
   torch enabling ignition (T45). Copper armor remains permanent — the
   documented contrast.
 - Fire: registry `sim.fires: pos -> burn_ticks`; `FIRE_TICK = 5` (rides
@@ -101,8 +103,9 @@ vs dear-and-durable is the round's economic sentence.
   WOOD_WALL `|` (139,105,20); burning cells render `^` in flame orange
   (255,120,0) OVERRIDING the voxel glyph while in `sim.fires` (overlay,
   not a voxel). EVENT_TINTS: "fells"/"palisades" wood-brown, "torch"/
-  "Wildfire" flame orange. New anchor M12: `fire` — a burning cell
-  within Chebyshev 3 of the unit (34 seeds; vocabulary rebuild).
+  "Wildfire" flame orange. New anchors M13: `fire` — a burning cell
+  within Chebyshev 3 of the unit — and `monster` — a beast within
+  Manhattan 6 (35 seeds; vocabulary rebuild).
   Armed soldiers render their letter with a `'` prime? NO — keep glyphs
   clean; spears show in the manager roster (`spear:120` steps left).
 - **T47 (acceptance)** Tests: tree gen counts + Flood regrowth cap;
@@ -121,14 +124,15 @@ vs dear-and-durable is the round's economic sentence.
   `sim.fauna: List[SandKing]` with `colony_id = -99` and a `species`
   attribute; ALWAYS hostile to every colony (diplomacy never applies);
   soldier/scout scans and combat include them; kills leave a corpse
-  bounty. Spawn roll every `MARAUDER_INTERVAL = 700` steps (p = 0.5,
+  bounty. Spawn roll every `MARAUDER_INTERVAL = 700` steps
+  (p = `FAUNA_SPAWN_P` 0.3, `FAUNA_SPAWN_P_DARK` 0.6 in Dust/Chill,
   never while ≥ 6 alive), species weighted:
 
   | Species | Glyph | HP | ATK | Pack | Spawns | Hunts | Bounty | Special |
   |---|---|---|---|---|---|---|---|---|
-  | spider (0.30) | `x` violet | 25 | 8 | 2–3 | a CAVERN pocket | units ≤ 20 | 2 | lays a WEB voxel at its trail every 8 steps |
-  | rabbit (0.25) | `r` dun | 60 | 6 | 1–2 | surface edge | nothing (wanders; fights back) | 6 | dangerous megafauna prey — the mammoth hunt |
-  | squirrel (0.20) | `q` chestnut | 30 | 3 | 1–2 | a WOOD voxel (tree-born) | nothing — POACHES: eats nearby FOOD/CROP_RIPE | 4 | never strikes first; SLIPS AWAY (2 moves/step flee) unless ≥ 2 units are adjacent — coordination pins it. `A squirrel raids Colony {id}'s fields` |
+  | spider (0.20) | `x` violet | 25 | 8 | 2–3 | a CAVERN pocket | units ≤ 20 | 2 | lays a WEB voxel at its trail every 8 steps |
+  | rabbit (0.18) | `r` dun | 60 | 6 | 1–2 | surface edge | nothing (wanders; fights back) | 6 | dangerous megafauna prey — the mammoth hunt |
+  | squirrel (0.15) | `q` chestnut | 30 | 3 | 1–2 | a WOOD voxel (tree-born) | nothing — POACHES: eats nearby FOOD/CROP_RIPE | 4 | never strikes first; SLIPS AWAY (2 moves/step flee) unless ≥ 2 units are adjacent — coordination pins it. `A squirrel raids Colony {id}'s fields` |
   | bird (0.15) | `v` sky-grey | 20 | 12 | 1 | anywhere aloft | SURFACE units ≤ 40, preferring the target with fewest allies within 4 (picks off stragglers) | 2 | flies: 3 moves/step through AIR; flees for good after taking any hit. `A shadow wheels overhead!` |
   | scorpion (0.10) | `c`? no — `t` amber | 22 | 6 | 1–2 | surface/cavern | units ≤ 15 | 2 | POISON sting: victims take 1 HP/step for 20 steps (`poisoned_until`) |
   | snake (0.06) | `S` olive | 80 | 18 | 1 | beneath (substrate) | units ≤ 25 | 5 | swims through SAND (the only burrowing fauna): `Something long moves beneath the sand...` |
@@ -201,7 +205,7 @@ Invariant: every fires key is a FLAMMABLE voxel (purge-first like crops)
   - Monitor integration: beasts deposit DANGER pheromone for every
     colony each tick (feeds overlays + flee behavior) and a new
     "monster" anchor (beast within 6) joins "fire" (burning cell
-    within Chebyshev 3) - M12 is TWO anchors, lexicon now 35 seeds.
+    within Chebyshev 3) - M13 is TWO anchors, lexicon now 35 seeds.
     GloVe rebuild: fire -> "bombs raid burning blast explosion";
     monster -> "snake robot horror dragon ghost" (kept: thematic).
   - Fire ignition sources shipped: thrown torches (wartime soldiers,

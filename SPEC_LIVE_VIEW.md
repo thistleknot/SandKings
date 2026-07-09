@@ -105,6 +105,11 @@ Status: draft → implement → reconcile (see Reconciliation Log at bottom).
   - When `M` is pressed, the viewer MUST toggle the manager screen; while
     it is open, LEFT/RIGHT MUST cycle the inspected colony (wrapping).
     Content contract: SPEC_HIVE_MONITOR.md M5.
+  - When `H` is pressed, the viewer MUST toggle the saga screen (R30;
+    content contract SPEC_DYNASTIES.md D5). M and H are mutually
+    exclusive — opening one closes the other.
+  - When `E` is pressed, the viewer MUST export the full chronicle to
+    `terrarium_saga.txt` (R30; SPEC_DYNASTIES.md D11).
   - When ESC is pressed or the window is closed, the viewer MUST quit.
 - **R8a** DF-style z-navigation: comma/period WITH Shift or Ctrl held —
   i.e. `<` = z+1 (up toward surface, matching DF's `<`) and `>` = z−1 —
@@ -199,6 +204,33 @@ Status: draft → implement → reconcile (see Reconciliation Log at bottom).
   learner posture (current + learned-best for the current state, T26).
   EVENT_TINTS additions: "season begins", "strikes", "razes", "harvest",
   "frost", "oasis".
+
+### Rounds 2-6 amendments — the R25-R31 ledger
+
+Numbers R25+ are DEFINED here and owned by the round specs cited.
+(Historical note: SPEC_POLITICS and SPEC_MACHINE_AGE both drafted
+claims on "R25-R27", and SPEC_TIMBER/SPEC_DYNASTIES both on "R28";
+this ledger is the canonical resolution.)
+
+- **R25-R27** (Round 2, SPEC_POLITICS.md P13) Political surfaces:
+  HUD `[WAR->n]` + `T:`/`A:` treaty marks, manager RELATIONS block,
+  gold-tinted envoy glyph, and the political EVENT_TINTS.
+- **R28** (Round 3, SPEC_MACHINE_AGE.md) Machine surfaces: HULL `Ξ`
+  (120,130,150) and SALVAGE `&` (170,190,210) glyphs in both
+  renderers; manager PROGRAM panel (live listing + registers).
+- **R29** (Round 4, SPEC_TIMBER_AND_FLAME.md T46) Timber & flame
+  surfaces, both renderers: WOOD `¶` (34,139,34), WOOD_WALL `|`
+  (139,105,20), WEB `x` (210,210,220); fire overlay `^` (255,120,0)
+  drawn from `sim.fires`; fauna as violet (200,80,220) species
+  letters (BEAST_GLYPHS); manager `wood:/bone:/[RAM]` line;
+  timber/fire/fauna EVENT_TINTS.
+- **R30** (Round 5, SPEC_DYNASTIES.md D5/D11) Dynasty surfaces: the
+  saga screen (H), saga export (E), house names substituted in HUD
+  events, `{id}:{house}` roster lines, `== HOUSE ... ==` manager
+  header, D6 mood line, dynasty EVENT_TINTS.
+- **R31** (Round 6, SPEC_SENTIENCE.md S5) Sentience surface: the
+  manager `resonance: 0.NN across K soldiers` line for neural
+  colonies with >= 2 live hidden states.
 
 ## 4. Structural Spec
 

@@ -119,7 +119,7 @@ is in numeric order.
   | `_apply_maw_siege_damage` | `Colony {a} besieges Colony {b}!` |
   | `_check_maw_deaths` | `Colony {id} has fallen!` |
   | `_respawn_colony` | `A new colony {id} arrives` |
-  | war-footing transition | `Colony {id} marches to war!` |
+  | war-footing transition | `Colony {id} marches to war!` *(superseded by P5's targeted `declares war on` text — row kept for history)* |
   | storm start / end | `A sandstorm rises!` / `The sandstorm passes` |
   | maw flight start | `Colony {id}'s Maw flees!` |
   | live viewer K key | `The keeper preserves the terrarium` |
@@ -211,6 +211,19 @@ is in numeric order.
   restless peace, field raids).
 - **T10**: war footing now selects a single target (P5); coalition members
   mobilize at half the chest; cross-map sieges reach only the target.
+
+### Amendments by SPEC_DYNASTIES.md (Round 5)
+
+- **T5**: the death cascade also judges the reign — the fallen house
+  earns its epithet from its chronicle rows (D2) and logs
+  `House {name} will be remembered as {epithet}` before the fallen
+  event; respawns arrive as cadet branches of a surviving house (D1).
+- **T9**: every `_log_event` line is ALSO written to the salience-scored
+  chronicle (D4) with house names substituted at write time and
+  season-window dedup. The T9 catalog rows above are the founding
+  examples; the living catalog is `live_view.EVENT_TINTS` plus
+  `chronicle.SALIENCE` — later rounds (T28-T48, D, S) add rows there,
+  not here.
 
 ### Scope note — neural systems
 
