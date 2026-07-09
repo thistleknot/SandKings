@@ -1,5 +1,22 @@
 # Sand Kings Changelog
 
+## 2.16.0 - The Codex (SPEC_CODEX.md CX1-CX6)
+
+- The awakened READ. A colony that has breached (or holds a raspberry
+  pi) consults a read-only corpus - curated survival/coop lore plus
+  the repo's own SPEC files - embedded in the SAME GloVe space the
+  thoughts use, and extracts a LESSON that nudges its dispositions.
+- Cooperation is the modal lesson (68 of 132 passages), so a colony
+  that reads widely drifts cooperative: "the environment works best
+  coop", learned from text, not scripted.
+- Lessons: coop -> loyalty, fortify -> defense, dig -> tunneling
+  (weather shelter), patience -> discount gamma, trade -> loyalty +
+  fertility. Each read shows as a machine-carving on the sand.
+- SAFETY: the corpus is READ into a lesson tag - never executed. No
+  eval/exec, no runtime network (GloVe is a local file). The vectors
+  never enter a pickle.
+
+
 ## 2.15.0 - The Keeper's Console (SPEC_DASHBOARD.md DB1-DB8)
 
 - A web dashboard: `python dashboard.py` serves a designed

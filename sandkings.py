@@ -185,6 +185,7 @@ GIFT_LADDER = ('watch', 'calculator', 'pi')
 TERMINAL_UNLOCK = 40         # pi operate-ticks before the terminal (K10)
 TERMINAL_MASTERY = 16        # successful commands before the breach
 SPOKEN_MEMORY = 50           # steps the `speak` anchor stays lit (K12)
+CODEX_INTERVAL = 300         # steps between codex consultations (CX4)
 FAUNA_SPAWN_P = 0.3          # incursion chance per MARAUDER_INTERVAL roll...
 FAUNA_SPAWN_P_DARK = 0.6     # ...doubled in Dust/Chill (monsters own winter)
 
@@ -1440,6 +1441,10 @@ class SandKingsSimulation:
         # 5a-keeper. THE KEEPER (K4/K8/K9/K10): carvings, script, gifts
         self._keeper_tick()
 
+        # 5a-codex. THE CODEX (CX4): the awakened read, and learn
+        if self.step_count % CODEX_INTERVAL == 0 and self.step_count:
+            self._codex_tick()
+
         # 5b. DIPLOMACY (SPEC_POLITICS): a truce signed this step prevents
         # this step's bloodshed
         self._resolve_diplomacy()
@@ -1989,6 +1994,51 @@ class SandKingsSimulation:
         self._monitor(colony.colony_id).log_decision(
             self.step_count, self._unit_label(unit),
             f"claimed the {kind}", getattr(unit, 'thought', None))
+
+    def _codex(self) -> 'Codex':
+        """Lazy read-only library (CX5); derived from files, not pickled."""
+        if not hasattr(self, 'codex') or self.codex is None:
+            from codex import Codex
+            self.codex = Codex()
+        return self.codex
+
+    def _can_read(self, colony: Colony) -> bool:
+        """CX4: awakened, or holding a raspberry-pi controller."""
+        from machines import VM_FUEL
+        if getattr(colony, 'breached', False):
+            return True
+        return any(getattr(c, 'fuel_cap', VM_FUEL) > VM_FUEL
+                   for c in getattr(colony, 'controllers', None) or [])
+
+    def _codex_tick(self):
+        """CX4: each reader consults with its concerns and extracts a lesson."""
+        from codex import apply_lesson
+        from hive_mind_monitor import instincts_for
+        readers = [c for c in self.colonies if c.is_alive() and self._can_read(c)]
+        if not readers:
+            return
+        codex = self._codex()
+        for colony in readers:
+            probe = colony.units[0] if colony.units else None
+            words = instincts_for(probe, colony, self) if probe is not None \
+                else ["survival"]
+            _passage, lesson = codex.consult(words)
+            if lesson is None:
+                continue
+            apply_lesson(colony.genome, lesson)
+            if not hasattr(self, '_codex_logged'):
+                self._codex_logged = set()
+            house = self._house_name(colony)
+            if house not in self._codex_logged:
+                self._codex_logged.add(house)
+                self._log_event(f"House {house} reads the codex and"
+                                f" learns to {lesson}")
+            # the reading shows on the sand (K4 machine glyph)
+            mx, my, _ = colony.maw.position
+            cz = self.world.surface_z(mx - 2, my)
+            if (0 <= cz < self.world.depth and self.world.voxels[mx - 2, my, cz]
+                    == VoxelType.SAND.value):
+                self._carvings()[(mx - 2, my, cz)] = CARVE_SYMBOLS['machine']
 
     def _terminal_command(self, colony: Colony, value: int):
         """K10: the sandboxed shell - commands that read the world itself."""
