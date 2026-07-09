@@ -38,7 +38,7 @@ ANCHOR_SEEDS = [
     "food", "hunger", "war", "defense", "underground", "danger", "flee",
     "hunt", "wounded", "home", "feast", "buried", "crowd", "alone", "rich",
     "storm", "death", "enemy", "victory", "siege", "jealousy", "love",
-    "clueless",
+    "clueless", "harvest", "farm", "drought", "gold",
 ]
 
 # Manual pruning: embedding neighbors that read wrong for the game
@@ -65,6 +65,10 @@ BLOCKLIST = {
     "rich": {"particularly", "especially"},
     "jealousy": {"guilt", "emotions", "feelings"},
     "love": {"me", "loves", "my"},
+    "gold": {"medal", "medals", "olympic", "olympics", "bronze", "winner"},
+    "harvest": {"moon", "seasons"},
+    "farm": {"farms", "ranch"},
+    "drought": {"droughts"},
 }
 # Words too generic/odd to ever use, regardless of anchor
 GLOBAL_BLOCK = {"the", "of", "and", "a", "to", "in", "is", "it", "he",
@@ -104,6 +108,10 @@ FALLBACK = {
     "jealousy": ["envy", "resentment", "covet", "jealousy"],
     "love": ["care", "devotion", "tenderness", "love"],
     "clueless": ["oblivious", "unaware", "naive", "clueless"],
+    "harvest": ["sow", "reap", "crop", "harvest"],
+    "farm": ["till", "field", "cultivate", "farm"],
+    "drought": ["dry", "lean", "parched", "drought"],
+    "gold": ["ore", "treasure", "riches", "gold"],
 }
 
 

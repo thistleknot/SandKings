@@ -58,7 +58,9 @@ is in numeric order.
   amount N of FOOD voxels, each at the first AIR voxel directly above
   terrain in a random interior column, MUST raise every living colony's
   `food_stored` to at least BOOTSTRAP_FLOOR, and MUST log the feeding to
-  the event feed (see the T9 event catalog).
+  the event feed (see the T9 event catalog). *(Amended by T17: N and its
+  lower clamp scale by the seasonal dole factor —
+  SPEC_SEASONS_AND_STONE.md.)*
 - **T2** While a colony is alive with 0 units and `food_stored` ≥ the worker
   spawn cost (3), the step MUST spawn one WORKER, bypassing the spawn
   threshold and fertility roll.
@@ -68,7 +70,9 @@ is in numeric order.
   `foraging_range` box for FOOD or CORPSE and cache the nearest by Manhattan
   distance; (4) existing tunnel-dig fallback. Directed movement steps
   toward the target through AIR (walk) or SAND (tunnel); when the diagonal
-  is blocked it falls back to single-axis steps.
+  is blocked it falls back to single-axis steps. *(Ordering superseded by
+  T18 worker AI v2 — SPEC_SEASONS_AND_STONE.md — which inserts hauling,
+  mining, and farming branches around this forage core.)*
 - **T4** When a soldier finds no enemy unit within `foraging_range`, it MUST
   chase the nearest living enemy Maw within `foraging_range` (same
   aggression roll and movement rules). `_resolve_conflicts` MUST apply each
@@ -154,7 +158,9 @@ is in numeric order.
   wind), and gravity runs each storm step so drifts settle. Sand is moved,
   never created or destroyed; whatever a drift covers stays in place,
   buried but diggable. Start and end MUST be logged (T9 catalog). The
-  viewer renders the storm haze (SPEC_LIVE_VIEW.md R21).
+  viewer renders the storm haze (SPEC_LIVE_VIEW.md R21). *(Amended by
+  T16: the roll interval is seasonal — 200 in Dust, no rolls in Chill —
+  SPEC_SEASONS_AND_STONE.md.)*
 - **T13** (Round H — persistence) `save_checkpoint(sim, path) -> int` MUST
   pickle the entire simulation into a sqlite table
   `checkpoints(id, step, saved_at, state BLOB)`; `load_checkpoint(path)`

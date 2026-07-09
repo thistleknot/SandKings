@@ -185,6 +185,20 @@ Status: draft → implement → reconcile (see Reconciliation Log at bottom).
 - **R21** While `sim.storm_until > sim.step_count` (guarded getattr), the
   viewer MUST render a flickering sand-haze overlay (`storm_haze_array`,
   additive blend). Storm mechanics are owned by SPEC_TERRARIUM_LIVENESS.md T12.
+- **R22** (Round 1) New voxel glyphs and colors, in BOTH renderers (the
+  live palette and `Visualizer.render_z_slice`): TILLED `~` (110,80,50);
+  CROP `;` (80,160,60); CROP_RIPE `*` (190,220,60); COPPER_ORE `£`
+  (184,115,51); GOLD_ORE `$` (255,208,0). Copper-armored soldiers render
+  their letter in copper tint.
+- **R23** (Round 1) Oasis columns (disc r=6 at map center) blend their
+  background 35% toward (70,160,140) before glyph dimming, in both view
+  modes and both styles. The HUD MUST show `Year {y} · {season} (dole
+  {pct}%)` season-tinted, and an `Oasis: Colony {id} / unclaimed` line.
+- **R24** (Round 1) The manager screen MUST add a farm/ore line
+  (`farms: N plots (R ripe)  copper: C  gold: G`) and the colony's
+  learner posture (current + learned-best for the current state, T26).
+  EVENT_TINTS additions: "season begins", "strikes", "razes", "harvest",
+  "frost", "oasis".
 
 ## 4. Structural Spec
 

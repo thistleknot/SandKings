@@ -123,6 +123,15 @@ with no ground truth).
 - **M8 (honesty)** The manager screen MUST display probe accuracy so the
   user can see which concepts the hive mind demonstrably encodes; thoughts
   are never fabricated from inputs alone for neural soldiers.
+- **M10 (Round 1 anchors)** The lexicon grows 23 → 27 with measurable
+  anchors: `harvest` (CROP_RIPE within radius 2), `farm` (TILLED within
+  radius 2), `drought` (season index ∈ {2, 3} — Dust or Chill), `gold`
+  (unit carrying ore OR colony gold stock ≥ 1). Context additions:
+  `tilled_2`, `crop_ripe_2`, `season`, `carrying_ore`, `colony_gold`.
+  Vocabulary rebuild required (blocklist watch: gold → medal/olympic;
+  harvest → moon). Resumed monitors from older checkpoints MUST
+  `setdefault` probes for new seeds. Decision-log additions: first
+  sowing, first harvest, ore strikes, field razing.
 - **M9 (vocabulary builder)** `thought_vocabulary.py` (build-time, run
   manually, stdlib + numpy only — no gensim) MUST: download the GloVe
   wiki-gigaword-50 vectors (gensim-data GitHub release asset, ~66MB, cached

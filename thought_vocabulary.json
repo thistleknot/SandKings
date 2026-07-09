@@ -178,6 +178,38 @@
    "scared",
    "stupid",
    "clueless"
+  ],
+  "harvest": [
+   "fruits",
+   "wheat",
+   "corn",
+   "crops",
+   "crop",
+   "harvest"
+  ],
+  "farm": [
+   "farmer",
+   "cattle",
+   "dairy",
+   "farmers",
+   "farming",
+   "farm"
+  ],
+  "drought": [
+   "ravaged",
+   "plagued",
+   "devastating",
+   "shortages",
+   "severe",
+   "drought"
+  ],
+  "gold": [
+   "platinum",
+   "golden",
+   "medalist",
+   "diamond",
+   "silver",
+   "gold"
   ]
  }
 }
