@@ -122,6 +122,20 @@ EVENT_TINTS = (            # substring -> HUD color (spec R19/R24)
     ("blood feud", (255, 60, 120)),
     ("will be remembered", (230, 210, 140)),
     ("rises (", (230, 210, 140)),
+    ("keeper's hand", (255, 215, 0)),
+    ("withholds", (255, 80, 80)),
+    ("rains of the keeper", (120, 210, 120)),
+    ("worship", (255, 215, 0)),
+    ("hateful", (255, 80, 80)),
+    ("castle", (240, 240, 240)),
+    ("pads across", (200, 80, 220)),
+    ("grieving", (255, 80, 80)),
+    ("gift", (255, 215, 0)),
+    ("god-brain", (150, 180, 255)),
+    ("probing the glass", (150, 180, 255)),
+    ("no longer a wall", (255, 255, 255)),
+    ("SPEAKS", (255, 255, 255)),
+    ("fall as noise", (150, 150, 160)),
 )
 PHEROMONE_OVERLAYS = (None, PheromoneType.FOOD_TRAIL, PheromoneType.TERRITORY,
                       PheromoneType.DANGER)  # P-key cycle (spec R17)
@@ -362,6 +376,9 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
         if active:
             entries.insert(5, ("Weather: " + ", ".join(n for n, _t in active),
                                active[0][1]))
+        if getattr(sim, 'drought', False):  # K1: the withheld dole
+            entries.insert(5, ("DROUGHT - the keeper withholds",
+                               (255, 80, 80)))
     for colony in sim.colonies:
         color = hud_text_color(colony.color)
         if not colony.is_alive():
@@ -419,7 +436,9 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
     for help_line in ("", "SPACE pause  S step", "+/- speed  </> or UP/DN z",
                       "TAB view  P pheromones  R style",
                       "I inspect (click too)  F follow  L legend",
-                      "M manager  H saga  G capture  ESC quit"):
+                      "M manager  H saga  G capture  ESC quit",
+                      "KEEPER: 1 food  2/3/4 bugs  5 gift",
+                      "        9 drought  0 cat  T speak"):
         entries.append((help_line, (140, 140, 150)))
     return entries
 
@@ -539,6 +558,14 @@ def build_inspect_entries(sim: SandKingsSimulation,
                             (150, 180, 255)))
         entries.append((f"  thinks: {getattr(obj, 'thought', '...')}"[:44],
                         (200, 190, 120)))
+        # K11/K12: the awakened speak - and can be spoken to (T)
+        if getattr(colony, 'breached', False):
+            from hive_mind_monitor import compose_utterance
+            utterance = compose_utterance(obj, colony, sim)
+            if utterance:
+                entries.append((f'  says: "{utterance}"'[:44],
+                                (255, 230, 150)))
+            entries.append(("  [T] speak to it", (150, 150, 160)))
     elif kind == 'maw':
         house = sim._house(obj) if hasattr(sim, '_house') else str(obj.colony_id)
         color = hud_text_color(obj.color)
@@ -606,6 +633,17 @@ def build_legend_entries() -> List[Tuple[str, Tuple[int, int, int]]]:
     for species, glyph in BEAST_GLYPHS.items():
         entries.append((f" {glyph}  {species} (wild)", BEAST_COLOR))
     entries.append((f" {FIRE_GLYPH}  fire", FIRE_COLOR))
+    entries.append(("", HUD_FG))
+    entries.append(("-- carvings (K4) --", (150, 150, 160)))
+    from sandkings import CARVE_SYMBOLS
+    carve_names = {'reverent': "reverence - the keeper fed them",
+                   'wrathful': "wrath - the god betrayed them",
+                   'war': "war", 'hunger': "hunger",
+                   'content': "contentment",
+                   'machine': "machine-carved (the terminal)"}
+    for key, symbol in CARVE_SYMBOLS.items():
+        entries.append((f" {symbol}  {carve_names.get(key, key)}",
+                        (255, 235, 170)))
     entries.append(("", HUD_FG))
     entries.append(("-- colors --", (150, 150, 160)))
     entries.append((" copper letter = armored soldier", COPPER_TINT))
@@ -1000,6 +1038,35 @@ class LiveViewer:
                     self.inspected = targets[self._select_cycle % len(targets)]
                     self._select_cycle += 1
                     self.follow = False
+            # K1/K6/K9/K12: the keeper's hands (any keeper key disarms auto)
+            elif key == pygame.K_1:
+                self.sim.keeper_auto = False
+                if not self.look_mode:
+                    self.look_mode = True
+                self.sim.keeper_drop_food(*self.cursor)
+            elif key == pygame.K_2:
+                self.sim.keeper_auto = False
+                self.sim.keeper_release('cricket')
+            elif key == pygame.K_3:
+                self.sim.keeper_auto = False
+                self.sim.keeper_release('ant')
+            elif key == pygame.K_4:
+                self.sim.keeper_auto = False
+                self.sim.keeper_release('scorpion')
+            elif key == pygame.K_5:
+                self.sim.keeper_auto = False
+                self.sim.keeper_gift(pos=self.cursor)
+            elif key == pygame.K_9:
+                self.sim.keeper_auto = False
+                self.sim.keeper_drought(not getattr(self.sim, 'drought',
+                                                    False))
+            elif key == pygame.K_0:
+                self.sim.keeper_auto = False
+                self.sim.keeper_release_cat()
+            elif (key == pygame.K_t and self.inspected is not None
+                  and self.inspected[0] == 'unit'
+                  and target_alive(self.sim, self.inspected)):
+                self.sim.keeper_speak(self.inspected[1])  # K12
             elif key == pygame.K_f and self.inspected is not None:
                 self.follow = not self.follow  # R33
             elif key == pygame.K_e:  # D11: the terrarium writes its book
@@ -1198,6 +1265,14 @@ class LiveViewer:
                 rect = pygame.Rect(bx * cell + 1, by * cell + 1,
                                    cell - 2, cell - 2)
                 pygame.draw.rect(self._screen, color, rect)
+
+        # K4: carvings - the colonies' souls written on the sand
+        if glyph_mode:
+            for pos, symbol in (getattr(self.sim, 'carvings', None)
+                                or {}).items():
+                if self._visible_depth(pos) is not None:
+                    self._blit_glyph(symbol, (255, 235, 170),
+                                     pos[0] * cell, pos[1] * cell)
 
         if getattr(self.sim, 'storm_until', 0) > self.sim.step_count:
             haze = pygame.transform.scale(

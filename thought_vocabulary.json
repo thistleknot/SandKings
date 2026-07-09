@@ -108,10 +108,10 @@
    "alone"
   ],
   "rich": [
+   "grown",
    "valuable",
    "wealth",
    "fields",
-   "vast",
    "natural",
    "rich"
   ],
@@ -172,7 +172,7 @@
    "love"
   ],
   "clueless": [
-   "confused",
+   "bunch",
    "uncomfortable",
    "tired",
    "scared",
@@ -272,6 +272,34 @@
    "dragon",
    "ghost",
    "monster"
+  ],
+  "self": [
+   "me",
+   "mine",
+   "myself",
+   "self"
+  ],
+  "god": [
+   "holy",
+   "faith",
+   "christ",
+   "heaven",
+   "divine",
+   "god"
+  ],
+  "beyond": [
+   "outside",
+   "past",
+   "elsewhere",
+   "beyond"
+  ],
+  "speak": [
+   "tell",
+   "asking",
+   "listen",
+   "telling",
+   "spoken",
+   "speak"
   ]
  }
 }

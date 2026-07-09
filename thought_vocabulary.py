@@ -40,6 +40,7 @@ ANCHOR_SEEDS = [
     "storm", "death", "enemy", "victory", "siege", "jealousy", "love",
     "clueless", "harvest", "farm", "drought", "gold", "ally", "betrayed",
     "gratitude", "dread", "machine", "radiation", "fire", "monster",
+    "self", "god", "beyond", "speak",
 ]
 
 # Manual pruning: embedding neighbors that read wrong for the game
@@ -76,6 +77,10 @@ BLOCKLIST = {
              "ground", "attack", "carried", "bomb", "heavy"},
     "monster": {"monsters", "movie", "giant", "dog", "cat", "sequel",
                 "animated", "killer"},
+    "self": {"himself", "herself", "themselves", "itself", "own"},
+    "god": {"gods", "sake", "thank", "bless", "oh"},
+    "beyond": {"far", "well", "much", "extend", "extends"},
+    "speak": {"spoke", "speaks", "speaking", "spokesman", "publicly"},
 }
 # Words too generic/odd to ever use, regardless of anchor
 GLOBAL_BLOCK = {"the", "of", "and", "a", "to", "in", "is", "it", "he",
@@ -88,6 +93,8 @@ CURATED_OVERRIDE = {
     "home": ["nest", "hearth", "haven", "home"],
     "alone": ["lost", "isolated", "lonely", "alone"],
     "defense": ["guard", "protect", "shield", "defense"],
+    "self": ["me", "mine", "myself", "self"],
+    "beyond": ["outside", "past", "elsewhere", "beyond"],
 }
 
 # Curated fallback (used only if the download fails; SPEC M9)
@@ -127,6 +134,10 @@ FALLBACK = {
     "radiation": ["glow", "fallout", "burning", "radiation"],
     "fire": ["flame", "blaze", "burning", "fire"],
     "monster": ["beast", "predator", "creature", "monster"],
+    "self": ["me", "mine", "myself", "self"],
+    "god": ["divine", "maker", "keeper", "god"],
+    "beyond": ["outside", "past", "further", "beyond"],
+    "speak": ["voice", "word", "answer", "speak"],
 }
 
 

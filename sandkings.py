@@ -122,6 +122,10 @@ FAUNA = {
     'scorpion': (0.10, 22, 6, (1, 2), 15, 2),
     'snake':    (0.06, 80, 18, (1, 1), 25, 5),
     'anteater': (0.04, 150, 25, (1, 1), 30, 8),
+    # weight 0 = keeper-introduced only (K2); never in random rolls
+    'cricket':  (0.0, 8, 1, (2, 4), 0, 2),
+    'ant':      (0.0, 6, 2, (4, 6), 0, 1),
+    'cat':      (0.0, 400, 60, (1, 1), 60, 12),
 }
 FAUNA_EVENTS = {
     'spider': "Spiders crawl up from the deep!",
@@ -132,6 +136,9 @@ FAUNA_EVENTS = {
     'scorpion': "Scorpions skitter across the dunes",
     'snake': "Something long moves beneath the sand...",
     'anteater': "An anteater stalks the sands!",
+    'cricket': "Crickets drop from the keeper's hand",
+    'ant': "A column of ants files in from a crack in the world",
+    'cat': "Something enormous pads across the sand...",
 }
 POISON_DURATION = 20         # scorpion sting DoT (1 HP/step)
 FAUNA_RAMPAGE = 500          # steps before an unslain incursion wanders off
@@ -162,6 +169,22 @@ COLD_INTERVAL = 500          # cold-snap roll cadence (Chill; Dust halved)
 COLD_CHANCE = 0.5
 COLD_DURATION = 40           # the desert night's ambassador
 COLD_TICK = 5
+
+# The Keeper constants (SPEC_KEEPER.md K1-K12)
+KEEPER_DROP_FOOD = 6         # FOOD voxels per keeper hand-drop
+KEEPER_MEMORY = 800          # steps of grace per witnessed miracle
+KEEPER_WRATH_MOBILIZATION = 0.75  # war-chest gate multiplier when wrathful
+CARVE_INTERVAL = 200         # steps between carvings (K4)
+CARVE_SYMBOLS = {'reverent': '☀', 'wrathful': '☠',  # sun, skull
+                 'war': '⚔', 'hunger': '♦',         # swords, diamond
+                 'content': '♥', 'machine': '⌂'}    # heart, house
+KEEPER_CAT_STEP = 3200       # the cat gets in (auto script, K8)
+KEEPER_GRIEF = 1200          # drought length after the cat is slain
+KEEPER_GIFT_INTERVAL = 1600  # steps between ladder gifts (K9)
+GIFT_LADDER = ('watch', 'calculator', 'pi')
+TERMINAL_UNLOCK = 40         # pi operate-ticks before the terminal (K10)
+TERMINAL_MASTERY = 16        # successful commands before the breach
+SPOKEN_MEMORY = 50           # steps the `speak` anchor stays lit (K12)
 FAUNA_SPAWN_P = 0.3          # incursion chance per MARAUDER_INTERVAL roll...
 FAUNA_SPAWN_P_DARK = 0.6     # ...doubled in Dust/Chill (monsters own winter)
 
@@ -581,6 +604,7 @@ class SandKing:
     weapon_expires: int = 0    # spear splinter step; 0 = unarmed (T44)
     torch: bool = False        # can put fields to the torch (T44/T45)
     poisoned_until: int = 0    # scorpion venom DoT end step (T48)
+    spoken_to_step: int = -10**9  # last time the keeper addressed it (K12)
     chop_target: Optional[Tuple[int, int, int]] = None  # trunk being cut (T41)
     chop_progress: int = 0
     
@@ -705,6 +729,10 @@ class Colony:
         self.house = ""        # dynasty name; founded lazily (D1)
         self.generation = 1    # cadet-branch depth within the bloodline
         self.founded_step = 0  # reign start - scopes epithet judgment (D2)
+        self.keeper_fed_step = -10**9  # last witnessed miracle (K3)
+        self.worshipped = False        # has EVER been reverent (K3)
+        self.breached = False          # awakened - past the glass (K10/K11)
+        self.terminal_uses = 0         # sandbox-shell successes (K10)
         
     def spawn_unit(self, unit_type: UnitType, step: int = 0):
         """Spawn new unit from Maw; copper armors, timber arms (T25/T44).
@@ -1273,6 +1301,12 @@ class SandKingsSimulation:
             for attr in ('wood', 'bone', 'ram_until'):  # Round-4 (T41-T44)
                 if not hasattr(colony, attr):
                     setattr(colony, attr, 0)
+            for attr, default in (('keeper_fed_step', -10**9),  # K1-K12
+                                  ('worshipped', False),
+                                  ('breached', False),
+                                  ('terminal_uses', 0)):
+                if not hasattr(colony, attr):
+                    setattr(colony, attr, default)
 
             # Organic rot (T42): timber and bone decay; metal is forever
             if self.step_count % ROT_INTERVAL == 0:
@@ -1348,6 +1382,9 @@ class SandKingsSimulation:
             current_target = d.war_target.get(cid)
             coalition_member = d.hegemon is not None and cid != d.hegemon
             enter_at = WAR_CHEST * (0.5 if coalition_member else 1.0)
+            if self.keeper_attitude(colony) == 'wrathful':  # K3: hungry,
+                enter_at *= KEEPER_WRATH_MOBILIZATION       # angry, quicker
+
             if current_target is None:
                 if colony.maw.food_stored > enter_at:
                     target = self._select_war_target(colony)
@@ -1399,6 +1436,9 @@ class SandKingsSimulation:
 
         # 5a. WILD INCURSIONS (T48): DF-invader monsters trample through
         self._fauna_tick()
+
+        # 5a-keeper. THE KEEPER (K4/K8/K9/K10): carvings, script, gifts
+        self._keeper_tick()
 
         # 5b. DIPLOMACY (SPEC_POLITICS): a truce signed this step prevents
         # this step's bloodshed
@@ -1492,7 +1532,11 @@ class SandKingsSimulation:
         return self.step_count // YEAR_LENGTH
 
     def dole_factor(self) -> float:
-        """Seasonal dole factor with the 2-year ramp floor (T17)."""
+        """Seasonal dole factor with the 2-year ramp floor (T17).
+
+        K1 amendment: a keeper drought withholds everything."""
+        if getattr(self, 'drought', False):
+            return 0.0
         f = DOLE_FACTOR[self.season_index()]
         if not getattr(self, 'harsh', False):
             f = max(f, DOLE_RAMP[min(self.year(), 2)])
@@ -1718,6 +1762,258 @@ class SandKingsSimulation:
                             " around its maw", unit)
             return True
         return self._step_toward(unit, best, colony)
+
+    # ---- The Keeper (SPEC_KEEPER.md K1-K12) ----
+
+    def _manna(self) -> Set[Tuple[int, int, int]]:
+        """Keeper-dropped FOOD positions awaiting attribution (K3)."""
+        if not hasattr(self, 'keeper_manna'):
+            self.keeper_manna = set()
+        return self.keeper_manna
+
+    def _carvings(self) -> Dict[Tuple[int, int, int], str]:
+        """Symbols inscribed in the sand (K4); purge-first like crops."""
+        if not hasattr(self, 'carvings'):
+            self.carvings = {}
+        return self.carvings
+
+    def keeper_attitude(self, colony: Colony) -> str:
+        """K3: derived, never stored. none | reverent | wrathful."""
+        if getattr(self, 'drought', False) and getattr(colony, 'worshipped',
+                                                       False):
+            return 'wrathful'
+        if (self.step_count - getattr(colony, 'keeper_fed_step', -10**9)
+                < KEEPER_MEMORY):
+            return 'reverent'
+        return 'none'
+
+    def keeper_drop_food(self, x: int, y: int):
+        """K1: the keeper's hand - manna, locally attributable."""
+        placed = 0
+        for _ in range(40):
+            px = int(np.clip(x + random.randint(-2, 2), 1,
+                             self.world.width - 2))
+            py = int(np.clip(y + random.randint(-2, 2), 1,
+                             self.world.height - 2))
+            pz = min(self.world.surface_z(px, py) + 1, self.world.depth - 1)
+            if self.world.voxels[px, py, pz] == VoxelType.AIR.value:
+                self.world.voxels[px, py, pz] = VoxelType.FOOD.value
+                self._manna().add((px, py, pz))
+                placed += 1
+                if placed >= KEEPER_DROP_FOOD:
+                    break
+        self._log_event("The keeper's hand scatters bounty")
+
+    def keeper_release(self, species: str):
+        """K1: introduce a garage creature - above the one-incursion rule."""
+        _, hp, atk, pack, hunt, bounty = FAUNA[species]
+        w, h, d = self.world.dimensions
+        edge = random.choice(['n', 's', 'e', 'w'])
+        for _ in range(random.randint(*pack)):
+            if edge == 'n':
+                x, y = random.randint(2, w - 3), 2
+            elif edge == 's':
+                x, y = random.randint(2, w - 3), h - 3
+            elif edge == 'w':
+                x, y = 2, random.randint(2, h - 3)
+            else:
+                x, y = w - 3, random.randint(2, h - 3)
+            z = min(self.world.surface_z(x, y) + 1, d - 1)
+            self._fauna().append(Beast(species, (x, y, z), hp, atk, hunt,
+                                       bounty, spawned_at=self.step_count))
+        self._log_event(FAUNA_EVENTS[species])
+
+    def keeper_release_cat(self):
+        self.keeper_release('cat')
+
+    def keeper_drought(self, on: bool):
+        """K1: withhold the dole. The garden learns what the god is."""
+        was = getattr(self, 'drought', False)
+        self.drought = on
+        if on and not was:
+            self._log_event("The keeper withholds the dole - drought!")
+            for colony in self.colonies:  # betrayal requires prior faith
+                if (colony.is_alive() and getattr(colony, 'worshipped', False)
+                        and not getattr(colony, '_wrath_logged', False)):
+                    colony._wrath_logged = True
+                    self._log_event(f"The carvings of House"
+                                    f" {self._house_name(colony)} twist"
+                                    " into something hateful")
+        elif was and not on:
+            self._log_event("The rains of the keeper return")
+
+    def keeper_gift(self, kind: Optional[str] = None,
+                    pos: Optional[Tuple[int, int]] = None):
+        """K9: the technology ladder - watch, calculator, raspberry pi."""
+        given = getattr(self, 'gifts_given', [])
+        if kind is None:
+            remaining = [g for g in GIFT_LADDER if g not in given]
+            if not remaining:
+                return
+            kind = remaining[0]
+        if not hasattr(self, 'gifts_given'):
+            self.gifts_given = []
+        self.gifts_given.append(kind)
+        w, h = self.world.width, self.world.height
+        x, y = pos if pos is not None else (
+            random.randint(w // 4, 3 * w // 4),
+            random.randint(h // 4, 3 * h // 4))
+        z = min(self.world.surface_z(x, y) + 1, self.world.depth - 1)
+        self.gift = ((x, y, z), kind)
+        self._log_event("A strange gift descends from above")
+
+    def keeper_speak(self, unit: SandKing) -> bool:
+        """K12: the keeper addresses one creature. Returns heard?"""
+        colony = self._colony_by_id(unit.colony_id)
+        if colony is None:
+            return False
+        if not getattr(colony, 'breached', False):
+            self._log_event("The keeper speaks, but the words fall as noise")
+            return False
+        unit.spoken_to_step = self.step_count
+        colony.keeper_fed_step = self.step_count  # grace by word (K12)
+        if not getattr(colony, '_heard_logged', False):
+            colony._heard_logged = True
+            self._log_event(f"The keeper SPEAKS - and House"
+                            f" {self._house_name(colony)} hears")
+        self._monitor(colony.colony_id).log_decision(
+            self.step_count, self._unit_label(unit),
+            "heard the god speak", getattr(unit, 'thought', None))
+        return True
+
+    def _keeper_tick(self):
+        """K4/K8/K9/K10 phase: carvings, the auto script, gift claims."""
+        step = self.step_count
+        # K4 carvings: each house writes one symbol per interval
+        if step % CARVE_INTERVAL == 0 and step:
+            carv = self._carvings()
+            for pos in list(carv):
+                if self.world.voxels[pos] != VoxelType.SAND.value:
+                    del carv[pos]  # disturbed sand forgets
+            for colony in self.colonies:
+                if not colony.is_alive():
+                    continue
+                att = self.keeper_attitude(colony)
+                symbol = (CARVE_SYMBOLS['wrathful'] if att == 'wrathful'
+                          else CARVE_SYMBOLS['reverent'] if att == 'reverent'
+                          else CARVE_SYMBOLS['war'] if colony.at_war
+                          else CARVE_SYMBOLS['hunger']
+                          if colony.maw.food_stored < 2 * BOOTSTRAP_FLOOR
+                          else CARVE_SYMBOLS['content'])
+                mx, my, _ = colony.maw.position
+                for _try in range(12):
+                    cx = int(np.clip(mx + random.randint(-3, 3), 1,
+                                     self.world.width - 2))
+                    cy = int(np.clip(my + random.randint(-3, 3), 1,
+                                     self.world.height - 2))
+                    cz = self.world.surface_z(cx, cy)
+                    if (0 <= cz < self.world.depth
+                            and self.world.voxels[cx, cy, cz]
+                            == VoxelType.SAND.value):
+                        carv[(cx, cy, cz)] = symbol
+                        break
+        # K9/K10 gift claim: the first house to touch it learns
+        gift = getattr(self, 'gift', None)
+        if gift is not None:
+            (gx, gy, gz), kind = gift
+            for colony in self.colonies:
+                claimed = False
+                for unit in colony.units:
+                    ux, uy, uz = unit.position
+                    if max(abs(ux - gx), abs(uy - gy), abs(uz - gz)) <= 1:
+                        self._claim_gift(colony, kind, unit)
+                        claimed = True
+                        break
+                if claimed:
+                    self.gift = None
+                    break
+        # K8: the autoplayed keeper (the Outer Limits script)
+        if not getattr(self, 'keeper_auto', True):
+            return
+        if step == KEEPER_CAT_STEP and not getattr(self, 'cat_sent', False):
+            self.cat_sent = True
+            self._log_event("The keeper's cat slips into the terrarium...")
+            self.keeper_release_cat()
+        grief_until = getattr(self, 'keeper_grief_until', 0)
+        if grief_until > step:
+            if step % 400 == 0:
+                self._log_event("The keeper, grieving, sends scorpions"
+                                " instead of crickets")
+                self.keeper_release('scorpion')
+        elif grief_until and getattr(self, 'drought', False):
+            self.keeper_drought(False)  # grief spent; the rains return
+            self.keeper_grief_until = 0
+            mx = self.world.width // 2
+            my = self.world.height // 2
+            self.keeper_drop_food(mx, my)  # the relenting miracle
+        if (any(getattr(c, 'worshipped', False) and c.is_alive()
+                for c in self.colonies)
+                and self.keeper_attitude_any('reverent')
+                and step - getattr(self, 'last_gift_step', 0)
+                > KEEPER_GIFT_INTERVAL
+                and len(getattr(self, 'gifts_given', [])) < len(GIFT_LADDER)
+                and getattr(self, 'gift', None) is None):
+            self.last_gift_step = step
+            self.keeper_gift()
+
+    def keeper_attitude_any(self, wanted: str) -> bool:
+        return any(self.keeper_attitude(c) == wanted
+                   for c in self.colonies if c.is_alive())
+
+    def _claim_gift(self, colony: Colony, kind: str, unit: SandKing):
+        """K9: revelation by artifact - the ladder advances the arc."""
+        from machines import Controller, PI_DURABILITY, PI_FUEL
+        house = self._house_name(colony)
+        if kind == 'watch':
+            if getattr(colony, 'machine_arc', 'none') == 'none':
+                colony.machine_arc = 'known'
+            self._log_event(f"House {house} puzzles over the ticking gift")
+        elif kind == 'calculator':
+            if getattr(colony, 'machine_arc', 'none') == 'none':
+                colony.machine_arc = 'known'
+            if not isinstance(getattr(colony, 'controllers', None), list):
+                colony.controllers = []
+            colony.controllers.append(Controller(colony.colony_id))
+            if colony.machine_arc == 'known':
+                colony.machine_arc = 'claimed'
+            self._log_event(f"House {house}'s fingers find the"
+                            " calculator's keys")
+        else:  # pi: the god-brain
+            if not isinstance(getattr(colony, 'controllers', None), list):
+                colony.controllers = []
+            colony.controllers.append(Controller(
+                colony.colony_id, fuel=PI_FUEL, durability=PI_DURABILITY))
+            if getattr(colony, 'machine_arc', 'none') in ('none', 'known'):
+                colony.machine_arc = 'claimed'
+            self._log_event(f"House {house} awakens the god-brain")
+        self._monitor(colony.colony_id).log_decision(
+            self.step_count, self._unit_label(unit),
+            f"claimed the {kind}", getattr(unit, 'thought', None))
+
+    def _terminal_command(self, colony: Colony, value: int):
+        """K10: the sandboxed shell - commands that read the world itself."""
+        if value == 1:  # ls /world/food
+            food = np.argwhere(self.world.voxels == VoxelType.FOOD.value)
+            d = self.world.depth
+            for fx, fy, fz in food[:60]:
+                if (fz + 1 < d and self.world.voxels[fx, fy, fz + 1]
+                        == VoxelType.AIR.value):
+                    colony.known_food.append((int(fx), int(fy), int(fz)))
+            del colony.known_food[:-KNOWN_FOOD_CAP]
+        elif value == 2:  # echo: the machine carves
+            mx, my, _ = colony.maw.position
+            cz = self.world.surface_z(mx + 2, my)
+            if (0 <= cz < self.world.depth and self.world.voxels
+                    [mx + 2, my, cz] == VoxelType.SAND.value):
+                self._carvings()[(mx + 2, my, cz)] = CARVE_SYMBOLS['machine']
+        else:
+            return
+        colony.terminal_uses = getattr(colony, 'terminal_uses', 0) + 1
+        if (colony.terminal_uses == TERMINAL_MASTERY
+                and not getattr(colony, 'breached', False)):
+            colony.breached = True  # K10: the Breach
+            self._log_event(f"The glass is no longer a wall to House"
+                            f" {self._house_name(colony)}")
 
     # ---- Desert Weather helpers (SPEC_WEATHER.md) ----
 
@@ -1960,6 +2256,37 @@ class SandKingsSimulation:
                 sims.append(float(np.dot(a, b) / denom))
         return float(np.mean(sims)), len(hiddens)
 
+    def _castle_step(self, unit: SandKing, colony: Colony) -> bool:
+        """K5: crenellations - TUNNEL_WALL on alternating maw-ring cells.
+        Stone, not timber: castles honor the god and never rot."""
+        mx, my, mz = colony.maw.position
+        r = PALISADE_RING + 1
+        best, best_dist = None, None
+        ux, uy, uz = unit.position
+        for dx in range(-r, r + 1):
+            for dy in range(-r, r + 1):
+                if max(abs(dx), abs(dy)) != r or (dx + dy) % 2:
+                    continue  # alternating cells: crenellation
+                pos = (mx + dx, my + dy, mz)
+                if not self.world.in_bounds(*pos):
+                    continue
+                if self.world.voxels[pos] != VoxelType.AIR.value:
+                    continue
+                dist = abs(pos[0] - ux) + abs(pos[1] - uy) + abs(pos[2] - uz)
+                if best_dist is None or dist < best_dist:
+                    best, best_dist = pos, dist
+        if best is None:
+            return False
+        if max(abs(best[0] - ux), abs(best[1] - uy), abs(best[2] - uz)) <= 1:
+            colony.maw.food_stored -= 2  # labor is fed
+            self.world.voxels[best] = VoxelType.TUNNEL_WALL.value
+            self.world.ownership[best] = colony.colony_id
+            self._milestone(colony, 'castle',
+                            f"House {self._house_name(colony)} raises"
+                            " a castle to its god", unit)
+            return True
+        return self._step_toward(unit, best, colony)
+
     # ---- Fauna (T48): the world's monsters ----
 
     def _fauna(self) -> List['Beast']:
@@ -2072,7 +2399,7 @@ class SandKingsSimulation:
                 if dist < ndist:
                     ndist, nearest = dist, unit
 
-        if beast.species == 'rodent':
+        if beast.species in ('rodent', 'ant'):  # scavenger-thieves (K2)
             if nearest is not None and ndist <= 3:  # cowardly scavengers
                 away = (bx - int(np.sign(nearest.position[0] - bx)) * 3,
                         by - int(np.sign(nearest.position[1] - by)) * 3, bz)
@@ -2169,6 +2496,11 @@ class SandKingsSimulation:
                     placed += 1
             self._log_event(f"The {beast.species} is slain -"
                             " a feast for the bold!")
+            # K8: the cat was precious to the keeper. Grief follows.
+            if (beast.species == 'cat' and getattr(self, 'keeper_auto', True)
+                    and not getattr(self, 'keeper_grief_until', 0)):
+                self.keeper_grief_until = self.step_count + KEEPER_GRIEF
+                self.keeper_drought(True)
 
     def _monitor(self, colony_id: int) -> 'HiveMindMonitor':
         """Lazy per-colony hive-mind monitor (SPEC_HIVE_MONITOR M6/M7).
@@ -2911,8 +3243,18 @@ class SandKingsSimulation:
         return None
 
     def _actuate(self, colony: Colony, port: int, value: int):
-        """T32: the four feats. Wear only on state-changing actuations."""
-        from machines import ACTUATOR_NAMES, ACTUATOR_WEAR, ALARM_STRENGTH, VALVE_FOOD_COST
+        """T32: the four feats. Wear only on state-changing actuations.
+
+        K10 amendment: port 7 is the TERMINAL - the sandboxed shell,
+        available once a PI controller has run TERMINAL_UNLOCK ticks."""
+        from machines import (ACTUATOR_NAMES, ACTUATOR_WEAR, ALARM_STRENGTH,
+                              VALVE_FOOD_COST, VM_FUEL)
+        if port == 7:
+            if any(getattr(c, 'fuel_cap', VM_FUEL) > VM_FUEL
+                   and c.operate_ticks >= TERMINAL_UNLOCK
+                   for c in getattr(colony, 'controllers', None) or []):
+                self._terminal_command(colony, value)
+            return
         kind = ACTUATOR_NAMES[port % len(ACTUATOR_NAMES)]
         device = self._device(colony, kind)
         if device is None:
@@ -3108,6 +3450,14 @@ class SandKingsSimulation:
                     lambda port, c=colony: self._sensor_value(c, port),
                     lambda port, value, c=colony: self._actuate(c, port, value))
                 controller.durability -= CONTROLLER_DECAY
+                # K10: the pi's programs begin probing the glass
+                from machines import VM_FUEL as _BASE_FUEL
+                if (getattr(controller, 'fuel_cap', _BASE_FUEL) > _BASE_FUEL
+                        and controller.operate_ticks == TERMINAL_UNLOCK
+                        and not getattr(colony, '_probing_logged', False)):
+                    colony._probing_logged = True
+                    self._log_event(f"House {self._house_name(colony)}'s"
+                                    " programs begin probing the glass")
                 if (controller.operate_ticks == RE_OPERATE_TICKS
                         and colony.machine_arc == 'claimed'):
                     colony.machine_arc = 'unlocked'
@@ -3457,6 +3807,9 @@ class SandKingsSimulation:
         if survivors:
             colony.house = self._house_name(parent)
             colony.generation = getattr(parent, 'generation', 1) + 1
+            # K11: awakening survives in the bloodline
+            colony.breached = getattr(parent, 'breached', False)
+            colony.worshipped = getattr(parent, 'worshipped', False)
         colony.founded_step = self.step_count
         self.colonies[index] = colony
         self._kin_epoch = getattr(self, '_kin_epoch', 0) + 1  # kin map stale
@@ -3508,6 +3861,15 @@ class SandKingsSimulation:
                     colony.maw.eat(HARVEST_YIELD)
                     if voxel == VoxelType.CORPSE:  # T42: bones from the fallen
                         colony.bone = getattr(colony, 'bone', 0) + 1
+                    elif (nx, ny, nz) in getattr(self, 'keeper_manna', ()):
+                        # K3: a witnessed miracle - the god is revealed
+                        self.keeper_manna.discard((nx, ny, nz))
+                        colony.keeper_fed_step = self.step_count
+                        if not getattr(colony, 'worshipped', False):
+                            colony.worshipped = True
+                            self._log_event(
+                                f"House {self._house_name(colony)} begins"
+                                " to worship the hand that feeds")
                     unit.forage_target = None
                     if unit.brain_layer is not None:
                         unit.brain_layer.food_gathered += 10
@@ -3609,6 +3971,11 @@ class SandKingsSimulation:
                     self._posture(colony) == "FORTIFY"
                     or getattr(colony.genome, 'defense_investment', 0.0) > 0.5):
                 acted = self._palisade_step(unit, colony)
+
+            # (6d) Castles (K5): reverence made visible in stone
+            if (not acted and colony.maw.food_stored > WAR_CHEST
+                    and self.keeper_attitude(colony) == 'reverent'):
+                acted = self._castle_step(unit, colony)
 
             # (7) No work known: random dig
             if not acted and random.random() < colony.genome.tunnel_preference:

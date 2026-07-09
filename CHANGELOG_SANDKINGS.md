@@ -1,5 +1,35 @@
 # Sand Kings Changelog
 
+## 2.14.0 - The Keeper (SPEC_KEEPER.md K1-K12)
+
+- YOU are the keeper now. Keys: 1 drops food at the cursor, 2/3/4
+  release crickets/ants/scorpions, 5 sends a gift, 9 toggles the
+  drought, 0 lets the cat in, T speaks to a selected awakened unit.
+- Worship is earned: colonies attribute nothing to the automatic
+  dole - only a WITNESSED miracle (eating keeper-dropped manna) makes
+  them revere you. Withhold food after they've believed and their
+  carvings twist to wrath, and they mobilize faster.
+- Carvings: every colony inscribes its soul into the sand as a single
+  icon - reverence, wrath, war, hunger, contentment - readable at a
+  glance and named in the look panel.
+- Castles: reverent, rich colonies raise stone crenellations to their
+  god.
+- The Outer Limits arc (autoplayed by default): the keeper is
+  indifferent, then the cat gets in; slay it and the grieving keeper
+  answers with drought and scorpions, then relents.
+- Gifts from the gods: a watch (machines exist), a calculator (a VM),
+  a raspberry pi (the god-brain: double fuel). Claiming advances a
+  colony's machine arc.
+- The Breach & the Awakening: a pi-wielding colony that masters its
+  in-sim terminal breaks past the glass, gains self-awareness anchors
+  (self/god/beyond/speak, 39-seed lexicon), and SPEAKS - the inspect
+  panel shows its utterance, and you can answer (T). The awakened
+  hear you; the un-awakened hear noise.
+- SAFETY: the "terminal" and "breach" are pure in-sim fiction - no
+  host code execution, no filesystem, no network, ever. Deliberate
+  and permanent.
+
+
 ## 2.13.0 - Isometric Sprite View (SPEC_LIVE_VIEW R36)
 
 - TAB now cycles THREE views: TOPDOWN -> SLICE -> ISO. The ISO view

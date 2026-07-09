@@ -34,6 +34,7 @@ ANCHOR_SEEDS = [
     "storm", "death", "enemy", "victory", "siege", "jealousy", "love",
     "clueless", "harvest", "farm", "drought", "gold", "ally", "betrayed",
     "gratitude", "dread", "machine", "radiation", "fire", "monster",
+    "self", "god", "beyond", "speak",  # M14: awakened anchors (K11)
 ]
 
 _VOCAB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -162,6 +163,13 @@ def build_context(unit, colony, sim) -> Dict[str, float]:
                        + abs(b.position[2] - z) <= 6
                        for b in (getattr(sim, 'fauna', None) or [])),
         "retreating": unit.retreating,
+        # M14 awakened context (K11): only breached minds think these
+        "breached": bool(getattr(colony, 'breached', False)),
+        "keeper_attitude": (sim.keeper_attitude(colony)
+                            if hasattr(sim, 'keeper_attitude') else 'none'),
+        "spoken_recently": (sim.step_count
+                            - getattr(unit, 'spoken_to_step', -10**9)) < 50,
+        "has_own_thought": getattr(unit, 'thought', '...') != '...',
         "wounded": unit.health < unit.max_health * 0.5,
         "is_soldier": unit.unit_type == UnitType.SOLDIER,
         "kills": getattr(unit.brain_layer, "kills", 0) if unit.brain_layer else 0,
@@ -234,6 +242,11 @@ def ground_truths(ctx: Dict) -> Dict[str, bool]:
         "radiation": ctx["rad_here"] >= 0.5,
         "fire": bool(ctx["fire_3"]),
         "monster": bool(ctx["beast_6"]),
+        # M14 (K11): the words exist before the minds that can think them
+        "self": bool(ctx["breached"]) and bool(ctx["has_own_thought"]),
+        "god": bool(ctx["breached"]) and ctx["keeper_attitude"] != 'none',
+        "beyond": bool(ctx["breached"]),
+        "speak": bool(ctx["breached"]) and bool(ctx["spoken_recently"]),
     }
 
 
@@ -241,6 +254,26 @@ def instincts_for(unit, colony, sim) -> List[str]:
     """Ground-truth-active anchors as seed words, lexicon order (M3)."""
     truths = ground_truths(build_context(unit, colony, sim))
     return [seed for seed in ANCHOR_SEEDS if truths[seed]]
+
+
+def compose_utterance(unit, colony, sim, max_words: int = 4) -> str:
+    """K12: a breached unit's active anchors rendered as speech.
+
+    The signals it emits at this moment, as a string - one vocabulary
+    word per active anchor (awakened anchors first; they are what it
+    has to say). Empty for un-breached colonies: they think, but they
+    do not yet speak.
+    """
+    if not getattr(colony, 'breached', False):
+        return ""
+    active = instincts_for(unit, colony, sim)
+    awakened = [a for a in active if a in ("self", "god", "beyond", "speak")]
+    ordered = awakened + [a for a in active if a not in awakened]
+    words = []
+    for anchor in ordered[:max_words]:
+        cluster = VOCABULARY.get(anchor, [anchor])
+        words.append(cluster[-1])  # the seed: its truest word
+    return " ".join(words)
 
 
 class ConceptProbe:

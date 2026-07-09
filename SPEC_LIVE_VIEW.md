@@ -266,6 +266,12 @@ this ledger is the canonical resolution.)
   - Scope bounds (documented): pheromone/storm overlays and mouse
     picking are TOPDOWN/SLICE-only; in ISO the look cursor is
     keyboard-driven and renders as a gold diamond at its column top.
+- **R37** (Round 8, SPEC_KEEPER.md K6) Keeper surfaces: keys 1
+  (drop food at cursor), 2/3/4 (crickets/ants/scorpions), 5 (gift),
+  9 (toggle drought), 0 (cat), T (speak to a selected breached unit);
+  carvings rendered as bright icons on the sand and named in the look
+  panel + legend; a red DROUGHT line in the HUD; keeper/awakening
+  EVENT_TINTS. Any keeper key disarms the autoplayed keeper.
 - **R32 (look cursor)** `I` toggles look mode (closing manager/saga):
   a gold-outlined keyboard cursor appears on the map (arrow keys move
   it, clamped to the map; UP/DOWN move the cursor while look mode is

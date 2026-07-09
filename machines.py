@@ -30,6 +30,8 @@ RAD_REACTOR_SEED = 0.5    # per step from the wreck's damaged core
 RAD_HOT = 2.0             # organic/electronic damage threshold
 RAD_MILD = 0.5            # mutation-catalysis threshold
 RAD_DECAY = 0.995         # field decay per step
+PI_FUEL = 128             # the raspberry pi gift's ops budget (K9)
+PI_DURABILITY = 480       # the god-brain endures
 RAD_MUTATION_MULT = 2.0   # genome/brain mutation multiplier in mild zones
 REPAIR_PER_COPPER = 80
 REPAIR_AT = 100
@@ -70,12 +72,15 @@ class Controller:
     """One microcontroller: program, persistent registers, tinkerer state."""
 
     def __init__(self, owner: int, program: Optional[List[Instr]] = None,
-                 ancient: bool = False):
+                 ancient: bool = False, fuel: Optional[int] = None,
+                 durability: Optional[int] = None):
         self.owner = owner
         self.ancient = ancient  # wreck-origin: re-drops as an artifact (T34)
         self.program: List[Instr] = list(program or DEMO_PROGRAM)[:VM_MAX_INSTR]
         self.registers = [0] * VM_REGISTERS
-        self.durability = ANCIENT_DURABILITY if ancient else DEVICE_DURABILITY
+        self.fuel_cap = fuel or VM_FUEL  # PI gifts run hotter (K9)
+        self.durability = durability if durability is not None else (
+            ANCIENT_DURABILITY if ancient else DEVICE_DURABILITY)
         self.operate_ticks = 0
         self.last_sense: Dict[int, int] = {}
         self.last_acts: List[Tuple[int, int]] = []
@@ -89,7 +94,7 @@ class Controller:
     def tick(self, sense, act) -> int:
         """One scan cycle: PC<-0, fuel-bounded; returns ops used (T30)."""
         pc = 0
-        fuel = VM_FUEL
+        fuel = getattr(self, 'fuel_cap', VM_FUEL)
         acts_done = 0
         self.last_sense = {}
         self.last_acts = []
@@ -141,7 +146,7 @@ class Controller:
             elif op == "JMP":
                 pc = max(0, min(n - 1, a))
         self.operate_ticks += 1
-        return VM_FUEL - fuel
+        return getattr(self, 'fuel_cap', VM_FUEL) - fuel
 
     def listing(self) -> List[str]:
         """QBasic-ish disassembly for the manager panel (T36)."""
