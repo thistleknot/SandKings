@@ -39,7 +39,7 @@ ANCHOR_SEEDS = [
     "hunt", "wounded", "home", "feast", "buried", "crowd", "alone", "rich",
     "storm", "death", "enemy", "victory", "siege", "jealousy", "love",
     "clueless", "harvest", "farm", "drought", "gold", "ally", "betrayed",
-    "gratitude", "dread",
+    "gratitude", "dread", "machine", "radiation",
 ]
 
 # Manual pruning: embedding neighbors that read wrong for the game
@@ -70,6 +70,8 @@ BLOCKLIST = {
     "harvest": {"moon", "seasons"},
     "farm": {"farms", "ranch"},
     "drought": {"droughts"},
+    "machine": {"used", "using", "gun", "machines"},
+    "radiation": {"detection", "detect", "detected"},
 }
 # Words too generic/odd to ever use, regardless of anchor
 GLOBAL_BLOCK = {"the", "of", "and", "a", "to", "in", "is", "it", "he",
@@ -117,6 +119,8 @@ FALLBACK = {
     "betrayed": ["deceived", "stabbed", "forsaken", "betrayed"],
     "gratitude": ["thanks", "debt", "grateful", "gratitude"],
     "dread": ["unease", "terror", "doom", "dread"],
+    "machine": ["device", "engine", "circuit", "machine"],
+    "radiation": ["glow", "fallout", "burning", "radiation"],
 }
 
 

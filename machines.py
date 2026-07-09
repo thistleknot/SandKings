@@ -23,7 +23,14 @@ VM_TICK = 5
 DEVICE_DURABILITY = 240
 DECAY_AMBIENT_INTERVAL = 100
 CONTROLLER_DECAY = 1
-ACTUATOR_WEAR = {'GATE': 2, 'VALVE': 2, 'BEACON': 2, 'ALARM': 1}
+ACTUATOR_WEAR = {'GATE': 2, 'VALVE': 2, 'BEACON': 2, 'ALARM': 1,
+                 'EXCAVATE': 2, 'DEPOSIT': 2, 'RAD': 3}
+RAD_EMISSION = 5.0        # field added per RAD actuation (T40)
+RAD_REACTOR_SEED = 0.5    # per step from the wreck's damaged core
+RAD_HOT = 2.0             # organic/electronic damage threshold
+RAD_MILD = 0.5            # mutation-catalysis threshold
+RAD_DECAY = 0.995         # field decay per step
+RAD_MUTATION_MULT = 2.0   # genome/brain mutation multiplier in mild zones
 REPAIR_PER_COPPER = 80
 REPAIR_AT = 100
 RE_OPERATE_TICKS = 400
@@ -38,7 +45,11 @@ ALARM_STRENGTH = 3.0
 
 SENSOR_NAMES = ("FOOD", "POP", "SEASON", "ENEMY", "CROPS", "STORM",
                 "GOLD", "MAWHP", "CLOCK")
-ACTUATOR_NAMES = ("GATE", "VALVE", "ALARM", "BEACON")
+# Base feats 0-3; GEO cartridge 4-5 (terraform); BIO cartridge 6 (T39/T40).
+# Cartridge actuators build only after reverse-engineering (the research).
+ACTUATOR_NAMES = ("GATE", "VALVE", "ALARM", "BEACON",
+                  "EXCAVATE", "DEPOSIT", "RAD")
+CARTRIDGE_KINDS = {"EXCAVATE": "GEO", "DEPOSIT": "GEO", "RAD": "BIO"}
 OPS = ("NOP", "LET", "MOV", "ADD", "SUB", "MUL", "DIV", "SENSE", "ACT",
        "IFC", "JMP")
 CMPS = ("<", "<=", "==", "!=", ">=", ">")
@@ -51,14 +62,20 @@ def _wrap16(v: int) -> int:
     return ((int(v) + 32768) % 65536) - 32768
 
 
+ANCIENT_DURABILITY = 720  # the wreck controller outlives the 2000-step
+                          # reverse-engineering arc even unrepaired (T34)
+
+
 class Controller:
     """One microcontroller: program, persistent registers, tinkerer state."""
 
-    def __init__(self, owner: int, program: Optional[List[Instr]] = None):
+    def __init__(self, owner: int, program: Optional[List[Instr]] = None,
+                 ancient: bool = False):
         self.owner = owner
+        self.ancient = ancient  # wreck-origin: re-drops as an artifact (T34)
         self.program: List[Instr] = list(program or DEMO_PROGRAM)[:VM_MAX_INSTR]
         self.registers = [0] * VM_REGISTERS
-        self.durability = DEVICE_DURABILITY
+        self.durability = ANCIENT_DURABILITY if ancient else DEVICE_DURABILITY
         self.operate_ticks = 0
         self.last_sense: Dict[int, int] = {}
         self.last_acts: List[Tuple[int, int]] = []

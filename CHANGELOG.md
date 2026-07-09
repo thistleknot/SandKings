@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.7.0] - 2026-07-08
+
+### Added - The Machine Age (SPEC_MACHINE_AGE.md, T28-T40)
+- **The crashed wreck**: one buried hull per world (Ξ shell, & salvage)
+  with a sealed interior and a claimable ancient CONTROLLER preloaded
+  with a siege-gate program; discovery ladder (glint -> known ->
+  uncovered -> claimed) with exact catalog events
+- **The microcontroller** (machines.py): a QBasic-flavored bounded
+  register VM - PLC scan cycle with PERSISTENT registers, 10-op ISA,
+  int16 wraparound, 64-op fuel (guaranteed halting), 2 actuations/tick
+- **Seven actuator feats** riding existing mechanisms: GATE (maw dome of
+  tunnel-wall - a sealed colony can't forage), VALVE (larder/bait FOOD
+  drops), ALARM (danger-pheromone burst outranking scouts), BEACON
+  (labor direction via known_food) + the GEO cartridge (EXCAVATE/
+  DEPOSIT terraforming - moats, drawbridges, burying enemy fields via
+  existing gravity/burial physics) and BIO cartridge (RAD emitter),
+  cartridges unlocked by reverse-engineering
+- **Radiation** (T40): the wreck's damaged reactor seeps a decaying,
+  diffusing field - hot zones burn flesh, circuits, and crops; MILD
+  zones catalyze mutation (x2 genome rates for lineages seated there):
+  evolution accelerant priced in ambient harm
+- **Component chain + decay**: 2 copper -> conductor, 1 gold -> contact,
+  4 salvage -> chassis (salvage is finite: the Machine Age can END);
+  devices wear per effective actuation, workers repair with copper;
+  brains contend with armor for the same copper
+- **The tinkering maw**: every 200 steps a hill-climb GP mutates the
+  controller's program and keeps what improves colony utility
+  (delta food + 15*pop - the same value the posture learner optimizes),
+  bootstrapped from the wreck's demo per the chess-findings law
+- **Worker AI v3**: haul/mine salvage, repair, build (fixed priority),
+  excavate toward the artifact - all below eating (temptation law)
+- **Manager PROGRAM panel**: live QBasic listing with SENSE values,
+  register footer, durability bars, tinker outcomes
+- **2 new anchors**: machine, radiation (33 total)
+
 ## [2.6.0] - 2026-07-08
 
 ### Added - The Political World (SPEC_POLITICS.md, P1-P15)

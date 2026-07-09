@@ -240,6 +240,22 @@
    "smell",
    "anxiety",
    "dread"
+  ],
+  "machine": [
+   "automatic",
+   "portable",
+   "uses",
+   "devices",
+   "device",
+   "machine"
+  ],
+  "radiation": [
+   "experiments",
+   "radioactive",
+   "oxygen",
+   "laser",
+   "exposure",
+   "radiation"
   ]
  }
 }

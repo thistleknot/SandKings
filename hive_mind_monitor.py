@@ -33,7 +33,7 @@ ANCHOR_SEEDS = [
     "hunt", "wounded", "home", "feast", "buried", "crowd", "alone", "rich",
     "storm", "death", "enemy", "victory", "siege", "jealousy", "love",
     "clueless", "harvest", "farm", "drought", "gold", "ally", "betrayed",
-    "gratitude", "dread",
+    "gratitude", "dread", "machine", "radiation",
 ]
 
 _VOCAB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -129,6 +129,14 @@ def build_context(unit, colony, sim) -> Dict[str, float]:
         "season": sim.season_index() if callable(getattr(sim, 'season_index', None)) else 0,
         "carrying_ore": getattr(unit, 'carrying', None) in ('copper', 'gold'),
         "colony_gold": getattr(colony, 'ore', {}).get('gold', 0),
+        "device_3": sum(
+            1 for d in getattr(colony, 'devices', [])
+            if d.position is not None
+            and max(abs(d.position[0] - x), abs(d.position[1] - y),
+                    abs(d.position[2] - z)) <= 3),
+        "carrying_salvage": getattr(unit, 'carrying', None) == 'salvage',
+        "rad_here": (sim.radiation_at(x, y)
+                     if callable(getattr(sim, 'radiation_at', None)) else 0.0),
         "has_ally": _political(sim, colony, "has_ally"),
         "recently_betrayed": _political(sim, colony, "recently_betrayed"),
         "recent_gift": _political(sim, colony, "recent_gift"),
@@ -215,6 +223,8 @@ def ground_truths(ctx: Dict) -> Dict[str, bool]:
         "betrayed": bool(ctx["recently_betrayed"]),
         "gratitude": bool(ctx["recent_gift"]),
         "dread": bool(ctx["hegemon_other"]),
+        "machine": ctx["device_3"] > 0 or bool(ctx["carrying_salvage"]),
+        "radiation": ctx["rad_here"] >= 0.5,
     }
 
 

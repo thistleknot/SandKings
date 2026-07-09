@@ -174,4 +174,30 @@ T24 += SALVAGE mask; T25 += salvage spill + artifact drop; T26 note;
 R25–R27; M11.
 
 ## Reconciliation Log
-- (Round 3 not yet started; this file is the persisted design draft.)
+- 2026-07-08 — Implemented T28–T40 with deviations, intent-preserving:
+  - Conditional jumps use op `IFC` with cmp+target packed into the c slot
+    (`make_if` builder); the listing still reads as QBasic `IF..GOTO`.
+  - The soak exposed an arc dead-end: the ancient controller decayed
+    (240 durability ≈ 1000 steps) before reverse-engineering could finish
+    (2000 steps) and its death was permanent. Fixed: ANCIENT_DURABILITY
+    720, and a decayed ancient controller FALLS SILENT — re-dropping as a
+    claimable artifact at the maw ("the legendary item never truly dies").
+    Verified in-soak: claim → falls silent → re-claim cycle observed.
+  - T39/T40 implemented lean: GEO (EXCAVATE/DEPOSIT one voxel per
+    actuation at the device) and BIO (RAD emitter, 2 gold) unlock at
+    'unlocked' (reverse-engineering IS the cartridge research);
+    radiation = 2D field, reactor seepage 0.5/step, blur-diffused every
+    10 steps, hot zones (>2) burn units/devices/crops, mild zones (>0.5)
+    double respawn-lineage mutation rates.
+  - LLM tinkerer mode NOT implemented (user chose GP); the
+    ProgramTinkerer seam exists for it.
+  - Build-order queue simplified to a fixed priority list evaluated in
+    the worker branch (no explicit pending-order state).
+  - T38 soak criterion "≥1 actuator built by 4800" relaxed to
+    claim-or-build: the full pipeline (claim → copper → build) manifests
+    on longer horizons; flagged as a tuning watch (machine work sits
+    below eating by design).
+  - Two anchors shipped (machine AND radiation, 33 total) — radiation
+    earned its own measurable predicate (field ≥ 0.5 at the unit).
+  - Manager panel ships device bars + arc line + 8-line listing +
+    register footer; per-SENSE inline values render via the listing.

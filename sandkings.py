@@ -85,6 +85,9 @@ COPPER_VEINS_PER_BAND = 2    # ore generation (T23)
 GOLD_CLUSTERS = 3
 MINE_TIME = 5                # worker-steps per ore voxel (T24)
 COPPER_ARMOR_HP = 10         # bonus max HP per armored soldier (T25)
+SALVAGE_MINE_TIME = 8        # worker-steps per SALVAGE voxel (T28)
+WRECK_NOTICE_RANGE = 6       # Chebyshev: exposed hull becomes known (T29)
+BUILD_MIN_FOOD = 60          # no machine work while poor (T37)
 
 
 class VoxelType(Enum):
@@ -100,13 +103,16 @@ class VoxelType(Enum):
     CROP_RIPE = 9      # Harvestable - food to everyone
     COPPER_ORE = 10    # Vein ore in strata stone (T23)
     GOLD_ORE = 11      # Deep cluster ore, non-renewable
+    HULL = 12          # Crashed wreck shell (T28)
+    SALVAGE = 13       # Wreck components - minable, non-renewable
 
     def is_tunnelable(self):
         return self in (VoxelType.SAND, VoxelType.AIR)
 
     def is_solid(self):
         return self in (VoxelType.STONE, VoxelType.GLASS, VoxelType.TUNNEL_WALL,
-                        VoxelType.COPPER_ORE, VoxelType.GOLD_ORE)
+                        VoxelType.COPPER_ORE, VoxelType.GOLD_ORE,
+                        VoxelType.HULL, VoxelType.SALVAGE)
 
 def box_blur(field: np.ndarray, passes: int = 2) -> np.ndarray:
     """Neighbor-mean smoothing via np.roll (wraps at edges); 2D or 3D fields."""
@@ -237,6 +243,42 @@ class VoxelWorld:
                         self.voxels[gx, gy, gz] = VoxelType.GOLD_ORE.value
                     gx = int(np.clip(gx + rng.integers(-1, 2), 2, w - 3))
                     gy = int(np.clip(gy + rng.integers(-1, 2), 2, h - 3))
+
+        # The crashed wreck (T28): one per world, buried in a random
+        # quadrant away from the oasis; salvage on side walls/floor only
+        # so the sealed roof survives gravity
+        self.wreck = None
+        if d >= 12:
+            cx, cy = w // 2, h // 2
+            for _ in range(60):
+                wx = int(rng.integers(8, w - 13))
+                wy = int(rng.integers(8, h - 13))
+                if (wx + 2 - cx) ** 2 + (wy + 2 - cy) ** 2 >= (OASIS_RADIUS + 6) ** 2:
+                    break
+            z0 = substrate_height + 1
+            x1, y1, z1 = wx + 5, wy + 5, z0 + 3
+            self.voxels[wx:x1, wy:y1, z0:z1] = VoxelType.HULL.value
+            self.voxels[wx + 1:x1 - 1, wy + 1:y1 - 1, z0 + 1] = VoxelType.AIR.value
+            shell = [(x, y, z) for x in range(wx, x1) for y in range(wy, y1)
+                     for z in range(z0, z1)
+                     if self.voxels[x, y, z] == VoxelType.HULL.value
+                     and z != z1 - 1]  # never the roof
+            rng.shuffle(shell)
+            interior_side = [(x, y, z) for (x, y, z) in shell if z == z0 + 1]
+            target = int(rng.integers(8, 13))
+            # interior-level cells first (>= 2 guarantee a crawl-hole),
+            # deduped against the rest of the shuffled shell
+            picks = list(dict.fromkeys(interior_side[:2] + shell))[:target]
+            for pos in picks:
+                self.voxels[pos] = VoxelType.SALVAGE.value
+            # bury it: a suspicious regular mound
+            for x in range(wx, x1):
+                for y in range(wy, y1):
+                    for z in range(z1, min(z1 + 2, d)):
+                        if self.voxels[x, y, z] == VoxelType.AIR.value:
+                            self.voxels[x, y, z] = VoxelType.SAND.value
+            self.wreck = {'min': (wx, wy, z0), 'max': (x1 - 1, y1 - 1, z1 - 1),
+                          'controller_pos': (wx + 2, wy + 2, z0 + 1)}
 
         # Glass walls + floor (applied last so they always win)
         self.voxels[0, :, :] = VoxelType.GLASS.value
@@ -726,6 +768,10 @@ class Visualizer:
                     color = (184, 115, 51)
                 elif voxel == VoxelType.GOLD_ORE:
                     color = (255, 208, 0)
+                elif voxel == VoxelType.HULL:
+                    color = (120, 130, 150)
+                elif voxel == VoxelType.SALVAGE:
+                    color = (170, 190, 210)
                 elif voxel == VoxelType.AIR:
                     if owner >= 0:
                         # Owned air = faint colony color
@@ -1009,6 +1055,15 @@ class SandKingsSimulation:
         if season == 2 and self.step_count % SPOIL_INTERVAL == 0:
             self._spoil_surface_food()
 
+        # 3f. MACHINE TICK (SPEC_MACHINE_AGE T37)
+        from machines import VM_TICK
+        if self.step_count % VM_TICK == 0 and getattr(self.world, 'wreck', None):
+            self._machine_tick()
+
+        # 3g. RADIATION (T40): the damaged reactor seeps; fields decay
+        if getattr(self.world, 'wreck', None):
+            self._radiation_tick()
+
         # 4. NEURAL PRUNING: Remove rarely activated weights every 50 steps
         if NEURAL_AVAILABLE and self.step_count % 50 == 0:
             for colony in self.colonies:
@@ -1027,6 +1082,10 @@ class SandKingsSimulation:
                 colony.farming = False
                 colony.ore = {'copper': 0, 'gold': 0}
                 colony.ore_struck = set()
+            for attr, default in (('machine_arc', 'none'), ('salvage', 0),
+                                  ('controllers', None), ('devices', None)):
+                if not hasattr(colony, attr):  # Round-3 attrs (T37)
+                    setattr(colony, attr, default if default is not None else [])
 
             # LEARNER decision tick (T26): posture biases gates, never rules
             if self.step_count % 25 == 0:
@@ -1404,12 +1463,15 @@ class SandKingsSimulation:
 
     def _haul_step(self, unit: SandKing, colony: Colony) -> bool:
         """T18 branch 2: carry mined ore to the maw (deposit at Chebyshev 2)."""
-        if unit.carrying not in ('copper', 'gold'):
+        if unit.carrying not in ('copper', 'gold', 'salvage'):
             return False
         mx, my, mz = colony.maw.position
         x, y, z = unit.position
         if max(abs(mx - x), abs(my - y), abs(mz - z)) <= 2:
-            colony.ore[unit.carrying] = colony.ore.get(unit.carrying, 0) + 1
+            if unit.carrying == 'salvage':
+                colony.salvage = getattr(colony, 'salvage', 0) + 1
+            else:
+                colony.ore[unit.carrying] = colony.ore.get(unit.carrying, 0) + 1
             unit.carrying = None
             return True
         self._step_toward(unit, colony.maw.position, colony)
@@ -1422,14 +1484,20 @@ class SandKingsSimulation:
             return False
         voxel = self.world.voxels[target]
         x, y, z = unit.position
-        if (voxel not in (VoxelType.COPPER_ORE.value, VoxelType.GOLD_ORE.value)
+        minable = (VoxelType.COPPER_ORE.value, VoxelType.GOLD_ORE.value,
+                   VoxelType.SALVAGE.value)
+        if (voxel not in minable
                 or max(abs(target[0] - x), abs(target[1] - y), abs(target[2] - z)) > 1):
             unit.mine_target = None
             unit.mine_progress = 0
             return False
         unit.mine_progress = getattr(unit, 'mine_progress', 0) + 1
-        if unit.mine_progress >= MINE_TIME:
-            kind = 'copper' if voxel == VoxelType.COPPER_ORE.value else 'gold'
+        work_needed = (SALVAGE_MINE_TIME
+                       if voxel == VoxelType.SALVAGE.value else MINE_TIME)
+        if unit.mine_progress >= work_needed:
+            kind = {VoxelType.COPPER_ORE.value: 'copper',
+                    VoxelType.GOLD_ORE.value: 'gold',
+                    VoxelType.SALVAGE.value: 'salvage'}[voxel]
             self.world.voxels[target] = VoxelType.AIR.value
             unit.carrying = kind
             unit.mine_target = None
@@ -1452,7 +1520,8 @@ class SandKingsSimulation:
         z0, z1 = max(0, z - radius), min(d, z + radius + 1)
         box = self.world.voxels[x0:x1, y0:y1, z0:z1]
         hits = np.argwhere((box == VoxelType.COPPER_ORE.value)
-                           | (box == VoxelType.GOLD_ORE.value))
+                           | (box == VoxelType.GOLD_ORE.value)
+                           | (box == VoxelType.SALVAGE.value))
         best, best_dist = None, None
         for hx, hy, hz in hits:
             pos = (int(hx) + x0, int(hy) + y0, int(hz) + z0)
@@ -1850,6 +1919,375 @@ class SandKingsSimulation:
             for colony in order:
                 self._run_policy_cascade(colony)
 
+    # ---- Machine Age (SPEC_MACHINE_AGE.md T28-T40) ----
+
+    def _wreck_artifact_pos(self) -> Optional[Tuple[int, int, int]]:
+        if not hasattr(self, 'wreck_artifact_pos'):
+            wreck = getattr(self.world, 'wreck', None)
+            self.wreck_artifact_pos = wreck['controller_pos'] if wreck else None
+        return self.wreck_artifact_pos
+
+    def _sensor_value(self, colony: Colony, port: int) -> int:
+        """T31 sensor ports (0-8)."""
+        if port == 0:
+            return int(colony.maw.food_stored)
+        if port == 1:
+            return len(colony.units)
+        if port == 2:
+            return self.season_index()
+        if port == 3:  # enemy-near-maw band
+            from politics import hostile as _hostile
+            mx, my, mz = colony.maw.position
+            band = 0
+            for other in self.colonies:
+                if not _hostile(self, colony.colony_id, other.colony_id):
+                    continue
+                for enemy in other.units:
+                    dist = (abs(enemy.position[0] - mx) + abs(enemy.position[1] - my)
+                            + abs(enemy.position[2] - mz))
+                    if dist <= 1:
+                        return 3
+                    if dist <= 5:
+                        band = max(band, 2)
+                    elif dist <= 15:
+                        band = max(band, 1)
+            return band
+        if port == 4:
+            return self._farm_counts(colony)[0]
+        if port == 5:
+            return int(self.storm_until > self.step_count)
+        if port == 6:
+            return getattr(colony, 'ore', {}).get('gold', 0)
+        if port == 7:
+            return int(100 * colony.maw.health / MAW_MAX_HEALTH)
+        if port == 8:
+            return self.step_count % SEASON_LENGTH
+        return 0
+
+    def _device(self, colony: Colony, kind: str):
+        for device in getattr(colony, 'devices', []):
+            if device.kind == kind:
+                return device
+        return None
+
+    def _actuate(self, colony: Colony, port: int, value: int):
+        """T32: the four feats. Wear only on state-changing actuations."""
+        from machines import ACTUATOR_NAMES, ACTUATOR_WEAR, ALARM_STRENGTH, VALVE_FOOD_COST
+        kind = ACTUATOR_NAMES[port % len(ACTUATOR_NAMES)]
+        device = self._device(colony, kind)
+        if device is None:
+            return  # the machine hums, waiting (T35)
+        effective = False
+        if kind == 'GATE':
+            close = value != 0
+            if close and not device.gate_closed:
+                mx, my, mz = colony.maw.position
+                cells = []
+                for nx, ny, nz in self.world.get_neighbors_3d((mx, my, mz), radius=1):
+                    if self.world.voxels[nx, ny, nz] != VoxelType.AIR.value:
+                        continue
+                    if any(u.position == (nx, ny, nz)
+                           for c in self.colonies for u in c.units):
+                        continue
+                    self.world.set_voxel(nx, ny, nz, VoxelType.TUNNEL_WALL,
+                                         colony_id=colony.colony_id)
+                    cells.append((nx, ny, nz))
+                device.gate_cells = cells
+                device.gate_closed = True
+                effective = True
+                self._milestone(colony, 'gate_slam',
+                                f"Colony {colony.colony_id}'s gate slams shut")
+            elif not close and device.gate_closed:
+                for pos in device.gate_cells:
+                    if self.world.voxels[pos] == VoxelType.TUNNEL_WALL.value:
+                        self.world.voxels[pos] = VoxelType.AIR.value
+                device.gate_cells = []
+                device.gate_closed = False
+                effective = True
+        elif kind == 'VALVE' and value >= 1:
+            if (device.position is not None
+                    and colony.maw.food_stored >= VALVE_FOOD_COST
+                    and self.world.voxels[device.position] == VoxelType.AIR.value):
+                colony.maw.food_stored -= VALVE_FOOD_COST
+                self.world.voxels[device.position] = VoxelType.FOOD.value
+                effective = True
+        elif kind == 'ALARM' and value != 0:
+            mx, my, mz = colony.maw.position
+            for dx, dy, dz in ((0, 0, 0), (1, 0, 0), (-1, 0, 0), (0, 1, 0),
+                               (0, -1, 0), (0, 0, 1), (0, 0, -1)):
+                pos = (mx + dx, my + dy, mz + dz)
+                if self.world.in_bounds(*pos):
+                    self.pheromones.deposit(pos, colony.colony_id,
+                                            PheromoneType.DANGER, ALARM_STRENGTH)
+            effective = True
+        elif kind == 'BEACON' and value != 0:
+            if (device.position is not None
+                    and device.position not in colony.known_food):
+                colony.known_food.append(device.position)
+                del colony.known_food[:-KNOWN_FOOD_CAP]
+                effective = True
+        elif kind in ('EXCAVATE', 'DEPOSIT') and value != 0:  # GEO (T39)
+            base = device.position or colony.maw.position
+            want = (VoxelType.SAND.value if kind == 'EXCAVATE'
+                    else VoxelType.AIR.value)
+            put = (VoxelType.AIR.value if kind == 'EXCAVATE'
+                   else VoxelType.SAND.value)
+            for nx, ny, nz in self.world.get_neighbors_3d(base, radius=1):
+                if self.world.voxels[nx, ny, nz] == want:
+                    self.world.voxels[nx, ny, nz] = put
+                    effective = True
+                    break
+        elif kind == 'RAD' and value != 0:  # BIO (T40)
+            from machines import RAD_EMISSION
+            base = device.position or colony.maw.position
+            self._radiation()[base[0], base[1]] += RAD_EMISSION
+            effective = True
+        if effective:
+            device.durability -= ACTUATOR_WEAR[kind]
+
+    def _radiation(self) -> np.ndarray:
+        """Lazy 2D radiation field (T40); checkpoint-guarded."""
+        if not hasattr(self, 'radiation') or self.radiation is None:
+            self.radiation = np.zeros((self.world.width, self.world.height),
+                                      dtype=np.float32)
+        return self.radiation
+
+    def radiation_at(self, x: int, y: int) -> float:
+        if not hasattr(self, 'radiation') or self.radiation is None:
+            return 0.0
+        return float(self.radiation[x, y])
+
+    def _radiation_tick(self):
+        """T40: reactor seepage, decay/diffusion, organic+electronic harm."""
+        from machines import RAD_DECAY, RAD_HOT, RAD_REACTOR_SEED
+        rad = self._radiation()
+        wreck = getattr(self.world, 'wreck', None)
+        if wreck is not None:
+            cx, cy, _ = wreck['controller_pos']
+            rad[cx, cy] += RAD_REACTOR_SEED
+        rad *= RAD_DECAY
+        if self.step_count % 10 == 0:
+            self.radiation = box_blur(rad, passes=1).astype(np.float32)
+            rad = self.radiation
+            # harm sweep: hot zones burn flesh, circuits, and crops
+            for colony in self.colonies:
+                for unit in colony.units[:]:
+                    ux, uy, _uz = unit.position
+                    if rad[ux, uy] > RAD_HOT:
+                        if unit.take_damage(1, 0.0):
+                            colony.remove_unit(unit)
+                            self.world.set_voxel(*unit.position, VoxelType.CORPSE)
+                for device in getattr(colony, 'devices', []):
+                    pos = device.position or colony.maw.position
+                    if rad[pos[0], pos[1]] > RAD_HOT:
+                        device.durability -= 1
+            for pos in list(self._crops().keys()):
+                if rad[pos[0], pos[1]] > RAD_HOT:
+                    self.world.voxels[pos] = VoxelType.SAND.value
+                    del self.crops[pos]
+
+    def _machine_tick(self):
+        """Phase 3f: discovery ladder, decay, VM execution, tinkering."""
+        from machines import (CONTROLLER_DECAY, DECAY_AMBIENT_INTERVAL,
+                              GPTinkerer, PROGRAM_REVIEW, RE_OPERATE_TICKS)
+        wreck = self.world.wreck
+        wmin, wmax = wreck['min'], wreck['max']
+
+        for colony in self.colonies:
+            if not colony.is_alive():
+                continue
+            for attr, default in (('machine_arc', 'none'), ('salvage', 0),
+                                  ('controllers', None), ('devices', None)):
+                if not hasattr(colony, attr):
+                    setattr(colony, attr, default if default is not None else [])
+
+            # discovery ladder (T29): any unit near the wreck AABB
+            if colony.machine_arc == 'none':
+                for unit in colony.units:
+                    x, y, z = unit.position
+                    if (wmin[0] - WRECK_NOTICE_RANGE <= x <= wmax[0] + WRECK_NOTICE_RANGE
+                            and wmin[1] - WRECK_NOTICE_RANGE <= y <= wmax[1] + WRECK_NOTICE_RANGE):
+                        if not getattr(self, '_glint_logged', False):
+                            self._glint_logged = True
+                            self._log_event("Something metallic glints in the sand")
+                        colony.machine_arc = 'known'
+                        break
+            if colony.machine_arc == 'known':
+                for unit in colony.units:
+                    x, y, z = unit.position
+                    if (wmin[0] - 1 <= x <= wmax[0] + 1
+                            and wmin[1] - 1 <= y <= wmax[1] + 1
+                            and wmin[2] - 1 <= z <= wmax[2] + 1):
+                        self._milestone(colony, 'wreck',
+                                        f"Colony {colony.colony_id} uncovers"
+                                        " the ancient wreck!", unit)
+                        break
+                # claim the artifact
+                artifact = self._wreck_artifact_pos()
+                if artifact is not None:
+                    for unit in colony.units:
+                        x, y, z = unit.position
+                        if max(abs(artifact[0] - x), abs(artifact[1] - y),
+                               abs(artifact[2] - z)) <= 1:
+                            from machines import Controller
+                            colony.controllers.append(
+                                Controller(colony.colony_id, ancient=True))
+                            colony.machine_arc = 'claimed'
+                            self.wreck_artifact_pos = None
+                            self._log_event(f"Colony {colony.colony_id} coaxes"
+                                            " the ancient machine to life")
+                            break
+
+            # decay (T33)
+            ambient = self.step_count % DECAY_AMBIENT_INTERVAL < 5
+            for device in list(colony.devices):
+                if ambient:
+                    device.durability -= 1
+                if device.durability <= 0:
+                    colony.devices.remove(device)
+                    self._log_event(f"Colony {colony.colony_id}'s"
+                                    f" {device.kind} sputters and dies")
+            for controller in list(colony.controllers):
+                if ambient:
+                    controller.durability -= 1
+                if controller.durability <= 0:
+                    colony.controllers.remove(controller)
+                    if getattr(controller, 'ancient', False):
+                        # the legendary item never truly dies: it falls
+                        # silent and awaits the next claimant (T34)
+                        self.wreck_artifact_pos = colony.maw.position
+                        colony.machine_arc = 'known'
+                        self._log_event(f"Colony {colony.colony_id}'s ancient"
+                                        " machine falls silent")
+                    else:
+                        self._log_event(f"Colony {colony.colony_id}'s controller"
+                                        " sputters and dies")
+
+            # execute (T30) + arc (T34) + tinker (T35)
+            for controller in colony.controllers:
+                controller.tick(
+                    lambda port, c=colony: self._sensor_value(c, port),
+                    lambda port, value, c=colony: self._actuate(c, port, value))
+                controller.durability -= CONTROLLER_DECAY
+                if (controller.operate_ticks == RE_OPERATE_TICKS
+                        and colony.machine_arc == 'claimed'):
+                    colony.machine_arc = 'unlocked'
+                    self._log_event(f"Colony {colony.colony_id} has"
+                                    " reverse-engineered the controller!")
+
+                if self.step_count % PROGRAM_REVIEW == 0:
+                    if not hasattr(self, '_tinkerer'):
+                        self._tinkerer = GPTinkerer()
+                    value = (colony.maw.food_stored + 15 * len(colony.units))
+                    last = getattr(controller, '_last_value', None)
+                    if last is not None:
+                        u = (value - last) / PROGRAM_REVIEW
+                        if controller._candidate is not None:
+                            baseline = (controller.u_ema
+                                        if controller.u_ema is not None else u)
+                            if u >= baseline:
+                                controller.last_outcome = "kept"
+                            else:
+                                controller.program = controller._incumbent
+                                controller.last_outcome = "reverted"
+                            controller._candidate = None
+                        controller.u_ema = (u if controller.u_ema is None
+                                            else 0.5 * controller.u_ema + 0.5 * u)
+                        controller._incumbent = list(controller.program)
+                        controller._candidate = self._tinkerer.propose(
+                            controller.program)
+                        controller.program = controller._candidate
+                        controller.reviews += 1
+                    controller._last_value = value
+
+    def _machine_work(self, unit: SandKing, colony: Colony) -> bool:
+        """Worker branch 5b (T37): repair -> build -> excavate to artifact."""
+        from machines import (CHASSIS_SALVAGE, CONDUCTOR_COPPER, CONTACT_GOLD,
+                              Device, Controller, MAX_CONTROLLERS_PER_COLONY,
+                              REPAIR_AT, REPAIR_PER_COPPER, DEVICE_DURABILITY)
+        if getattr(colony, 'machine_arc', 'none') == 'none':
+            return False
+        if colony.maw.food_stored <= BUILD_MIN_FOOD * (
+                0.75 if self._posture(colony) == "FORTIFY" else 1.0):
+            return False
+        x, y, z = unit.position
+
+        # repair an adjacent ailing device
+        for device in getattr(colony, 'devices', []) + getattr(colony, 'controllers', []):
+            pos = getattr(device, 'position', None) or colony.maw.position
+            if (device.durability < REPAIR_AT
+                    and colony.ore.get('copper', 0) >= 1
+                    and max(abs(pos[0] - x), abs(pos[1] - y), abs(pos[2] - z)) <= 2):
+                colony.ore['copper'] -= 1
+                device.durability = min(DEVICE_DURABILITY,
+                                        device.durability + REPAIR_PER_COPPER)
+                self._monitor(colony.colony_id).log_decision(
+                    self.step_count, self._unit_label(unit),
+                    f"repaired the {getattr(device, 'kind', 'controller')}",
+                    getattr(unit, 'thought', None))
+                return True
+
+        # build (crafting happens at the maw): fixed priority list
+        if colony.machine_arc in ('claimed', 'unlocked') and colony.controllers:
+            mx, my, mz = colony.maw.position
+            near_maw = max(abs(mx - x), abs(my - y), abs(mz - z)) <= 2
+            owned = {d.kind for d in colony.devices}
+            buildable = ['GATE', 'ALARM', 'VALVE', 'BEACON']
+            if colony.machine_arc == 'unlocked':  # GEO/BIO cartridges (T39)
+                buildable += ['EXCAVATE', 'DEPOSIT', 'RAD']
+            for kind in buildable:
+                if kind in owned:
+                    continue
+                if kind == 'RAD':
+                    if colony.ore.get('gold', 0) < 2:
+                        continue
+                    if not near_maw:
+                        return self._step_toward(unit, colony.maw.position, colony)
+                    colony.ore['gold'] -= 2
+                    colony.devices.append(Device(kind, colony.colony_id,
+                                                 (mx, my, mz)))
+                    self._milestone(colony, 'built_RAD',
+                                    f"Colony {colony.colony_id} builds a RAD emitter",
+                                    unit)
+                    return True
+                if colony.ore.get('copper', 0) < CONDUCTOR_COPPER:
+                    break
+                if not near_maw:
+                    return self._step_toward(unit, colony.maw.position, colony)
+                colony.ore['copper'] -= CONDUCTOR_COPPER
+                position = None
+                if kind == 'VALVE':
+                    position = (mx + 1, my, mz) if self.world.in_bounds(mx + 1, my, mz) else (mx, my, mz)
+                elif kind == 'BEACON':
+                    position = (mx, my + 1, mz) if self.world.in_bounds(mx, my + 1, mz) else (mx, my, mz)
+                elif kind in ('EXCAVATE', 'DEPOSIT'):
+                    position = (mx - 1, my, mz) if self.world.in_bounds(mx - 1, my, mz) else (mx, my, mz)
+                colony.devices.append(Device(kind, colony.colony_id, position))
+                self._milestone(colony, f'built_{kind}',
+                                f"Colony {colony.colony_id} builds a {kind}",
+                                unit)
+                return True
+            if (colony.machine_arc == 'unlocked'
+                    and len(colony.controllers) < MAX_CONTROLLERS_PER_COLONY
+                    and colony.salvage >= CHASSIS_SALVAGE
+                    and colony.ore.get('copper', 0) >= 2 * CONDUCTOR_COPPER
+                    and colony.ore.get('gold', 0) >= CONTACT_GOLD):
+                if not near_maw:
+                    return self._step_toward(unit, colony.maw.position, colony)
+                colony.salvage -= CHASSIS_SALVAGE
+                colony.ore['copper'] -= 2 * CONDUCTOR_COPPER
+                colony.ore['gold'] -= CONTACT_GOLD
+                colony.controllers.append(Controller(colony.colony_id))
+                self._log_event(f"Colony {colony.colony_id} assembles"
+                                " a controller from salvage")
+                return True
+
+        # excavate toward the unclaimed artifact
+        artifact = self._wreck_artifact_pos()
+        if colony.machine_arc == 'known' and artifact is not None:
+            return self._step_toward(unit, artifact, colony)
+        return False
+
     def _apply_maw_siege_damage(self):
         """Units adjacent to an enemy Maw damage it (SPEC T4/T14).
 
@@ -2026,7 +2464,15 @@ class SandKingsSimulation:
         w, h, d = self.world.dimensions
         survivors = [c for c in self.colonies if c.is_alive()]
         if survivors:
-            genome = random.choice(survivors).genome.mutate(0.15)
+            parent = random.choice(survivors)
+            # T40 mutation catalysis: a lineage seated in mild radiation
+            # evolves faster (priced in ambient harm)
+            from machines import RAD_MILD, RAD_MUTATION_MULT
+            px, py, _ = parent.maw.position
+            rate = 0.15
+            if RAD_MILD <= self.radiation_at(px, py):
+                rate *= RAD_MUTATION_MULT
+            genome = parent.genome.mutate(rate)
         else:
             genome = ColonyGenome()
             genome.aggression = random.uniform(0.5, 1.0)
@@ -2161,6 +2607,10 @@ class SandKingsSimulation:
             if not acted and getattr(colony, 'farming', False) and (
                     self._sow_window_open() or self.in_oasis(x, y)):
                 acted = self._farm_step(unit, colony)
+
+            # (5b) Machine work (T37): repair > build > excavate to the wreck
+            if not acted:
+                acted = self._machine_work(unit, colony)
 
             # (5c) Tend an allied crop (P10): +1 progress per visit-step
             if not acted:

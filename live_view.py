@@ -60,6 +60,8 @@ GLYPHS = {                 # DF-style terrain glyphs (spec R18/R22)
     VoxelType.CROP_RIPE.value: "*",
     VoxelType.COPPER_ORE.value: "£",
     VoxelType.GOLD_ORE.value: "$",
+    VoxelType.HULL.value: "Ξ",
+    VoxelType.SALVAGE.value: "&",
 }
 COPPER_TINT = (184, 115, 51)  # armored soldier letters (R22)
 UNIT_GLYPHS = {UnitType.WORKER: "w", UnitType.SOLDIER: "s", UnitType.SCOUT: "c"}
@@ -104,6 +106,8 @@ def build_voxel_palette() -> np.ndarray:
     palette[VoxelType.CROP_RIPE.value] = (190, 220, 60)
     palette[VoxelType.COPPER_ORE.value] = (184, 115, 51)
     palette[VoxelType.GOLD_ORE.value] = (255, 208, 0)
+    palette[VoxelType.HULL.value] = (120, 130, 150)
+    palette[VoxelType.SALVAGE.value] = (170, 190, 210)
     return palette
 
 
@@ -444,6 +448,27 @@ def build_manager_entries(sim: SandKingsSimulation,
         entries.append((line[:76], color))
     if not soldiers:
         entries.append(("  (no soldiers alive)", (140, 140, 150)))
+
+    arc = getattr(colony, 'machine_arc', 'none') if colony else 'none'
+    if arc != 'none':  # PROGRAM panel (SPEC_MACHINE_AGE T36)
+        steel = (150, 200, 220)
+        entries.append(("", HUD_FG))
+        salvage = getattr(colony, 'salvage', 0)
+        entries.append((f"MACHINE: {arc} · salvage {salvage}", steel))
+        for device in getattr(colony, 'devices', []):
+            entries.append((f"  {device.kind:<8}{hp_bar(device.durability / 240)}"
+                            f" {device.durability}/240", steel))
+        for controller in getattr(colony, 'controllers', [])[:1]:
+            entries.append((f"  CONTROLLER {hp_bar(controller.durability / 240)}"
+                            f" ticks:{controller.operate_ticks}"
+                            f" U:{controller.u_ema if controller.u_ema is None else round(controller.u_ema, 2)}"
+                            f" reviews:{controller.reviews} ({controller.last_outcome})",
+                            steel))
+            for line in controller.listing()[:8]:
+                entries.append((f"   {line}"[:76], (120, 160, 175)))
+            regs = " ".join(f"R{i}={v}" for i, v in
+                            enumerate(controller.registers[:6]))
+            entries.append((f"   {regs}", (110, 140, 155)))
 
     entries.append(("", HUD_FG))
     entries.append(("DECISIONS", (120, 180, 220)))

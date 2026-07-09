@@ -80,6 +80,9 @@ def test_crop_lifecycle_timing_and_harvest():
     sim = make_sim()
     clear_units(sim)
     colony = sim.colonies[0]
+    # sterile: wild food within grab range would outrank the crop (T18)
+    for vt in (VoxelType.FOOD.value, VoxelType.CORPSE.value):
+        sim.world.voxels[sim.world.voxels == vt] = VoxelType.AIR.value
     pos = (5, 5, 6)
     sim.world.voxels[pos] = VoxelType.CROP.value
     sim.world.voxels[5, 5, 7:] = VoxelType.AIR.value
