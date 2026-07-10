@@ -1,5 +1,20 @@
 # Sand Kings Changelog
 
+## 2.19.0 - Augments (SPEC_AUGMENTS.md AUG1-AUG5)
+
+- The awakened can UPGRADE themselves. A raspberry-pi colony invokes a
+  pre-wrapped terminal call (no engineering) to install a KV-cache-style
+  memory augment: its soldiers keep a bank of recent hidden states and
+  blend that cached context into their decisions - a longer effective
+  memory, the transformer's KV cache generalized to the unit's brain.
+- Learned, not auto-granted: the augment must be invoked; each level
+  widens the cache, bounded at AUG_MAX. The upgrade persists in the
+  bloodline. The raw decoded thought (probes) is unchanged - only
+  behavior gains memory.
+- Surfaced as a "mem+N" badge on the inspect panel and House cards;
+  "House X augments its mind with cached memory" enters the chronicle.
+
+
 ## 2.17.1 - Courtship & Supersedure (mating drama)
 
 - Maw mating is now political theatre. Reproduction prefers a COURTSHIP

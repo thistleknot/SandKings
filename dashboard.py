@@ -90,6 +90,7 @@ def build_state(sim: SandKingsSimulation) -> Dict:
             "generation": int(getattr(colony, 'generation', 1)),
             "worshipped": bool(getattr(colony, 'worshipped', False)),
             "breached": bool(getattr(colony, 'breached', False)),
+            "augment": int(getattr(colony, 'memory_augment', 0)),
             "utterance": str(utterance),
         })
     saga = [text for _s, text, _sal in saga_rows(

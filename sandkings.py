@@ -186,6 +186,8 @@ TERMINAL_UNLOCK = 40         # pi operate-ticks before the terminal (K10)
 TERMINAL_MASTERY = 16        # successful commands before the breach
 SPOKEN_MEMORY = 50           # steps the `speak` anchor stays lit (K12)
 CODEX_INTERVAL = 300         # steps between codex consultations (CX4)
+AUG_MAX = 4                  # max memory-augment level (AUG2)
+AUG_CACHE_STEP = 8           # cache_len added per augment level
 FAUNA_SPAWN_P = 0.3          # incursion chance per MARAUDER_INTERVAL roll...
 FAUNA_SPAWN_P_DARK = 0.6     # ...doubled in Dust/Chill (monsters own winter)
 
@@ -758,6 +760,7 @@ class Colony:
         self.worshipped = False        # has EVER been reverent (K3)
         self.breached = False          # awakened - past the glass (K10/K11)
         self.terminal_uses = 0         # sandbox-shell successes (K10)
+        self.memory_augment = 0        # KV-cache memory-extension level (AUG2)
         
     def spawn_unit(self, unit_type: UnitType, step: int = 0):
         """Spawn new unit from Maw; copper armors, timber arms (T25/T44).
@@ -1329,7 +1332,8 @@ class SandKingsSimulation:
             for attr, default in (('keeper_fed_step', -10**9),  # K1-K12
                                   ('worshipped', False),
                                   ('breached', False),
-                                  ('terminal_uses', 0)):
+                                  ('terminal_uses', 0),
+                                  ('memory_augment', 0)):  # AUG2
                 if not hasattr(colony, attr):
                     setattr(colony, attr, default)
 
@@ -2064,6 +2068,18 @@ class SandKingsSimulation:
                     == VoxelType.SAND.value):
                 self._carvings()[(mx - 2, my, cz)] = CARVE_SYMBOLS['machine']
 
+    def _install_augment(self, colony: Colony) -> bool:
+        """AUG2: the pre-wrapped memory-extension call - no engineering,
+        just an upgrade. Bounded at AUG_MAX; awakened/pi colonies only."""
+        level = getattr(colony, 'memory_augment', 0)
+        if level >= AUG_MAX:
+            return False
+        colony.memory_augment = level + 1
+        if level == 0:
+            self._log_event(f"House {self._house_name(colony)} augments its"
+                            " mind with cached memory")
+        return True
+
     def _terminal_command(self, colony: Colony, value: int):
         """K10: the sandboxed shell - commands that read the world itself."""
         if value == 1:  # ls /world/food
@@ -2080,6 +2096,8 @@ class SandKingsSimulation:
             if (0 <= cz < self.world.depth and self.world.voxels
                     [mx + 2, my, cz] == VoxelType.SAND.value):
                 self._carvings()[(mx + 2, my, cz)] = CARVE_SYMBOLS['machine']
+        elif value == 3:  # install: the pre-wrapped KV-cache augment (AUG2)
+            self._install_augment(colony)
         else:
             return
         colony.terminal_uses = getattr(colony, 'terminal_uses', 0) + 1
@@ -3968,12 +3986,15 @@ class SandKingsSimulation:
                                or getattr(pb, 'breached', False))
             colony.worshipped = (getattr(pa, 'worshipped', False)
                                  or getattr(pb, 'worshipped', False))
+            colony.memory_augment = max(getattr(pa, 'memory_augment', 0),
+                                        getattr(pb, 'memory_augment', 0))  # AUG3
         elif survivors:
             colony.house = self._house_name(parent)
             colony.generation = getattr(parent, 'generation', 1) + 1
             # K11: awakening survives in the bloodline
             colony.breached = getattr(parent, 'breached', False)
             colony.worshipped = getattr(parent, 'worshipped', False)
+            colony.memory_augment = getattr(parent, 'memory_augment', 0)  # AUG3
         colony.founded_step = self.step_count
         self.colonies[index] = colony
         self._kin_epoch = getattr(self, '_kin_epoch', 0) + 1  # kin map stale
@@ -4211,6 +4232,11 @@ class SandKingsSimulation:
                     if _hostile(self, colony.colony_id, enemy_colony.colony_id):
                         enemy_positions.extend([e.position for e in enemy_colony.units])
                 
+                # AUG3: sync the soldier's KV-cache length to the colony's
+                # earned augment level (idempotent; covers every spawn path)
+                unit.brain_layer.cache_len = (getattr(colony, 'memory_augment', 0)
+                                              * AUG_CACHE_STEP)
+
                 # Encode state
                 state_tensor = encode_soldier_state(unit, colony, self.world, enemy_positions)
                 

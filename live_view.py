@@ -136,6 +136,7 @@ EVENT_TINTS = (            # substring -> HUD color (spec R19/R24)
     ("no longer a wall", (255, 255, 255)),
     ("SPEAKS", (255, 255, 255)),
     ("fall as noise", (150, 150, 160)),
+    ("augments its mind", (150, 180, 255)),
 )
 PHEROMONE_OVERLAYS = (None, PheromoneType.FOOD_TRAIL, PheromoneType.TERRITORY,
                       PheromoneType.DANGER)  # P-key cycle (spec R17)
@@ -574,7 +575,9 @@ def build_inspect_entries(sim: SandKingsSimulation,
                         f"  food {obj.maw.food_stored:.0f}"
                         f"  units {len(obj.units)}", color))
         posture = sim._posture(obj) if hasattr(sim, '_posture') else "?"
-        entries.append((f"  posture {posture}", (170, 200, 140)))
+        aug = getattr(obj, 'memory_augment', 0)
+        entries.append((f"  posture {posture}"
+                        + (f"   mem+{aug}" if aug else ""), (170, 200, 140)))
         g = obj.genome
         entries.append((f"  agg {g.aggression:.2f} pat "
                         f"{getattr(g, 'patience', 0.5):.2f} loy "

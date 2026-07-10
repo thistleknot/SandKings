@@ -46,6 +46,7 @@ SALIENCE = [
     ("SPEAKS", 10),
     ("no longer a wall", 10),
     ("worship", 8),
+    ("augments its mind", 8),
     ("hateful", 8),
     ("castle", 8),
     ("god-brain", 8),

@@ -202,6 +202,8 @@ class SoldierLayer(nn.Module):
     Soldiers mate when they encounter each other (combat or cooperation)
     """
     
+    AUG_BLEND = 0.3  # weight of the cached-context summary (SPEC_AUGMENTS)
+
     def __init__(self, encoding_dim: int = 32, action_dim: int = 7):
         super().__init__()
 
@@ -211,6 +213,12 @@ class SoldierLayer(nn.Module):
 
         # Single output layer (soldier's "personality")
         self.output = nn.Linear(encoding_dim, action_dim)
+
+        # KV-cache-style memory extension (AUG1): cache_len 0 = off, so a
+        # default layer is byte-for-byte unchanged. The bank holds recent
+        # hidden states; forward blends their mean into the action state.
+        self.cache_len = 0
+        self.mem_bank: List[torch.Tensor] = []
 
         # Performance tracking
         self.kills = 0
@@ -227,14 +235,32 @@ class SoldierLayer(nn.Module):
         """Map shared encoding through recurrent memory to action probabilities.
 
         Hidden state persists across calls (one soldier's life) and is
-        detached each step so no autograd graph accumulates.
+        detached each step so no autograd graph accumulates. With a memory
+        augment (cache_len > 0), a summary of cached past states extends
+        the effective context feeding the action head (AUG1); the raw
+        hidden the probes read is unchanged.
         """
         squeeze = encoding.dim() == 1
         h_in = encoding.unsqueeze(0) if squeeze else encoding
         if self.hidden is None or self.hidden.shape != h_in.shape:
             self.hidden = torch.zeros_like(h_in)
+            self.mem_bank = []
         self.hidden = self.memory(h_in, self.hidden).detach()
-        logits = self.output(self.hidden)
+
+        effective = self.hidden
+        cache_len = getattr(self, 'cache_len', 0)
+        if cache_len > 0:
+            bank = getattr(self, 'mem_bank', None)
+            if bank is None:
+                bank = self.mem_bank = []
+            if bank:
+                ctx = torch.stack(bank, dim=0).mean(dim=0)
+                effective = self.hidden + self.AUG_BLEND * ctx
+            bank.append(self.hidden)
+            if len(bank) > cache_len:
+                bank.pop(0)
+
+        logits = self.output(effective)
         probs = torch.softmax(logits, dim=-1)
         return probs.squeeze(0) if squeeze else probs
     
