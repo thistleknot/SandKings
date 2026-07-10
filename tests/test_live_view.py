@@ -353,6 +353,30 @@ def test_full_loop_headless_auto_exit():
     assert viewer.steps_done == 5
 
 
+def test_attached_viewer_shares_runner_and_mirrors():
+    # U2/U8: a viewer built on a TerrariumRunner shares its sim/lock and never
+    # owns stepping; with mirror on it snapshots the glyph surface to PNG.
+    import pygame
+
+    from dashboard import TerrariumRunner
+    sim = make_sim()
+    runner = TerrariumRunner(sim)
+    viewer = LiveViewer(runner)  # attached mode
+    assert viewer.sim is sim and viewer.runner is runner
+    assert viewer._owns_runner is False
+    # pause proxies the runner (one truth across window and web)
+    viewer.paused = True
+    assert runner.paused is True
+    # snapshot the glyph surface (throttle bypassed)
+    pygame.init()
+    viewer._screen = pygame.display.set_mode((64, 48))
+    viewer._screen.fill((18, 18, 28))
+    viewer._last_mirror_ms = -10 ** 9
+    viewer._mirror_snapshot()
+    pygame.quit()
+    assert runner.glyph_png and runner.glyph_png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

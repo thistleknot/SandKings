@@ -123,6 +123,20 @@ def test_control_pacing():
     assert runner.paused is True and runner.sps == 20.0
 
 
+def test_glyph_mirror_endpoint_and_toggle():
+    """U8: /api/glyph.png is 204 until the desktop window posts a snapshot;
+    the control toggle flips runner.mirror; a set snapshot serves as PNG."""
+    client, runner = client_for(make_sim())
+    assert client.get("/api/glyph.png").status_code == 204, "empty until mirrored"
+    assert runner.mirror is False, "mirror off by default"
+    body = client.post("/api/control", json={"mirror": True}).json()
+    assert body["mirror"] is True and runner.mirror is True
+    runner.glyph_png = b"\x89PNG\r\n\x1a\nfake-frame"
+    resp = client.get("/api/glyph.png")
+    assert resp.status_code == 200 and resp.headers["content-type"] == "image/png"
+    assert client.post("/api/control", json={"mirror": False}).json()["mirror"] is False
+
+
 def test_no_dangerous_imports():
     """DB1/DB8: the dashboard never reaches the shell or the network."""
     path = os.path.join(os.path.dirname(os.path.dirname(

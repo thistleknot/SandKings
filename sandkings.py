@@ -5008,6 +5008,19 @@ def main():
     parser.add_argument('--height', type=int, default=40, help='World height')
     parser.add_argument('--depth', type=int, default=20, help='World depth')
     parser.add_argument('--use-neural', action='store_true', help='Use neural hive minds (requires PyTorch)')
+    # U5: the web chat/keeper console attaches to the SAME sim as the live
+    # window (one tank, one step counter). On by default; --no-web for a
+    # desktop-only run that imports no fastapi/uvicorn.
+    parser.add_argument('--web', action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help='Live mode: attach the web console (chat + keeper '
+                        'actions) on --host:--port. Use --no-web to disable.')
+    parser.add_argument('--host', type=str, default='127.0.0.1',
+                        help='Live mode web console bind host (default 127.0.0.1)')
+    parser.add_argument('--port', type=int, default=8010,
+                        help='Live mode web console port (default 8010)')
+    parser.add_argument('--save-every', type=int, default=600,
+                        help='Autosave cadence in steps when --persist is set')
     args = parser.parse_args()
     
     print("="*60)
@@ -5059,7 +5072,8 @@ def main():
         sys.modules.setdefault('sandkings', sys.modules[__name__])
         from live_view import run_live
         run_live(sim, max_steps=args.steps, steps_per_second=args.sps,
-                 save_path=args.persist)
+                 save_path=args.persist, serve=args.web, host=args.host,
+                 port=args.port, save_every=args.save_every)
         print("\n" + sim.get_status())
         return
 

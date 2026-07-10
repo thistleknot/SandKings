@@ -416,6 +416,58 @@ Termination conditions: user quit (ESC/close) OR steps_done reaching max_steps.
   - Given a fresh viewer, Then the render style defaults to GLYPH and `R`
     toggles to BLOCKS and back (test_r_key_toggles_render_style).
 
+## 8. Unified Engine (U1–U7)
+
+The desktop glyph window and the FastAPI web console are two VIEWS of ONE
+simulation, not two sims. A single `TerrariumRunner` (`dashboard.py`) is the
+sole owner/stepper; every other surface attaches to it and shares its lock.
+
+- **U1 — Single writer.** `TerrariumRunner` owns the sim, one
+  `threading.Lock`, a background daemon stepping thread (`_loop`, steps under
+  the lock at `sps`), and autosave (`save_every`). It is the ONLY code that
+  calls `sim.step()` in any interactive run. The web-only entry
+  (`dashboard.main`) and the desktop entry (`run_live`) both construct the
+  same `runner` + `create_app(runner)` pair.
+- **U2 — LiveViewer is a viewer/controller.** `LiveViewer` no longer owns
+  stepping. Its constructor accepts EITHER a `TerrariumRunner` (attached mode)
+  or a bare `SandKingsSimulation` (standalone mode: it wraps the sim in a
+  runner internally and steps it synchronously through the pacer — the
+  deterministic path the tests exercise). In attached mode `steps_done`
+  mirrors `sim.step_count`, so the on-screen counter equals the browser's.
+- **U3 — One lock covers step + render + verbs.** The runner steps under the
+  lock; `LiveViewer._render` reads the sim under the same lock (on-screen
+  render reads `world.voxels` in place AND consumes the global `np.random`
+  stream via storm-haze, and the manager screen lazily creates monitors/
+  probes); every keeper key handler (feed/bugs/gift/drought/cat/speak) runs
+  under the lock; `runner.single_step()` steps once under the lock while
+  paused. Web endpoints already hold the lock. `render_frame_png` (web) is
+  pure numpy/PIL and RNG-free.
+- **U4 — Controls map to the runner.** SPACE ⇒ `runner.paused`; `+/-` ⇒
+  `pacer.faster/slower` mirrored to `runner.sps`; `S` (while paused) ⇒
+  `runner.single_step()`; `K` ⇒ `runner.save()`; ESC ends the window and the
+  entrypoint calls `runner.stop()` (single save path — `_save_terrarium` is
+  removed). Render free-runs at 60fps decoupled from sim rate.
+- **U5 — Web attached by default from the CLI.** `sandkings.py --live` starts
+  the runner and, unless `--no-web`, launches `create_app(runner)` under
+  uvicorn on a DAEMON thread bound to `--host` (default 127.0.0.1) / `--port`
+  (default 8010). pygame stays on the MAIN thread. Desktop-only (`--no-web`)
+  imports no fastapi/uvicorn.
+- **U6 — Web is controls + chat by default.** The browser page shows the
+  keeper buttons (feed/bugs/gift/drought/pause) and per-house chat; the old
+  low-res top-down PNG is removed from the page (the glyph window is the
+  visual surface). `/api/frame.png` + `render_frame_png` remain in code
+  (unused by the page, still importable/testable).
+- **U7 — Web-only headless unchanged.** `dashboard.main` still runs the runner
+  + uvicorn on the main thread with no pygame (the Docker/console path).
+- **U8 — Optional glyph-view mirror.** A browser toggle (`Mirror View`) sets
+  `runner.mirror`; while on, the desktop window snapshots its REAL pygame
+  glyph surface to `runner.glyph_png` at most every `MIRROR_MIN_MS` (700ms,
+  main-thread only, atomic ref swap), and the page polls `/api/glyph.png`
+  (~1.2s) to show it. Off by default — zero render/encode cost when unused.
+  Web-only mode (no desktop window) has no snapshot: `/api/glyph.png` returns
+  204 and the toggle flashes a hint. This is the opt-in "same view from two
+  angles," throttled so it never tries to mirror every frame.
+
 ## 7. Reconciliation Log
 
 - 2026-07-07 — Implemented as specced with three deviations/discoveries:

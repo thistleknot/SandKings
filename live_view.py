@@ -10,6 +10,7 @@ raises; the sim stepping is clamped per frame so slow (neural) steps degrade
 speed instead of freezing the UI.
 """
 
+import threading
 from enum import Enum
 from typing import List, Optional, Tuple
 
@@ -35,6 +36,7 @@ DEFAULT_CELL_SIZE = 12
 DEFAULT_STEPS_PER_SECOND = 5.0
 SPS_MIN, SPS_MAX = 0.5, 60.0
 MAX_STEPS_PER_FRAME = 10
+MIRROR_MIN_MS = 700  # U8: min wall-ms between glyph-view mirror snapshots
 RETREAT_BORDER_COLOR = (255, 0, 255)
 RETREAT_FILL_FACTOR = 0.4
 MAX_WINDOW = (1600, 900)
@@ -924,22 +926,34 @@ class LiveViewer:
     pygame.init/quit are bracketed inside run().
     """
 
-    def __init__(self, sim: SandKingsSimulation, cell_size: int = DEFAULT_CELL_SIZE,
+    def __init__(self, target, cell_size: int = DEFAULT_CELL_SIZE,
                  steps_per_second: float = DEFAULT_STEPS_PER_SECOND,
                  max_steps: Optional[int] = None,
                  save_path: Optional[str] = None):
+        # U2: attach to a TerrariumRunner (the shared engine), or wrap a bare
+        # sim in one so the standalone/test path keeps a single, deterministic
+        # lock discipline. Either way the viewer never steps the sim itself.
+        from dashboard import TerrariumRunner
+        if isinstance(target, TerrariumRunner):
+            self.runner = target
+            self._owns_runner = False
+            if save_path is None:
+                save_path = target.save_path
+        else:
+            self.runner = TerrariumRunner(target, sps=steps_per_second,
+                                          save_path=save_path)
+            self._owns_runner = True
         self.save_path = save_path  # sqlite terrarium db (spec T13); None = off
-        self.sim = sim
-        w, h = sim.world.width, sim.world.height
+        self.sim = self.runner.sim
+        w, h = self.sim.world.width, self.sim.world.height
         self.cell_size = max(2, min(cell_size,
                                     (MAX_WINDOW[0] - HUD_WIDTH) // w,
                                     MAX_WINDOW[1] // h))
-        self.pacer = StepPacer(steps_per_second)
+        self.pacer = StepPacer(self.runner.sps)
         self.max_steps = max_steps
         self.steps_done = 0
-        self.paused = False
         self.view_mode = ViewMode.TOPDOWN
-        self.z_level = sim.world.depth - 1  # surface view (spec R14)
+        self.z_level = self.sim.world.depth - 1  # surface view (spec R14)
         self.capturing = False
         self.overlay_index = 0  # index into PHEROMONE_OVERLAYS (spec R17)
         self.render_style = RenderStyle.GLYPH  # dazzle by default (spec R18)
@@ -948,7 +962,7 @@ class LiveViewer:
         self.saga_open = False      # SPEC_DYNASTIES D5
         self.legend_open = False    # R34
         self.look_mode = False      # R32 look cursor
-        self.cursor = (sim.world.width // 2, sim.world.height // 2)
+        self.cursor = (self.sim.world.width // 2, self.sim.world.height // 2)
         self.inspected = None       # ('unit'|'maw'|'beast', object) (R33)
         self.follow = False         # R33 follow mode
         self._select_cycle = 0      # V/ENTER cycles column inhabitants
@@ -959,6 +973,16 @@ class LiveViewer:
         self._cell_font = None
         self._maw_font = None
         self._glyph_cache: dict = {}  # (char, color, big) -> Surface
+        self._last_mirror_ms = 0      # U8: last glyph-mirror snapshot tick
+
+    @property
+    def paused(self) -> bool:
+        """U4: pause is the runner's state - one truth across window and web."""
+        return self.runner.paused
+
+    @paused.setter
+    def paused(self, value: bool) -> None:
+        self.runner.paused = bool(value)
 
     def run(self) -> None:
         pygame.init()
@@ -980,25 +1004,42 @@ class LiveViewer:
                 for event in pygame.event.get():
                     self._handle_event(event)
 
-                owed = self.pacer.update(dt, self.paused)
-                stepped = False
-                for _ in range(owed):
-                    self.sim.step()
-                    self.steps_done += 1
-                    stepped = True
-                    if self.max_steps is not None and self.steps_done >= self.max_steps:
+                if self._owns_runner:
+                    # U2 standalone/deterministic: pace and step synchronously
+                    # (the test path). Clamp so steps_done lands exactly on
+                    # max_steps rather than overshooting a partial frame.
+                    owed = self.pacer.update(dt, self.paused)
+                    if self.max_steps is not None:
+                        owed = max(0, min(owed, self.max_steps - self.steps_done))
+                    stepped = owed > 0
+                    self.steps_done += self.runner.step_owed(owed)
+                    if (self.max_steps is not None
+                            and self.steps_done >= self.max_steps):
                         self.running = False
-                        break
+                else:
+                    # U2 attached: the runner thread owns stepping; the window
+                    # only advances the pacer (HUD sps) and mirrors the count so
+                    # the on-screen counter equals the browser's.
+                    self.pacer.update(dt, self.paused)
+                    self.steps_done = self.sim.step_count
+                    stepped = False
+                    if (self.max_steps is not None
+                            and self.steps_done >= self.max_steps):
+                        self.running = False
 
                 self._render()
                 if self.capturing and stepped:
                     self._capture_frame()
+                if not self._owns_runner and self.runner.mirror:
+                    self._mirror_snapshot()
 
             assert self.max_steps is None or self.steps_done <= self.max_steps
             self._save_capture()
         finally:
-            if self.save_path:
-                self._save_terrarium()
+            # U4: one save path - the owner of the runner stops (and saves) it.
+            # In attached mode the entrypoint stops the shared runner after run().
+            if self._owns_runner:
+                self.runner.stop()
             pygame.quit()
 
     def _handle_event(self, event) -> None:
@@ -1011,7 +1052,7 @@ class LiveViewer:
             elif key == pygame.K_SPACE:
                 self.paused = not self.paused
             elif key == pygame.K_s and self.paused:
-                self.pacer.request_single_step()
+                self.runner.single_step()  # U4: one locked step while paused
             # DF-style z-navigation (spec R8a): '<' rises, '>' descends.
             # Must be checked before the speed branch, which shares , and .
             elif event.unicode == '<' or (key == pygame.K_COMMA and
@@ -1022,8 +1063,10 @@ class LiveViewer:
                 self.z_level = max(0, self.z_level - 1)
             elif key in (pygame.K_PLUS, pygame.K_EQUALS, pygame.K_PERIOD, pygame.K_KP_PLUS):
                 self.pacer.faster()
+                self.runner.sps = self.pacer.steps_per_second  # U4
             elif key in (pygame.K_MINUS, pygame.K_COMMA, pygame.K_KP_MINUS):
                 self.pacer.slower()
+                self.runner.sps = self.pacer.steps_per_second  # U4
             elif self.look_mode and key in (pygame.K_UP, pygame.K_DOWN,
                                             pygame.K_LEFT, pygame.K_RIGHT):
                 dx = {pygame.K_LEFT: -1, pygame.K_RIGHT: 1}.get(key, 0)
@@ -1074,35 +1117,45 @@ class LiveViewer:
                     self.inspected = targets[self._select_cycle % len(targets)]
                     self._select_cycle += 1
                     self.follow = False
-            # K1/K6/K9/K12: the keeper's hands (any keeper key disarms auto)
+            # K1/K6/K9/K12: the keeper's hands (any keeper key disarms auto).
+            # U3: every verb runs under the runner lock, serialized against
+            # the background stepping thread.
             elif key == pygame.K_1:
-                self.sim.keeper_auto = False
                 if not self.look_mode:
                     self.look_mode = True
-                self.sim.keeper_drop_food(*self.cursor)
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    self.sim.keeper_drop_food(*self.cursor)
             elif key == pygame.K_2:
-                self.sim.keeper_auto = False
-                self.sim.keeper_release('cricket')
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    self.sim.keeper_release('cricket')
             elif key == pygame.K_3:
-                self.sim.keeper_auto = False
-                self.sim.keeper_release('ant')
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    self.sim.keeper_release('ant')
             elif key == pygame.K_4:
-                self.sim.keeper_auto = False
-                self.sim.keeper_release('scorpion')
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    self.sim.keeper_release('scorpion')
             elif key == pygame.K_5:
-                self.sim.keeper_auto = False
-                self.sim.keeper_gift(pos=self.cursor)
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    self.sim.keeper_gift(pos=self.cursor)
             elif key == pygame.K_9:
-                self.sim.keeper_auto = False
-                self.sim.keeper_drought(not getattr(self.sim, 'drought',
-                                                    False))
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    self.sim.keeper_drought(not getattr(self.sim, 'drought',
+                                                        False))
             elif key == pygame.K_0:
-                self.sim.keeper_auto = False
-                self.sim.keeper_release_cat()
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    self.sim.keeper_release_cat()
             elif (key == pygame.K_t and self.inspected is not None
                   and self.inspected[0] == 'unit'
                   and target_alive(self.sim, self.inspected)):
-                self.sim.keeper_speak(self.inspected[1])  # K12
+                with self.runner.lock:
+                    self.sim.keeper_speak(self.inspected[1])  # K12
             elif key == pygame.K_f and self.inspected is not None:
                 self.follow = not self.follow  # R33
             elif key == pygame.K_e:  # D11: the terrarium writes its book
@@ -1117,9 +1170,10 @@ class LiveViewer:
                                if self.manager_colony in ids else 0)
                     self.manager_colony = ids[(current + step_by) % len(ids)]
             elif key == pygame.K_k and self.save_path:
-                self._save_terrarium()
-                if hasattr(self.sim, '_log_event'):
-                    self.sim._log_event("The keeper preserves the terrarium")
+                self.runner.save()  # U4: single save path
+                with self.runner.lock:
+                    if hasattr(self.sim, '_log_event'):
+                        self.sim._log_event("The keeper preserves the terrarium")
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             # R32: a click IS the look cursor
             if not (self.manager_open or self.saga_open or self.legend_open):
@@ -1155,6 +1209,14 @@ class LiveViewer:
                                     cy + (span - surface.get_height()) // 2))
 
     def _render(self) -> None:
+        # U3: the whole on-screen render reads sim state (voxels in place) and
+        # may consume the global np.random stream (storm haze) or lazily build
+        # monitors/probes on the manager screen - all under the runner lock so
+        # it never races the background stepping thread.
+        with self.runner.lock:
+            self._render_body()
+
+    def _render_body(self) -> None:
         cell = self.cell_size
         w, h = self.sim.world.width, self.sim.world.height
 
@@ -1532,11 +1594,23 @@ class LiveViewer:
             return 0 if position[2] == self.z_level else None
         return unit_visible_depth(self.sim.world, position, self.z_level)
 
-    def _save_terrarium(self) -> None:
-        """Checkpoint the sim into the sqlite terrarium db (spec T13)."""
-        from sandkings import save_checkpoint
-        save_checkpoint(self.sim, self.save_path)
-        print(f"[S] Terrarium saved to {self.save_path} at step {self.sim.step_count}")
+    def _mirror_snapshot(self) -> None:
+        """U8: throttled snapshot of the live glyph surface -> runner.glyph_png
+        so the web console can mirror the desktop view. Main-thread only (reads
+        the pygame surface); the byte-string ref swap is atomic under the GIL,
+        so the web thread reads it without a lock."""
+        now = pygame.time.get_ticks()
+        if now - self._last_mirror_ms < MIRROR_MIN_MS:
+            return
+        self._last_mirror_ms = now
+        from io import BytesIO
+
+        from PIL import Image
+        raw = pygame.image.tobytes(self._screen, "RGB")
+        img = Image.frombytes("RGB", self._screen.get_size(), raw)
+        buf = BytesIO()
+        img.save(buf, "PNG")
+        self.runner.glyph_png = buf.getvalue()
 
     def _capture_frame(self) -> None:
         frame = pygame.surfarray.array3d(self._screen).transpose(1, 0, 2)
@@ -1554,7 +1628,31 @@ class LiveViewer:
 
 def run_live(sim: SandKingsSimulation, max_steps: Optional[int] = None,
              steps_per_second: float = DEFAULT_STEPS_PER_SECOND,
-             save_path: Optional[str] = None) -> None:
-    """Entry point from sandkings.main(): open the live window and block until done."""
-    LiveViewer(sim, steps_per_second=steps_per_second, max_steps=max_steps,
-               save_path=save_path).run()
+             save_path: Optional[str] = None, serve: bool = False,
+             host: str = "127.0.0.1", port: int = 8010,
+             save_every: int = 600) -> None:
+    """Entry point from sandkings.main(): the pygame window on the MAIN thread,
+    driven by ONE shared TerrariumRunner (U1). When `serve`, the web console
+    attaches to the SAME runner via uvicorn on a daemon thread (U5), so the
+    on-screen and browser step counters are one and the same. Desktop-only
+    (`serve=False`) imports no fastapi/uvicorn."""
+    from dashboard import TerrariumRunner
+    runner = TerrariumRunner(sim, sps=steps_per_second, save_path=save_path,
+                             save_every=save_every)
+    runner.start()  # the single writer: background stepping under the lock
+    server = None
+    if serve:
+        from dashboard import create_app
+        import uvicorn
+        config = uvicorn.Config(create_app(runner), host=host, port=port,
+                                log_level="warning")
+        server = uvicorn.Server(config)
+        threading.Thread(target=server.run, daemon=True).start()
+        print(f"[keeper] web console attached on http://{host}:{port}")
+    try:
+        LiveViewer(runner, steps_per_second=steps_per_second,
+                   max_steps=max_steps).run()
+    finally:
+        if server is not None:
+            server.should_exit = True
+        runner.stop()  # autosaves once

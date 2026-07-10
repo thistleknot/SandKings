@@ -212,6 +212,12 @@ class TerrariumRunner:
         self.save_every = save_every
         self._stop = False
         self._thread: Optional[threading.Thread] = None
+        # U8: optional glyph-view mirror. The desktop window snapshots its
+        # pygame surface into `glyph_png` only while `mirror` is on (a browser
+        # toggle); the web /api/glyph.png serves the latest snapshot. Ref
+        # swaps are atomic under the GIL, so no lock is needed for these.
+        self.mirror = False
+        self.glyph_png: Optional[bytes] = None
 
     def start(self):
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -234,13 +240,30 @@ class TerrariumRunner:
         while not self._stop:
             t0 = time.time()
             if not self.paused:
-                with self.lock:
-                    self.sim.step()
-                if (self.save_path and self.sim.step_count
-                        and self.sim.step_count % self.save_every == 0):
-                    self.save()
+                self._step_once()
             delay = max(0.0, 1.0 / max(0.5, self.sps) - (time.time() - t0))
             time.sleep(delay)
+
+    def _step_once(self):
+        """One locked step + the autosave check. The single place stepping
+        and periodic persistence happen (U1)."""
+        with self.lock:
+            self.sim.step()
+        if (self.save_path and self.sim.step_count
+                and self.sim.step_count % self.save_every == 0):
+            self.save()
+
+    def single_step(self):
+        """U4: advance exactly one step while paused (the desktop S key)."""
+        if self.paused:
+            self._step_once()
+
+    def step_owed(self, n: int) -> int:
+        """U2: drive `n` steps synchronously (the standalone viewer loop's
+        deterministic path). Returns the count stepped."""
+        for _ in range(n):
+            self._step_once()
+        return n
 
 
 def create_app(runner: TerrariumRunner):
@@ -286,10 +309,20 @@ def create_app(runner: TerrariumRunner):
     class ControlBody(BaseModel):
         paused: Optional[bool] = None
         sps: Optional[float] = None
+        mirror: Optional[bool] = None
 
     @app.get("/", response_class=HTMLResponse)
     def index():
         return CONSOLE_HTML
+
+    @app.get("/api/glyph.png")
+    def glyph():
+        # U8: the latest desktop glyph-view snapshot (empty until the window
+        # is running with mirror on). 204 when there is nothing to show.
+        png = runner.glyph_png
+        if not png:
+            return Response(status_code=204)
+        return Response(content=png, media_type="image/png")
 
     @app.get("/api/state")
     def state():
@@ -385,7 +418,10 @@ def create_app(runner: TerrariumRunner):
             runner.paused = body.paused
         if body.sps is not None:
             runner.sps = max(0.5, min(60.0, body.sps))
-        return {"paused": runner.paused, "sps": runner.sps}
+        if body.mirror is not None:
+            runner.mirror = bool(body.mirror)  # U8: glyph-view mirror toggle
+        return {"paused": runner.paused, "sps": runner.sps,
+                "mirror": runner.mirror}
 
     return app
 
@@ -480,15 +516,14 @@ button.act.breach{border-color:var(--breach);color:var(--breach)}
   <div class="chips" id="chips"></div>
 </header>
 <main>
-  <div class="stage">
-    <img id="frame" alt="terrarium" src="/api/frame.png">
-    <div class="hint">click the sand to scatter food</div>
-  </div>
+  <img id="glyph" alt="glyph view" style="display:none;max-width:100%;
+       image-rendering:pixelated;border:1px solid var(--line)">
   <div class="rail" id="rail"></div>
 </main>
 <div class="saga"><h3>The Saga</h3><div id="saga"></div></div>
 <div class="console"><div class="bar">
   <div class="grp"><span class="lab">Bounty</span>
+    <button class="act" onclick="feed()">Feed</button>
     <button class="act gold" onclick="post('/api/keeper/gift')">Gift</button></div>
   <div class="grp"><span class="lab">Creatures</span>
     <button class="act" onclick="release('cricket')">Crickets</button>
@@ -498,6 +533,7 @@ button.act.breach{border-color:var(--breach);color:var(--breach)}
     <button class="act wrath" id="droughtBtn" onclick="toggleDrought()">Withhold</button>
     <button class="act wrath" onclick="post('/api/keeper/cat')">The Cat</button></div>
   <div class="grp" style="margin-left:auto">
+    <button class="act" id="mirrorBtn" onclick="toggleMirror()">Mirror View</button>
     <button class="act" id="pauseBtn" onclick="togglePause()">Pause</button></div>
 </div></div>
 <div class="toast" id="toast"></div>
@@ -524,11 +560,19 @@ async function converse(id,inp){const box=document.getElementById(inp);
     if(d.understood){replies[id]=d.reply;flash('it answers: '+d.reply);}
     else{flash('the words fall as noise');}render();}
   if(box)box.value='';}
-document.getElementById('frame').addEventListener('click',e=>{
-  if(!state)return;const img=e.target,rect=img.getBoundingClientRect();
-  const wx=Math.floor((e.clientX-rect.left)/rect.width*state.world[0]);
-  const wy=Math.floor((e.clientY-rect.top)/rect.height*state.world[1]);
-  post('/api/keeper/food',{x:wx,y:wy});});
+function feed(){if(state)post('/api/keeper/food',{x:state.world[0]>>1,y:state.world[1]>>1});}
+let mirror=false, mirrorTimer=null, mirrorWarned=false;
+function toggleMirror(){
+  mirror=!mirror;mirrorWarned=false;
+  fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({mirror})});
+  document.getElementById('mirrorBtn').textContent=mirror?'Hide View':'Mirror View';
+  const img=document.getElementById('glyph');
+  if(mirror){img.style.display='';
+    if(!mirrorTimer)mirrorTimer=setInterval(()=>{img.src='/api/glyph.png?t='+Date.now();},1200);}
+  else{if(mirrorTimer){clearInterval(mirrorTimer);mirrorTimer=null;}img.style.display='none';}}
+document.getElementById('glyph').onerror=()=>{if(mirror&&!mirrorWarned){
+  mirrorWarned=true;flash('no glyph view yet — is the desktop window running?');}};
 function attClass(a){return a==='reverent'?'reverent':a==='wrathful'?'wrathful':'';}
 function sentWord(s,att){if(att==='wrathful'||s<0.33)return'hateful';
   if(s>0.66&&att==='reverent')return'devout';return'wary';}
@@ -580,7 +624,6 @@ function render(){
 async function poll(){try{const r=await fetch('/api/state');if(r.ok){state=await r.json();render();}}
   catch(e){}}
 setInterval(poll,500);
-setInterval(()=>{document.getElementById('frame').src='/api/frame.png?t='+Date.now();},600);
 poll();
 </script></body></html>"""
 
