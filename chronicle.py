@@ -56,6 +56,7 @@ SALIENCE = [
     ("withholds", 6),
     ("keeper's hand", 5),
     ("computes its fortunes", 6),
+    ("mints", 5),
     ("gift", 5),
     ("incursion", 5),
     ("flash flood", 6),

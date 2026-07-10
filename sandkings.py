@@ -188,6 +188,8 @@ SPOKEN_MEMORY = 50           # steps the `speak` anchor stays lit (K12)
 CODEX_INTERVAL = 300         # steps between codex consultations (CX4)
 AUG_MAX = 4                  # max memory-augment level (AUG2)
 AUG_CACHE_STEP = 8           # cache_len added per augment level
+GRAIN_SCALE = 60.0           # forecast error normaliser (CU2)
+GRAIN_MINT = 5.0             # grains for a perfect forecast
 FAUNA_SPAWN_P = 0.3          # incursion chance per MARAUDER_INTERVAL roll...
 FAUNA_SPAWN_P_DARK = 0.6     # ...doubled in Dust/Chill (monsters own winter)
 
@@ -761,6 +763,7 @@ class Colony:
         self.breached = False          # awakened - past the glass (K10/K11)
         self.terminal_uses = 0         # sandbox-shell successes (K10)
         self.memory_augment = 0        # KV-cache memory-extension level (AUG2)
+        self.currency = 0.0            # grains earned this maw's life (CU1)
         
     def spawn_unit(self, unit_type: UnitType, step: int = 0):
         """Spawn new unit from Maw; copper armors, timber arms (T25/T44).
@@ -1477,6 +1480,7 @@ class SandKingsSimulation:
         from telemetry import TELEMETRY_INTERVAL as _TI
         if self.step_count % _TI == 0 and self.step_count:
             self._telemetry().record(self)
+            self._score_forecasts()  # CU3: mint grains for true forecasts
 
         # 5b. DIPLOMACY (SPEC_POLITICS): a truce signed this step prevents
         # this step's bloodshed
@@ -2080,6 +2084,40 @@ class SandKingsSimulation:
             self.telemetry = Telemetry()
         return self.telemetry
 
+    def _house_grains(self) -> Dict[str, float]:
+        """Lifetime grains produced by each house (CU1); guarded."""
+        if not hasattr(self, 'house_grains'):
+            self.house_grains = {}
+        return self.house_grains
+
+    def _score_forecasts(self):
+        """CU3: the Bittensor loop - validate each due forecast against the
+        ground truth and mint grains for useful (accurate) work."""
+        minted = getattr(self, 'grains_minted', 0.0)
+        for colony in self.colonies:
+            forecast = getattr(colony, '_forecast', None)
+            if forecast is None or not colony.is_alive():
+                if forecast is not None and not colony.is_alive():
+                    colony._forecast = None  # a dead maw's bet is void
+                continue
+            predicted, target_step = forecast
+            if self.step_count < target_step:
+                continue
+            actual = colony.maw.food_stored
+            error = abs(predicted - actual) / GRAIN_SCALE
+            reward = max(0.0, 1.0 - error) * GRAIN_MINT
+            colony._forecast = None
+            if reward <= 0:
+                continue
+            colony.currency = getattr(colony, 'currency', 0.0) + reward
+            self.grains_minted = minted = minted + reward
+            house = self._house_name(colony)
+            grains = self._house_grains()
+            grains[house] = grains.get(house, 0.0) + reward
+            if reward >= GRAIN_MINT / 2:
+                self._log_event(f"House {house} mints {reward:.1f} grains"
+                                " with a true forecast")
+
     def _predict_tool(self, colony: Colony) -> bool:
         """TL3: the pre-wrapped regression call - a colony reads its own
         telemetry, foresees its fortunes, and prepares accordingly."""
@@ -2088,7 +2126,10 @@ class SandKingsSimulation:
         result = predict_food(rows)
         if result is None:
             return False
-        _predicted, slope = result
+        predicted, slope = result
+        # CU2: record the forecast so it can later be scored for grains
+        from telemetry import TELEMETRY_INTERVAL as _TI
+        colony._forecast = (float(predicted), self.step_count + _TI)
         if not getattr(colony, '_predicted_logged', False):
             colony._predicted_logged = True
             self._log_event(f"House {self._house_name(colony)} computes"

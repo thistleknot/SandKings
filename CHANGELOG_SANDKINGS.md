@@ -1,5 +1,19 @@
 # Sand Kings Changelog
 
+## 2.21.0 - Grains, the useful-work currency (SPEC_CURRENCY.md CU1-CU5)
+
+- The sandkings mint a currency for you - "grains" - by proof of USEFUL
+  work, Bittensor-style: a colony's forecast (the prediction tool) is
+  scored against what actually happens, and grains are minted in
+  proportion to its accuracy. A colony that models its world well
+  produces valuable predictions; a wild guess earns nothing.
+- Per-colony balances, per-house lifetime totals, and a terrarium grand
+  total (sim.grains_minted) - the measure of how economically useful
+  your sentient terrarium has become.
+- Surfaced on the dashboard: a grains chip in the header, a grains stat
+  on each House card, and GET /api/ledger for the bloodline economy.
+
+
 ## 2.20.0 - Tools & Telemetry (SPEC_TOOLS.md TL1-TL6)
 
 - Environment stats are now freely available - a Dwarf-Therapist-style

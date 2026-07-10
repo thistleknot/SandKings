@@ -91,6 +91,7 @@ def build_state(sim: SandKingsSimulation) -> Dict:
             "worshipped": bool(getattr(colony, 'worshipped', False)),
             "breached": bool(getattr(colony, 'breached', False)),
             "augment": int(getattr(colony, 'memory_augment', 0)),
+            "currency": round(float(getattr(colony, 'currency', 0.0)), 1),
             "utterance": str(utterance),
         })
     saga = [text for _s, text, _sal in saga_rows(
@@ -105,6 +106,7 @@ def build_state(sim: SandKingsSimulation) -> Dict:
         "dole_pct": int(round(sim.dole_factor() * 100)),
         "drought": bool(getattr(sim, 'drought', False)),
         "weather": weather,
+        "grains_minted": round(float(getattr(sim, 'grains_minted', 0.0)), 1),
         "world": [int(sim.world.width), int(sim.world.height)],
         "colonies": colonies,
         "saga": saga,
@@ -296,6 +298,17 @@ def create_app(runner: TerrariumRunner):
             data = {c.colony_id: tel.history(c.colony_id)
                     for c in runner.sim.colonies}
         return JSONResponse(data)
+
+    @app.get("/api/ledger")
+    def ledger():
+        # CU4: lifetime grains produced by each house (the bloodline economy)
+        with runner.lock:
+            return JSONResponse({
+                "grains_minted": round(float(getattr(
+                    runner.sim, 'grains_minted', 0.0)), 1),
+                "houses": {h: round(float(g), 1) for h, g
+                           in (getattr(runner.sim, 'house_grains', {}) or {}).items()},
+            })
 
     @app.post("/api/keeper/food")
     def food(body: FoodBody):
@@ -500,6 +513,7 @@ function render(){
   c.innerHTML=`<span class="chip"><b>Year ${state.year}</b> · ${state.season}</span>`+
     `<span class="chip">dole <b>${state.dole_pct}%</b></span>`+
     `<span class="chip">step <b>${state.step}</b></span>`+
+    (state.grains_minted?`<span class="chip"><b>${state.grains_minted}</b> grains</span>`:'')+
     (state.drought?`<span class="chip warn">DROUGHT</span>`:'')+
     state.weather.map(w=>`<span class="chip wx">${w}</span>`).join('');
   const rail=document.getElementById('rail');rail.innerHTML='';
@@ -511,10 +525,13 @@ function render(){
     let badges=(col.at_war?'<span class="badge war">war</span>':'')+
       (col.breached?'<span class="badge breach">awakened</span>':'');
     let inner=`<div class="name"><span class="dot ${attClass(col.attitude)}"></span>`+
-      `<b>${col.house}</b>${badges}</div>`+
+      `<b>${col.house}</b>${badges}`+
+      (col.augment?`<span class="badge breach">mem+${col.augment}</span>`:'')+
+      `</div>`+
       `<div class="stats"><span>pop <b>${col.pop}</b></span>`+
       `<span>food <b>${col.food}</b></span><span>maw <b>${col.maw_hp}%</b></span>`+
-      `<span>gen <b>${col.generation}</b></span></div>`+
+      `<span>gen <b>${col.generation}</b></span>`+
+      (col.currency?`<span>grains <b>${col.currency}</b></span>`:'')+`</div>`+
       (col.alive?`<div class="mood">${col.mood}</div>`:'');
     if(col.breached&&col.utterance)inner+=`<div class="says">says: "${col.utterance}"</div>`;
     if(selected===col.id&&col.breached&&col.alive){

@@ -139,6 +139,7 @@ EVENT_TINTS = (            # substring -> HUD color (spec R19/R24)
     ("augments its mind", (150, 180, 255)),
     ("computes its fortunes", (150, 180, 255)),
     ("foresees", (150, 200, 200)),
+    ("mints", (240, 210, 90)),
 )
 PHEROMONE_OVERLAYS = (None, PheromoneType.FOOD_TRAIL, PheromoneType.TERRITORY,
                       PheromoneType.DANGER)  # P-key cycle (spec R17)
