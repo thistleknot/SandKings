@@ -1,5 +1,34 @@
 # Sand Kings Changelog
 
+## 2.25.0 - Metamorphosis (canon; SPEC_METAMORPHOSIS.md MT1-MT6)
+
+- The novella's engine: a maw's armored insectoid mobiles "pop open" as it
+  grows and birth a NEW breed - bipedal, four-armed, tool-using. Reframes
+  the breach/awakening (K10/K11) as a canonical three-STAGE physical molt
+  on `colony.stage` {1 insectoid, 2 the new breed, 3 Shade}, size- and
+  cruelty-driven. `stage >= 2` IS `breached`, so every awakened capability
+  (codex CX, terminal K10, augments AUG, dialogue DL) lights up at the molt
+  with no new gate.
+- Molt to stage 2 (`_metamorphosis_tick`) when the maw is large enough -
+  `pop >= MOLT_POP·f` OR `food >= MOLT_FOOD·f` OR `age >= MOLT_AGE·f` - and
+  cruelty ACCELERATES it: `f = 0.6 + 0.4·keeper_sentiment`, so a mistreated,
+  low-sentiment maw molts sooner (Kress's cruelty drove the metamorphosis).
+  Constants MOLT_POP 26, MOLT_FOOD 420, MOLT_AGE 2400.
+- The Shade stage (3): a stage-2 colony that grows further (SHADE_POP 34 /
+  SHADE_FOOD 620) AND has actually mastered its machines (terminal_uses >=
+  TERMINAL_MASTERY) crosses the final plateau - "sentient, and no longer
+  needs its god" (the precondition for the Round D turning).
+- Size <-> intelligence, made heritable: `ColonyGenome.brain_ceiling` caps
+  `brain_hidden` in `mutate()` and rises with stage (STAGE_CEILING {1:88,
+  2:128, 3:160}), so a larger, older, more-mistreated maw evolves a bigger
+  brain. The gene rides inertly in non-neural sims and passes to cadet
+  branches with the stage.
+- Surfaced: the inspect panel shows "stage: insectoid/new breed/SHADE", the
+  dashboard House card badges the new breed / SHADE, EVENT_TINTS colour
+  "split open" (breach-blue) and "Shade stage" (white), and both events are
+  chronicled at high salience (9 / 10), firing exactly once each.
+
+
 ## 2.24.0 - The Canonical Houses (canon; SPEC_CANON_HOUSES.md CH1-CH4)
 
 - `--canon` (sandkings.py and dashboard.py) seats the novella's four

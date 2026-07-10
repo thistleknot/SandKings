@@ -90,6 +90,7 @@ def build_state(sim: SandKingsSimulation) -> Dict:
             "generation": int(getattr(colony, 'generation', 1)),
             "worshipped": bool(getattr(colony, 'worshipped', False)),
             "breached": bool(getattr(colony, 'breached', False)),
+            "stage": int(getattr(colony, 'stage', 1)),
             "augment": int(getattr(colony, 'memory_augment', 0)),
             "currency": round(float(getattr(colony, 'currency', 0.0)), 1),
             "sentiment": round(float(getattr(colony, 'keeper_sentiment', 0.5)), 2),
@@ -543,8 +544,9 @@ function render(){
     d.className='card'+(col.alive?'':' dead')+(selected===col.id?' sel':'');
     d.onclick=(ev)=>{if(ev.target.tagName==='INPUT'||ev.target.tagName==='BUTTON')return;
       selected=selected===col.id?null:col.id;render();};
+    let stageName=col.stage>=3?'SHADE':col.stage>=2?'new breed':'';
     let badges=(col.at_war?'<span class="badge war">war</span>':'')+
-      (col.breached?'<span class="badge breach">awakened</span>':'');
+      (stageName?`<span class="badge breach">${stageName}</span>`:'');
     let inner=`<div class="name"><span class="dot ${attClass(col.attitude)}"></span>`+
       `<b>${col.house}</b>${badges}`+
       (col.augment?`<span class="badge breach">mem+${col.augment}</span>`:'')+

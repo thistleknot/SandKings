@@ -140,6 +140,8 @@ EVENT_TINTS = (            # substring -> HUD color (spec R19/R24)
     ("god-brain", (150, 180, 255)),
     ("probing the glass", (150, 180, 255)),
     ("no longer a wall", (255, 255, 255)),
+    ("split open", (150, 180, 255)),
+    ("Shade stage", (255, 255, 255)),
     ("SPEAKS", (255, 255, 255)),
     ("fall as noise", (150, 150, 160)),
     ("augments its mind", (150, 180, 255)),
@@ -585,7 +587,9 @@ def build_inspect_entries(sim: SandKingsSimulation,
                         f"  units {len(obj.units)}", color))
         posture = sim._posture(obj) if hasattr(sim, '_posture') else "?"
         aug = getattr(obj, 'memory_augment', 0)
-        entries.append((f"  posture {posture}"
+        stage = getattr(obj, 'stage', 1)
+        stage_name = {1: "insectoid", 2: "new breed", 3: "SHADE"}.get(stage, "")
+        entries.append((f"  posture {posture}   stage: {stage_name}"
                         + (f"   mem+{aug}" if aug else ""), (170, 200, 140)))
         g = obj.genome
         entries.append((f"  agg {g.aggression:.2f} pat "

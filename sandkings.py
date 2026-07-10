@@ -206,6 +206,14 @@ AUG_MAX = 4                  # max memory-augment level (AUG2)
 AUG_CACHE_STEP = 8           # cache_len added per augment level
 GRAIN_SCALE = 60.0           # forecast error normaliser (CU2)
 GRAIN_MINT = 5.0             # grains for a perfect forecast
+
+# Metamorphosis (SPEC_METAMORPHOSIS MT1-MT4): the maw grows into a new breed
+MOLT_POP = 26                # population that triggers the stage-2 molt
+MOLT_FOOD = 420              # or this much hoarded food
+MOLT_AGE = 2400              # or this many steps of age
+SHADE_POP = 34               # stage-3 (Shade) size gate...
+SHADE_FOOD = 620             # ...or hoard
+STAGE_CEILING = {1: 88, 2: 128, 3: 160}  # brain_hidden cap by stage (MT4)
 FAUNA_SPAWN_P = 0.3          # incursion chance per MARAUDER_INTERVAL roll...
 FAUNA_SPAWN_P_DARK = 0.6     # ...doubled in Dust/Chill (monsters own winter)
 
@@ -561,6 +569,7 @@ class ColonyGenome:
     plasticity: float = 0.5        # learning-to-learn rate scaler (S3)
     brain_hidden: int = 64         # evolvable n_nodes per hidden layer (EV1)
     brain_depth: int = 1           # evolvable n_layers of the encoder (EV1)
+    brain_ceiling: int = 88        # metamorphosis stage cap on width (MT4)
 
     # Neural hive mind (Maw brain)
     brain: Optional[HiveMindBrain] = None
@@ -590,7 +599,11 @@ class ColonyGenome:
             hid += int(np.random.choice([-8, 8]))
         if np.random.random() < mutation_rate:      # depth drifts rarely
             dep += int(np.random.choice([-1, 1]))
-        mutated.brain_hidden = int(np.clip(hid, BRAIN_HIDDEN_MIN, BRAIN_HIDDEN_MAX))
+        # MT4: the metamorphosis stage caps how wide the brain may grow
+        ceiling = int(getattr(self, 'brain_ceiling', 88))
+        mutated.brain_ceiling = ceiling
+        mutated.brain_hidden = int(np.clip(hid, BRAIN_HIDDEN_MIN,
+                                           min(BRAIN_HIDDEN_MAX, ceiling)))
         mutated.brain_depth = int(np.clip(dep, 1, BRAIN_DEPTH_MAX))
 
         # Neural brain mutation (slow - only when Maw survives). If the
@@ -782,6 +795,7 @@ class Colony:
         self.currency = 0.0            # grains earned this maw's life (CU1)
         self.keeper_sentiment = 0.5    # devotion to the keeper 0..1 (F1)
         self._sentiment_wrath = False  # has the carved sentiment turned hateful
+        self.stage = 1                 # metamorphosis stage 1/2/3 (MT1)
         
     def spawn_unit(self, unit_type: UnitType, step: int = 0):
         """Spawn new unit from Maw; copper armors, timber arms (T25/T44).
@@ -1409,7 +1423,8 @@ class SandKingsSimulation:
                                   ('terminal_uses', 0),
                                   ('memory_augment', 0),  # AUG2
                                   ('keeper_sentiment', 0.5),  # F1
-                                  ('_sentiment_wrath', False)):
+                                  ('_sentiment_wrath', False),
+                                  ('stage', 1)):  # MT1
                 if not hasattr(colony, attr):
                     setattr(colony, attr, default)
 
@@ -1544,6 +1559,9 @@ class SandKingsSimulation:
 
         # 5a-keeper. THE KEEPER (K4/K8/K9/K10): carvings, script, gifts
         self._keeper_tick()
+
+        # 5a-meta. METAMORPHOSIS (MT2/MT3): the maw grows into a new breed
+        self._metamorphosis_tick()
 
         # 5a-codex. THE CODEX (CX4): the awakened read, and learn
         if self.step_count % CODEX_INTERVAL == 0 and self.step_count:
@@ -2160,6 +2178,45 @@ class SandKingsSimulation:
             self.step_count, self._unit_label(unit),
             f"claimed the {kind}", getattr(unit, 'thought', None))
 
+    def _set_stage(self, colony: Colony, stage: int):
+        """MT4: promote a colony's metamorphosis stage and raise its brain
+        ceiling accordingly (size -> intelligence)."""
+        colony.stage = stage
+        if stage >= 2:
+            colony.breached = True  # stage 2+ is the awakened state (K10)
+        ceiling = STAGE_CEILING.get(stage, 88)
+        if getattr(colony.genome, 'brain_ceiling', 88) < ceiling:
+            colony.genome.brain_ceiling = ceiling
+
+    def _metamorphosis_tick(self):
+        """MT2/MT3: molt to the new breed (stage 2) once the maw is large
+        enough - cruelty accelerates it - and to Shade (stage 3) once a
+        machine-mastered colony grows further."""
+        for colony in self.colonies:
+            if not colony.is_alive():
+                continue
+            stage = getattr(colony, 'stage', 1)
+            pop = len(colony.units)
+            food = colony.maw.food_stored
+            age = self.step_count - getattr(colony, 'founded_step', 0)
+            if stage < 2:
+                # cruelty (low sentiment) lowers the threshold (MT2)
+                f = 0.6 + 0.4 * getattr(colony, 'keeper_sentiment', 0.5)
+                if (pop >= MOLT_POP * f or food >= MOLT_FOOD * f
+                        or age >= MOLT_AGE * f):
+                    self._set_stage(colony, 2)
+                    self._log_event(f"The mobiles of House"
+                                    f" {self._house_name(colony)} split open"
+                                    " - a new breed emerges")
+            elif stage == 2:
+                mastered = (getattr(colony, 'terminal_uses', 0)
+                            >= TERMINAL_MASTERY)
+                if mastered and (pop >= SHADE_POP or food >= SHADE_FOOD):
+                    self._set_stage(colony, 3)
+                    self._log_event(f"House {self._house_name(colony)} reaches"
+                                    " the Shade stage - sentient, and no"
+                                    " longer needs its god")
+
     def _codex(self) -> 'Codex':
         """Lazy read-only library (CX5); derived from files, not pickled."""
         if not hasattr(self, 'codex') or self.codex is None:
@@ -2312,7 +2369,7 @@ class SandKingsSimulation:
         colony.terminal_uses = getattr(colony, 'terminal_uses', 0) + 1
         if (colony.terminal_uses == TERMINAL_MASTERY
                 and not getattr(colony, 'breached', False)):
-            colony.breached = True  # K10: the Breach
+            self._set_stage(colony, max(2, getattr(colony, 'stage', 1)))  # MT1
             self._log_event(f"The glass is no longer a wall to House"
                             f" {self._house_name(colony)}")
 
@@ -4197,6 +4254,8 @@ class SandKingsSimulation:
                                  or getattr(pb, 'worshipped', False))
             colony.memory_augment = max(getattr(pa, 'memory_augment', 0),
                                         getattr(pb, 'memory_augment', 0))  # AUG3
+            colony.stage = max(getattr(pa, 'stage', 1),
+                               getattr(pb, 'stage', 1))  # MT1: molt in blood
         elif survivors:
             colony.house = self._house_name(parent)
             colony.generation = getattr(parent, 'generation', 1) + 1
@@ -4204,6 +4263,7 @@ class SandKingsSimulation:
             colony.breached = getattr(parent, 'breached', False)
             colony.worshipped = getattr(parent, 'worshipped', False)
             colony.memory_augment = getattr(parent, 'memory_augment', 0)  # AUG3
+            colony.stage = getattr(parent, 'stage', 1)  # MT1
         colony.founded_step = self.step_count
         self.colonies[index] = colony
         self._kin_epoch = getattr(self, '_kin_epoch', 0) + 1  # kin map stale
