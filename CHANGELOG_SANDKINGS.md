@@ -1,5 +1,20 @@
 # Sand Kings Changelog
 
+## 2.18.0 - The Sandking Sandbox (SPEC_SANDBOX.md SB1-SB5)
+
+- Docker packaging: `docker build -t sandking .` builds a self-contained
+  python:3.11 image with numpy/pandas/scikit-learn/torch/pillow/fastapi,
+  the GloVe embedding space baked in, and (with --build-arg
+  BUILD_WIKITEXT=1) a WikiText-103 sample in the codex corpus.
+- run_sandbox.sh / run_sandbox.ps1, two hardened modes: ISOLATED
+  (--network none, no network stack at all - the terrarium in a jar) and
+  CONSOLE (dashboard published only to 127.0.0.1:8000). Both run non-root,
+  read-only rootfs, all caps dropped, no-new-privileges, memory/pid caps,
+  state in a resumable volume.
+- The container gives the sandkings a real local Python, fully isolated -
+  the safe home for any future in-sim compute, never on the host.
+
+
 ## 2.17.0 - The Evolving Engine (SPEC_EVOLUTION.md EV1-EV6)
 
 - Maw reproduction is now SEXUAL. When a neural colony falls and two or
