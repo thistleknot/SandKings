@@ -119,6 +119,9 @@ def build_state(sim: SandKingsSimulation) -> Dict:
         "season": SEASONS[season],
         "dole_pct": int(round(sim.dole_factor() * 100)),
         "drought": bool(getattr(sim, 'drought', False)),
+        "water_level": round(float(getattr(sim, 'water_level', 0.6)), 2),
+        "water_target": round(float(getattr(sim, 'water_target', 0.6)), 2),
+        "sun_hours": round(float(getattr(sim, 'sun_hours', 12)), 1),
         "keeper_influence": round(float(getattr(sim, 'keeper_influence', 0.0)), 2),
         "keeper_influence_word": (sim.keeper_influence_word()
                                   if hasattr(sim, 'keeper_influence_word') else ""),
@@ -323,6 +326,10 @@ def create_app(runner: TerrariumRunner):
         x: Optional[int] = None
         y: Optional[int] = None
 
+    class PanelBody(BaseModel):
+        water: Optional[float] = None  # reservoir set point 0..1
+        sun: Optional[float] = None    # daylight hours
+
     class SpeakBody(BaseModel):
         colony_id: int
 
@@ -449,6 +456,17 @@ def create_app(runner: TerrariumRunner):
             x = w // 2 if body.x is None else max(1, min(w - 2, body.x))
             y = h // 2 if body.y is None else max(1, min(h - 2, body.y))
             runner.sim.keeper_seed(x, y)
+            return build_state(runner.sim)
+
+    @app.post("/api/keeper/panel")
+    def panel(body: PanelBody):
+        # BI2: the diffuser panel behind the glass - NOT auto-disarming and
+        # not hand-gated (it works even when the terrarium has bound the god)
+        with runner.lock:
+            if body.water is not None:
+                runner.sim.keeper_set_water(body.water)
+            if body.sun is not None:
+                runner.sim.keeper_set_sun(body.sun)
             return build_state(runner.sim)
 
     @app.post("/api/keeper/speak")
@@ -608,6 +626,11 @@ button.act.breach{border-color:var(--breach);color:var(--breach)}
   <div class="grp"><span class="lab">Neutral</span>
     <button class="act" onclick="release('squirrel')">Squirrel</button>
     <button class="act" onclick="release('rabbit')">Rabbit</button></div>
+  <div class="grp"><span class="lab">Panel (behind the glass)</span>
+    <button class="act" onclick="panel('water',-0.1)">Water −</button>
+    <button class="act" onclick="panel('water',0.1)">Water +</button>
+    <button class="act" onclick="panel('sun',-2)">Sun −</button>
+    <button class="act" onclick="panel('sun',2)">Sun +</button></div>
   <div class="grp" style="margin-left:auto">
     <button class="act" id="mirrorBtn" onclick="toggleMirror()">Mirror View</button>
     <button class="act" id="pauseBtn" onclick="togglePause()">Pause</button></div>
@@ -626,6 +649,9 @@ function release(s){post('/api/keeper/release',{species:s});}
 function temp(d){post('/api/keeper/temp',{dir:d});}
 function water(big){post('/api/keeper/water',{big});}
 function seed(){post('/api/keeper/seed',{});}
+function panel(which,delta){if(!state)return;
+  const cur=which==='water'?state.water_target:state.sun_hours;
+  post('/api/keeper/panel',{[which]:cur+delta});}
 function toggleDrought(){drought=!drought;post('/api/keeper/drought',{on:drought});}
 function togglePause(){paused=!paused;fetch('/api/control',{method:'POST',
   headers:{'Content-Type':'application/json'},body:JSON.stringify({paused})});
@@ -663,6 +689,7 @@ function render(){
   c.innerHTML=`<span class="chip"><b>Year ${state.year}</b> · ${state.season}</span>`+
     `<span class="chip">dole <b>${state.dole_pct}%</b></span>`+
     `<span class="chip">step <b>${state.step}</b></span>`+
+    `<span class="chip">water <b>${Math.round(state.water_level*100)}%</b> · sun <b>${state.sun_hours}h</b></span>`+
     (state.grains_minted?`<span class="chip"><b>${state.grains_minted}</b> grains</span>`:'')+
     (state.drought?`<span class="chip warn">DROUGHT</span>`:'')+
     (state.keeper_bound?`<span class="chip warn">BOUND · House ${state.keeper_bound_by}</span>`

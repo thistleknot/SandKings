@@ -93,6 +93,12 @@ class Terrarium:
     def seed(self, x=None, y=None) -> Dict:
         return self._post("/api/keeper/seed", {"x": x, "y": y})
 
+    def set_water(self, level: float) -> Dict:
+        return self._post("/api/keeper/panel", {"water": level})
+
+    def set_sun(self, hours: float) -> Dict:
+        return self._post("/api/keeper/panel", {"sun": hours})
+
     def speak(self, colony_id: int) -> Dict:
         return self._post("/api/keeper/speak", {"colony_id": int(colony_id)})
 
@@ -288,6 +294,10 @@ def dispatch(t: Terrarium, line: str) -> str:
         t.water(big=True)
     elif cmd in ("seed", "seeds"):
         t.seed()
+    elif cmd == "sun" and args:
+        t.set_sun(float(args[0]))
+    elif cmd == "reservoir" and args:
+        t.set_water(float(args[0]))
     elif cmd == "say" and len(args) >= 2:
         r = t.say(int(args[0]), " ".join(args[1:]))
         return f"  it answers: {r.get('reply') or '(noise)'}"

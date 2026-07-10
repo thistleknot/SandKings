@@ -1,5 +1,31 @@
 # Sand Kings Changelog
 
+## 2.29.0 - The Closed Biome & the Panel (SPEC_BIOME.md BI1-BI7)
+
+- The terrarium is a sealed system with a global WATER budget (water_level) and
+  SUNLIGHT (sun_hours) the keeper sets behind the glass - an aquarium diffuser
+  PANEL the creatures can never reach. Weather now EMERGES from that budget
+  instead of firing at random: water eases toward an equilibrium set by the
+  reservoir and the sun (more sun evaporates more); a swollen reservoir spills a
+  flood, a dry basin under a high sun bakes into a heat wave, and short days
+  bring a creeping cold.
+- Panel verbs keeper_set_water / keeper_set_sun are NOT hand-gated - even a
+  terrarium that has BOUND its god (the turning) cannot stop the sun and water,
+  because the diffuser is beyond the glass. The hand stays bound; the sky does
+  not.
+- Scarcity & crops read the budget, reconciled not duplicated: `_is_dry()` =
+  keeper drought OR low water; dole_factor takes a soft cut under low water
+  (unchanged at the default 0.6); non-oasis crops stall when dry or dark and run
+  lush when watered under a kind sun; the oasis stays spring-fed. Everything is
+  DEFAULT-NEUTRAL, so all prior weather/season behavior is unchanged.
+- Surfaced: /api/keeper/panel, a dashboard Panel group (Water/Sun ±) + header
+  readout, a live-view "Water NN% Sun NNh" line with keys x/c water and a/z sun,
+  and build_state fields. play_kit gains set_water/set_sun + sun/reservoir
+  commands. 8 new tests + full 28-suite battery green (weather/seasons
+  regression intact); play_kit shows heat emerging from a drained reservoir and
+  cold from short days.
+
+
 ## 2.28.0 - The hand's water & seeds (SPEC_HYDRO_HAND.md HH1-HH5)
 
 - Two keeper Gifts that reuse the flood + crop systems. `keeper_water(x,y,big)`:

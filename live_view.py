@@ -391,6 +391,11 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
         holder = sim.oasis_holder()
         entries.insert(4, ("Oasis: " + (f"Colony {holder}" if holder is not None
                                         else "unclaimed"), (80, 200, 170)))
+        # BI6: the panel readout - the closed water budget and the daylight
+        wl = getattr(sim, 'water_level', 0.6)
+        sh = getattr(sim, 'sun_hours', 12)
+        entries.insert(5, (f"Water {wl * 100:.0f}%   Sun {sh:.0f}h",
+                           (90, 170, 230) if wl >= 0.35 else (230, 170, 90)))
         # W5: the weather line (nothing when clear)
         active = [(name, tint) for attr, name, tint in (
             ("storm_until", "sandstorm", (200, 180, 110)),
@@ -482,7 +487,8 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
                       "       w rain  j seeds",
                       "WRATH: 6spidr 7scorp 8snake 9drgt 0cat",
                       "       [ cold  ] heat  d deluge  T speak",
-                      "NEUTRAL: n squirrel  b rabbit"):
+                      "NEUTRAL: n squirrel  b rabbit",
+                      "PANEL: x/c water +/-  a/z sun +/-"):
         entries.append((help_line, (140, 140, 150)))
     return entries
 
@@ -1218,6 +1224,22 @@ class LiveViewer:
                 with self.runner.lock:
                     self.sim.keeper_auto = False
                     self.sim.keeper_water(*self.cursor, big=True)
+            elif key == pygame.K_x:                     # PANEL: more water
+                with self.runner.lock:
+                    self.sim.keeper_set_water(
+                        getattr(self.sim, 'water_target', 0.6) + 0.1)
+            elif key == pygame.K_c:                     # PANEL: less water
+                with self.runner.lock:
+                    self.sim.keeper_set_water(
+                        getattr(self.sim, 'water_target', 0.6) - 0.1)
+            elif key == pygame.K_a:                     # PANEL: more sun
+                with self.runner.lock:
+                    self.sim.keeper_set_sun(
+                        getattr(self.sim, 'sun_hours', 12) + 2)
+            elif key == pygame.K_z:                     # PANEL: less sun
+                with self.runner.lock:
+                    self.sim.keeper_set_sun(
+                        getattr(self.sim, 'sun_hours', 12) - 2)
             elif (key == pygame.K_t and self.inspected is not None
                   and self.inspected[0] == 'unit'
                   and target_alive(self.sim, self.inspected)):

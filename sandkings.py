@@ -208,6 +208,21 @@ WATER_CROP_BOOST = 2         # extra crop growth-ticks per watered cell
 WATER_FOOD_P = 0.02          # per cell per tick: fertile FOOD deposit
 SEED_COUNT = 12              # crops sown per keeper_seed
 
+# The Closed Biome & the Panel (SPEC_BIOME BI1-BI5): a global water budget and
+# sunlight the keeper sets behind the glass; weather EMERGES from them
+WATER_LEVEL_DEFAULT = 0.6    # free-water fraction 0..1 (default-neutral)
+SUN_HOURS_DEFAULT = 12       # daylight hours/day
+SUN_MIN, SUN_MAX = 4, 20     # panel sunlight range
+BIOME_TICK = 20              # emergent-weather cadence
+BIOME_EASE = 0.03            # water eases toward equilibrium per step
+SUN_DRYING = 0.5             # how far sun lowers the water equilibrium
+DRY_THRESHOLD = 0.35         # below this the biome is in drought
+WET_THRESHOLD = 0.78         # above this the reservoir spills
+SUN_COLD, SUN_HOT = 8, 16    # short days chill; long days bake
+BIOME_FLOOD_CHANCE = 0.3     # per BIOME_TICK when wet
+BIOME_HEAT_CHANCE = 0.4      # per BIOME_TICK when dry + hot
+BIOME_COLD_CHANCE = 0.3      # per BIOME_TICK when days are short
+
 # The Keeper constants (SPEC_KEEPER.md K1-K12)
 KEEPER_DROP_FOOD = 6         # FOOD voxels per keeper hand-drop
 KEEPER_MEMORY = 800          # steps of grace per witnessed miracle
@@ -1218,6 +1233,9 @@ class SandKingsSimulation:
         self.events: deque = deque(maxlen=50)  # (step, message) drama feed (SPEC T9)
         self.monitors: Dict[int, 'HiveMindMonitor'] = {}  # SPEC_HIVE_MONITOR M6
         self.storm_until = 0                   # storm active while > step_count (SPEC T12)
+        self.water_level = WATER_LEVEL_DEFAULT  # BI1: the closed water budget
+        self.water_target = WATER_LEVEL_DEFAULT  # the reservoir set point (panel)
+        self.sun_hours = SUN_HOURS_DEFAULT      # BI1: daylight hours/day (panel)
         self._storm_wind = (1, 0)              # per-storm prevailing direction
         
         # Initialize colonies with random count (3-5) and positions
@@ -1400,6 +1418,10 @@ class SandKingsSimulation:
                     self._log_event("Lightning splits the sky - fire!")
             if self.storm_until == self.step_count + 1:
                 self._log_event("The sandstorm passes")
+
+        # 3c-b. THE CLOSED BIOME (SPEC_BIOME BI3/BI4): the water cycle and the
+        # weather that emerges from the reservoir + sun the keeper sets
+        self._biome_tick()
 
         # 3c-w. DESERT WEATHER (SPEC_WEATHER W1-W3): flood, hail, frost
         self._weather_tick(season)
@@ -1727,6 +1749,10 @@ class SandKingsSimulation:
         f = DOLE_FACTOR[self.season_index()]
         if not getattr(self, 'harsh', False):
             f = max(f, DOLE_RAMP[min(self.year(), 2)])
+        # BI5: a low water budget is a soft drought (1.0 at/above threshold, so
+        # the default 0.6 is unchanged); keeper drought above still hard-zeros
+        water = getattr(self, 'water_level', WATER_LEVEL_DEFAULT)
+        f *= float(np.clip(water / DRY_THRESHOLD, 0.25, 1.0))
         return f
 
     def in_oasis(self, x: int, y: int) -> bool:
@@ -1778,7 +1804,8 @@ class SandKingsSimulation:
                         self._frost_logged = frost_key
                         self._log_event(f"The frost takes Colony {owner}'s young crops")
                     continue
-            crops[pos] += OASIS_GROWTH_MULT if oasis else 1
+            crops[pos] += (OASIS_GROWTH_MULT if oasis
+                           else self._biome_growth_units())  # BI5
             if crops[pos] >= ripe_at:
                 self.world.voxels[pos] = VoxelType.CROP_RIPE.value
                 del crops[pos]
@@ -2004,7 +2031,7 @@ class SandKingsSimulation:
         bounty (fed/full) | lean | dread (drought, want, or harsh weather)."""
         step = self.step_count
         starving = colony.maw.food_stored < 2 * BOOTSTRAP_FLOOR
-        harsh = getattr(self, 'drought', False) or starving or any(
+        harsh = self._is_dry() or starving or any(
             getattr(self, a, 0) > step for a in (
                 'cold_until', 'arena_cold_until', 'arena_heat_until',
                 'flood_until', 'hail_until', 'storm_until'))
@@ -2140,6 +2167,64 @@ class SandKingsSimulation:
                 planted += 1
         if planted:
             self._log_event("The keeper scatters seeds across the sand")
+
+    def keeper_set_water(self, level: float):
+        """BI2: dial the reservoir behind the glass. NOT hand-gated - even a
+        bound terrarium cannot reach the diffuser panel."""
+        self.water_target = float(np.clip(level, 0.0, 1.0))
+
+    def keeper_set_sun(self, hours: float):
+        """BI2: set the hours of daylight (the panel; survives the turning)."""
+        self.sun_hours = float(np.clip(hours, SUN_MIN, SUN_MAX))
+
+    def _is_dry(self) -> bool:
+        """BI5: the single dryness predicate - a keeper drought OR a low water
+        budget. Feeds the dole, the nature mood, and the emergent weather."""
+        return (getattr(self, 'drought', False)
+                or getattr(self, 'water_level', WATER_LEVEL_DEFAULT)
+                < DRY_THRESHOLD)
+
+    def _biome_growth_units(self) -> int:
+        """BI5: non-oasis crop growth per tick from the water+sun budget."""
+        if self._is_dry() or getattr(self, 'sun_hours',
+                                     SUN_HOURS_DEFAULT) < SUN_COLD:
+            return 0  # drought or dark: the field stalls
+        water = getattr(self, 'water_level', WATER_LEVEL_DEFAULT)
+        sun = getattr(self, 'sun_hours', SUN_HOURS_DEFAULT)
+        if water > WET_THRESHOLD and SUN_COLD < sun < SUN_HOT:
+            return 2  # lush
+        return 1
+
+    def _biome_tick(self):
+        """BI3/BI4: the closed water cycle and the weather that emerges from it.
+        Water eases toward an equilibrium set by the reservoir and the sun;
+        extremes spill floods, bake heat, or bring a chill."""
+        target = getattr(self, 'water_target', WATER_LEVEL_DEFAULT)
+        sun = getattr(self, 'sun_hours', SUN_HOURS_DEFAULT)
+        water = getattr(self, 'water_level', WATER_LEVEL_DEFAULT)
+        equilibrium = float(np.clip(
+            target - SUN_DRYING * (sun - SUN_HOURS_DEFAULT) / SUN_HOURS_DEFAULT,
+            0.0, 1.0))
+        self.water_level = float(np.clip(
+            water + BIOME_EASE * (equilibrium - water), 0.0, 1.0))
+        step = self.step_count
+        if step % BIOME_TICK or not step:
+            return
+        w = self.water_level
+        if (w > WET_THRESHOLD and getattr(self, 'flood_until', 0) <= step
+                and random.random() < BIOME_FLOOD_CHANCE):
+            self.flood_until = step + FLOOD_DURATION
+            self.flood_cells = set()
+            self._log_event("The swollen reservoir overflows - the basin floods")
+        if (self._is_dry() and sun >= SUN_HOT
+                and getattr(self, 'arena_heat_until', 0) <= step
+                and random.random() < BIOME_HEAT_CHANCE):
+            self.arena_heat_until = step + ARENA_TEMP_DURATION
+            self._log_event("The low water bakes the sands - a heat rises")
+        if (sun <= SUN_COLD and getattr(self, 'arena_cold_until', 0) <= step
+                and random.random() < BIOME_COLD_CHANCE):
+            self.arena_cold_until = step + ARENA_TEMP_DURATION
+            self._log_event("The long night brings a creeping cold")
 
     def keeper_gift(self, kind: Optional[str] = None,
                     pos: Optional[Tuple[int, int]] = None):
