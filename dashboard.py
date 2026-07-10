@@ -318,6 +318,9 @@ def create_app(runner: TerrariumRunner):
         sps: Optional[float] = None
         mirror: Optional[bool] = None
 
+    class StepBody(BaseModel):
+        n: int = 1
+
     @app.get("/", response_class=HTMLResponse)
     def index():
         return CONSOLE_HTML
@@ -440,6 +443,14 @@ def create_app(runner: TerrariumRunner):
             runner.mirror = bool(body.mirror)  # U8: glyph-view mirror toggle
         return {"paused": runner.paused, "sps": runner.sps,
                 "mirror": runner.mirror}
+
+    @app.post("/api/step")
+    def step_n(body: StepBody):
+        # PK2: deterministic advance for the play kit / headless testing.
+        # Localhost only; it just drives the sim this runner already owns.
+        n = max(1, min(500, int(body.n)))
+        runner.step_owed(n)
+        return _state()
 
     return app
 
