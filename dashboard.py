@@ -21,11 +21,13 @@ import numpy as np
 from PIL import Image
 
 from sandkings import (
-    Colony, SEASONS, SandKingsSimulation, UnitType, VoxelType, load_checkpoint,
+    Colony, KEEPER_FAUNA, SEASONS, SandKingsSimulation, UnitType, VoxelType,
+    load_checkpoint,
 )
 
-# garage-set creatures the keeper may introduce (DB5); cat has its own verb
-GARAGE_SPECIES = ('cricket', 'ant', 'scorpion', 'spider', 'rodent')
+# AR2: the keeper's release whitelist IS the classified roster (no drift);
+# cat and the arena temperatures have their own verbs
+GARAGE_SPECIES = KEEPER_FAUNA
 
 # palette LUT mirroring the glyph renderer (kept local: no pygame import)
 _PALETTE = {
@@ -63,7 +65,9 @@ def build_state(sim: SandKingsSimulation) -> Dict:
     season = sim.season_index()
     weather = [name for attr, name in (
         ("storm_until", "sandstorm"), ("hail_until", "hail"),
-        ("flood_until", "flood"), ("cold_until", "cold snap"))
+        ("flood_until", "flood"), ("cold_until", "cold snap"),
+        ("arena_heat_until", "heat wave"),  # AR3: keeper's arena temperature
+        ("arena_cold_until", "cold wave"))
         if getattr(sim, attr, 0) > sim.step_count]
     colonies: List[Dict] = []
     for colony in sim.colonies:
@@ -299,6 +303,9 @@ def create_app(runner: TerrariumRunner):
     class DroughtBody(BaseModel):
         on: bool
 
+    class TempBody(BaseModel):
+        dir: str  # 'heat' | 'cold'
+
     class SpeakBody(BaseModel):
         colony_id: int
 
@@ -391,6 +398,17 @@ def create_app(runner: TerrariumRunner):
         with runner.lock:
             _disarm_auto()
             runner.sim.keeper_drought(body.on)
+            return build_state(runner.sim)
+
+    @app.post("/api/keeper/temp")
+    def temp(body: TempBody):
+        # AR3: the arena temperature (uncomfortable, not lethal)
+        if body.dir not in ("heat", "cold"):
+            return JSONResponse({"error": "dir must be heat|cold"},
+                                status_code=400)
+        with runner.lock:
+            _disarm_auto()
+            runner.sim.keeper_temperature(body.dir)
             return build_state(runner.sim)
 
     @app.post("/api/keeper/speak")
@@ -522,16 +540,23 @@ button.act.breach{border-color:var(--breach);color:var(--breach)}
 </main>
 <div class="saga"><h3>The Saga</h3><div id="saga"></div></div>
 <div class="console"><div class="bar">
-  <div class="grp"><span class="lab">Bounty</span>
+  <div class="grp"><span class="lab">Gifts</span>
     <button class="act" onclick="feed()">Feed</button>
-    <button class="act gold" onclick="post('/api/keeper/gift')">Gift</button></div>
-  <div class="grp"><span class="lab">Creatures</span>
     <button class="act" onclick="release('cricket')">Crickets</button>
     <button class="act" onclick="release('ant')">Ants</button>
-    <button class="act" onclick="release('scorpion')">Scorpions</button></div>
+    <button class="act" onclick="release('small_spider')">Small Spider</button>
+    <button class="act gold" onclick="post('/api/keeper/gift')">Tech Gift</button></div>
   <div class="grp"><span class="lab">Wrath</span>
+    <button class="act wrath" onclick="release('spider')">Big Spider</button>
+    <button class="act wrath" onclick="release('scorpion')">Scorpion</button>
+    <button class="act wrath" onclick="release('snake')">Snake</button>
+    <button class="act wrath" onclick="temp('heat')">Heat</button>
+    <button class="act wrath" onclick="temp('cold')">Cold</button>
     <button class="act wrath" id="droughtBtn" onclick="toggleDrought()">Withhold</button>
     <button class="act wrath" onclick="post('/api/keeper/cat')">The Cat</button></div>
+  <div class="grp"><span class="lab">Neutral</span>
+    <button class="act" onclick="release('squirrel')">Squirrel</button>
+    <button class="act" onclick="release('rabbit')">Rabbit</button></div>
   <div class="grp" style="margin-left:auto">
     <button class="act" id="mirrorBtn" onclick="toggleMirror()">Mirror View</button>
     <button class="act" id="pauseBtn" onclick="togglePause()">Pause</button></div>
@@ -547,6 +572,7 @@ async function post(url,body){
     body:body?JSON.stringify(body):null});
   if(r.ok){state=await r.json();render();flash('the hand moves');}return r;}
 function release(s){post('/api/keeper/release',{species:s});}
+function temp(d){post('/api/keeper/temp',{dir:d});}
 function toggleDrought(){drought=!drought;post('/api/keeper/drought',{on:drought});}
 function togglePause(){paused=!paused;fetch('/api/control',{method:'POST',
   headers:{'Content-Type':'application/json'},body:JSON.stringify({paused})});

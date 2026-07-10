@@ -135,6 +135,7 @@ FAUNA = {
     # weight 0 = keeper-introduced only (K2); never in random rolls
     'cricket':  (0.0, 8, 1, (2, 4), 0, 2),
     'ant':      (0.0, 6, 2, (4, 6), 0, 1),
+    'small_spider': (0.0, 10, 2, (2, 4), 0, 3),  # AR1: weak, learnable prey
     'cat':      (0.0, 400, 60, (1, 1), 60, 12),
 }
 FAUNA_EVENTS = {
@@ -148,8 +149,16 @@ FAUNA_EVENTS = {
     'anteater': "An anteater stalks the sands!",
     'cricket': "Crickets drop from the keeper's hand",
     'ant': "A column of ants files in from a crack in the world",
+    'small_spider': "Small spiders are set loose - easy prey to learn on",
     'cat': "Something enormous pads across the sand...",
 }
+
+# AR1: the keeper's roster, classified by intent (single source of truth;
+# dashboard imports KEEPER_FAUNA as its release whitelist)
+KEEPER_GIFTS = ('cricket', 'ant', 'small_spider')       # food + learning
+KEEPER_WRATH = ('spider', 'scorpion', 'snake')          # arena predators
+KEEPER_NEUTRAL = ('squirrel', 'rabbit')                 # ambient, bite back
+KEEPER_FAUNA = KEEPER_GIFTS + KEEPER_WRATH + KEEPER_NEUTRAL
 POISON_DURATION = 20         # scorpion sting DoT (1 HP/step)
 FAUNA_RAMPAGE = 500          # steps before an unslain incursion wanders off
 
@@ -179,6 +188,14 @@ COLD_INTERVAL = 500          # cold-snap roll cadence (Chill; Dust halved)
 COLD_CHANCE = 0.5
 COLD_DURATION = 40           # the desert night's ambassador
 COLD_TICK = 5
+
+# Arena Mode: keeper-driven temperature (SPEC_ARENA AR3). Uncomfortable, NOT
+# lethal - a separate track from the natural (killing) frost of W3.
+ARENA_TEMP_DURATION = 60     # steps a keeper heat/cold wave lasts
+ARENA_TEMP_TICK = 3          # discomfort cadence
+ARENA_FOOD_DRAIN = 0.6       # hoard drained per exposed unit per tick
+ARENA_DRAIN_CAP = 6          # exposed units counted toward the drain
+ARENA_WILT_P = 0.05          # per crop per tick: ripe->crop, crop->tilled
 
 # The Keeper constants (SPEC_KEEPER.md K1-K12)
 KEEPER_DROP_FOOD = 6         # FOOD voxels per keeper hand-drop
@@ -1372,6 +1389,10 @@ class SandKingsSimulation:
         # 3c-w. DESERT WEATHER (SPEC_WEATHER W1-W3): flood, hail, frost
         self._weather_tick(season)
 
+        # 3c-a. ARENA TEMPERATURE (SPEC_ARENA AR3): the keeper's non-lethal
+        # heat/cold - drains hoards and wilts fields, never kills
+        self._arena_tick()
+
         # 3d. CROP GROWTH (T19/T20)
         if self.step_count % CROP_TICK == 0:
             self._grow_crops()
@@ -1992,6 +2013,8 @@ class SandKingsSimulation:
         """K1: introduce a garage creature - above the one-incursion rule."""
         if self._hand_stayed():  # PS5: the bound god cannot loose predators
             return
+        if species not in KEEPER_FAUNA and species != 'cat':  # AR2 (+ apex cat)
+            return
         _, hp, atk, pack, hunt, bounty = FAUNA[species]
         w, h, d = self.world.dimensions
         edge = random.choice(['n', 's', 'e', 'w'])
@@ -2024,6 +2047,19 @@ class SandKingsSimulation:
             # no instant twist here anymore - the souring is gradual.
         elif was and not on:
             self._log_event("The rains of the keeper return")
+
+    def keeper_temperature(self, direction: str):
+        """AR3: crank the arena temperature - uncomfortable, never lethal.
+        direction in {'heat','cold'}; the bound god (PS5) cannot."""
+        if self._hand_stayed():
+            return
+        until = self.step_count + ARENA_TEMP_DURATION
+        if direction == 'heat':
+            self.arena_heat_until = until
+            self._log_event("The keeper turns the air to a blistering heat")
+        elif direction == 'cold':
+            self.arena_cold_until = until
+            self._log_event("The keeper turns the air to a biting cold")
 
     def keeper_gift(self, kind: Optional[str] = None,
                     pos: Optional[Tuple[int, int]] = None):
@@ -2506,6 +2542,37 @@ class SandKingsSimulation:
                 seen.add((nx, ny))
                 frontier.append((nx, ny))
         return seen
+
+    def _arena_tick(self):
+        """AR3: the keeper's non-lethal temperature. While a heat or cold wave
+        runs, thermoregulation drains each colony's hoard (per exposed unit)
+        and the fields wilt - but no unit ever loses HP. The pressure is
+        hunger and ruin, not death."""
+        step = self.step_count
+        hot = getattr(self, 'arena_heat_until', 0) > step
+        cold = getattr(self, 'arena_cold_until', 0) > step
+        if not (hot or cold) or step % ARENA_TEMP_TICK != 0:
+            return
+        for colony in self.colonies:
+            if not colony.is_alive():
+                continue
+            exposed = sum(1 for u in colony.units if self._exposed(u))
+            if exposed:
+                drain = ARENA_FOOD_DRAIN * min(exposed, ARENA_DRAIN_CAP)
+                colony.maw.food_stored = max(0.0,
+                                             colony.maw.food_stored - drain)
+        crops = np.argwhere(np.isin(
+            self.world.voxels,
+            (VoxelType.CROP.value, VoxelType.CROP_RIPE.value)))
+        for pos in crops:
+            if random.random() >= ARENA_WILT_P:
+                continue
+            p = tuple(int(v) for v in pos)
+            if self.world.voxels[p] == VoxelType.CROP_RIPE.value:
+                self.world.voxels[p] = VoxelType.CROP.value  # ripe -> unripe
+            else:
+                self.world.voxels[p] = VoxelType.TILLED.value  # crop -> dead
+                self._crops().pop(p, None)
 
     def _weather_tick(self, season: int):
         """W1-W3: flood surge, hail, and cold snaps. All state is plain

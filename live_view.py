@@ -146,6 +146,9 @@ EVENT_TINTS = (            # substring -> HUD color (spec R19/R24)
     ("Shade stage", (255, 255, 255)),
     ("turns on its god", (230, 60, 200)),
     ("hand will not move", (230, 60, 200)),
+    ("blistering heat", (255, 140, 60)),   # AR3 arena temperature
+    ("biting cold", (150, 200, 255)),
+    ("easy prey to learn", (150, 200, 150)),
     ("SPEAKS", (255, 255, 255)),
     ("fall as noise", (150, 150, 160)),
     ("augments its mind", (150, 180, 255)),
@@ -388,6 +391,8 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
             ("hail_until", "hail", (235, 235, 245)),
             ("flood_until", "flash flood", (90, 140, 255)),
             ("cold_until", "killing frost", (170, 210, 255)),
+            ("arena_heat_until", "HEAT WAVE", (255, 140, 60)),   # AR3
+            ("arena_cold_until", "COLD WAVE", (150, 200, 255)),  # AR3
         ) if getattr(sim, attr, 0) > sim.step_count]
         if active:
             entries.insert(5, ("Weather: " + ", ".join(n for n, _t in active),
@@ -464,8 +469,10 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
                       "TAB view  P pheromones  R style",
                       "I inspect (click too)  F follow  L legend",
                       "M manager  H saga  G capture  ESC quit",
-                      "KEEPER: 1 food  2/3/4 bugs  5 gift",
-                      "        9 drought  0 cat  T speak"):
+                      "GIFTS: 1food 2crick 3ant 4spidr 5tech",
+                      "WRATH: 6spidr 7scorp 8snake 9drgt 0cat",
+                      "       [ cold  ] heat        T speak",
+                      "NEUTRAL: n squirrel  b rabbit"):
         entries.append((help_line, (140, 140, 150)))
     return entries
 
@@ -1117,40 +1124,68 @@ class LiveViewer:
                     self.inspected = targets[self._select_cycle % len(targets)]
                     self._select_cycle += 1
                     self.follow = False
-            # K1/K6/K9/K12: the keeper's hands (any keeper key disarms auto).
-            # U3: every verb runs under the runner lock, serialized against
-            # the background stepping thread.
-            elif key == pygame.K_1:
+            # AR6: the keeper's arena console (any keeper key disarms auto).
+            # U3: every verb under the runner lock. GIFTS 1-5, WRATH 6-0 + [],
+            # NEUTRAL n/b.
+            elif key == pygame.K_1:                     # GIFT: manna
                 if not self.look_mode:
                     self.look_mode = True
                 with self.runner.lock:
                     self.sim.keeper_auto = False
                     self.sim.keeper_drop_food(*self.cursor)
-            elif key == pygame.K_2:
+            elif key == pygame.K_2:                     # GIFT: crickets
                 with self.runner.lock:
                     self.sim.keeper_auto = False
                     self.sim.keeper_release('cricket')
-            elif key == pygame.K_3:
+            elif key == pygame.K_3:                     # GIFT: ants
                 with self.runner.lock:
                     self.sim.keeper_auto = False
                     self.sim.keeper_release('ant')
-            elif key == pygame.K_4:
+            elif key == pygame.K_4:                     # GIFT: small spider
                 with self.runner.lock:
                     self.sim.keeper_auto = False
-                    self.sim.keeper_release('scorpion')
-            elif key == pygame.K_5:
+                    self.sim.keeper_release('small_spider')
+            elif key == pygame.K_5:                     # GIFT: tech
                 with self.runner.lock:
                     self.sim.keeper_auto = False
                     self.sim.keeper_gift(pos=self.cursor)
-            elif key == pygame.K_9:
+            elif key == pygame.K_6:                     # WRATH: big spider
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    self.sim.keeper_release('spider')
+            elif key == pygame.K_7:                     # WRATH: scorpion
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    self.sim.keeper_release('scorpion')
+            elif key == pygame.K_8:                     # WRATH: snake
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    self.sim.keeper_release('snake')
+            elif key == pygame.K_9:                     # WRATH: drought
                 with self.runner.lock:
                     self.sim.keeper_auto = False
                     self.sim.keeper_drought(not getattr(self.sim, 'drought',
                                                         False))
-            elif key == pygame.K_0:
+            elif key == pygame.K_0:                     # WRATH: the cat
                 with self.runner.lock:
                     self.sim.keeper_auto = False
                     self.sim.keeper_release_cat()
+            elif key == pygame.K_LEFTBRACKET:           # WRATH: cold wave
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    self.sim.keeper_temperature('cold')
+            elif key == pygame.K_RIGHTBRACKET:          # WRATH: heat wave
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    self.sim.keeper_temperature('heat')
+            elif key == pygame.K_n:                     # NEUTRAL: squirrel
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    self.sim.keeper_release('squirrel')
+            elif key == pygame.K_b:                     # NEUTRAL: rabbit
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    self.sim.keeper_release('rabbit')
             elif (key == pygame.K_t and self.inspected is not None
                   and self.inspected[0] == 'unit'
                   and target_alive(self.sim, self.inspected)):
@@ -1635,7 +1670,17 @@ def run_live(sim: SandKingsSimulation, max_steps: Optional[int] = None,
     driven by ONE shared TerrariumRunner (U1). When `serve`, the web console
     attaches to the SAME runner via uvicorn on a daemon thread (U5), so the
     on-screen and browser step counters are one and the same. Desktop-only
-    (`serve=False`) imports no fastapi/uvicorn."""
+    (`serve=False`) imports no fastapi/uvicorn.
+
+    A BOUNDED run (`max_steps` set - e.g. `--steps N`, and the test harness)
+    is a deterministic headless batch: the viewer drives stepping itself and
+    NO engine thread or web server is started, so the count lands exactly on
+    `max_steps`. Only an OPEN-ENDED run attaches the background engine and the
+    web console."""
+    if max_steps is not None:
+        LiveViewer(sim, steps_per_second=steps_per_second,
+                   max_steps=max_steps, save_path=save_path).run()
+        return
     from dashboard import TerrariumRunner
     runner = TerrariumRunner(sim, sps=steps_per_second, save_path=save_path,
                              save_every=save_every)
@@ -1650,8 +1695,7 @@ def run_live(sim: SandKingsSimulation, max_steps: Optional[int] = None,
         threading.Thread(target=server.run, daemon=True).start()
         print(f"[keeper] web console attached on http://{host}:{port}")
     try:
-        LiveViewer(runner, steps_per_second=steps_per_second,
-                   max_steps=max_steps).run()
+        LiveViewer(runner, steps_per_second=steps_per_second).run()
     finally:
         if server is not None:
             server.should_exit = True

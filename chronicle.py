@@ -64,6 +64,8 @@ SALIENCE = [
     ("gift", 5),
     ("incursion", 5),
     ("flash flood", 6),
+    ("blistering heat", 5),
+    ("biting cold", 5),
     ("Hail", 4),
     ("frost settles", 4),
     ("floodwaters", 3),
