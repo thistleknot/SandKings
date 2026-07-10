@@ -1,5 +1,18 @@
 # Sand Kings Changelog
 
+## 2.24.0 - The Canonical Houses (canon; SPEC_CANON_HOUSES.md CH1-CH4)
+
+- `--canon` (sandkings.py and dashboard.py) seats the novella's four
+  color-houses instead of random ones: Crimson "the Creative" (red,
+  inventive), Pale "the Favored" (white - Kress's favorites, starts
+  richest and largest), Sable "the Wise" (black - patient, faithful),
+  Amber "the Underdog" (orange - last and least, starts poorest).
+- Named + epithet-tagged from step 0 ("The four houses wake: Crimson,
+  Pale, Sable, and Amber"); the presets are the START - mutation,
+  respawn crossover, and evolution proceed normally, so the underdog can
+  still rise.
+
+
 ## 2.23.0 - Look to Your Faces (canon; SPEC_FACES.md F1-F5)
 
 - Folding in the source novella: colonies no longer carve abstract

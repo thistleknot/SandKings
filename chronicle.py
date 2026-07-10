@@ -34,6 +34,7 @@ SALIENCE = [
     ("falls silent", 8),
     ("will be remembered", 8),
     ("rises (", 8),
+    ("four houses wake", 6),
     ("declares war", 7),
     ("is slain", 7),
     ("besieges", 6),

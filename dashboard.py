@@ -595,6 +595,8 @@ def main():
     parser.add_argument("--height", type=int, default=40)
     parser.add_argument("--depth", type=int, default=20)
     parser.add_argument("--colonies", type=int, default=4)
+    parser.add_argument("--canon", action="store_true",
+                        help="seat the novella's four houses (CH1)")
     args = parser.parse_args()
 
     sim = None
@@ -604,7 +606,8 @@ def main():
             print(f"[keeper] resumed {args.persist} at step {sim.step_count}")
     if sim is None:
         sim = SandKingsSimulation(width=args.width, height=args.height,
-                                  depth=args.depth, num_colonies=args.colonies)
+                                  depth=args.depth, num_colonies=args.colonies,
+                                  canon=args.canon)
     runner = TerrariumRunner(sim, sps=args.sps,
                              save_path=None if args.fresh else args.persist)
     app = create_app(runner)

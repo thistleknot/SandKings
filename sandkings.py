@@ -1144,11 +1144,15 @@ class Visualizer:
 class SandKingsSimulation:
     """Main simulation engine coordinating all systems"""
     
-    def __init__(self, width=80, height=40, depth=20, num_colonies=4):
+    def __init__(self, width=80, height=40, depth=20, num_colonies=4,
+                 canon=False):
         self.world = VoxelWorld(width, height, depth)
+        self.canon = bool(canon)  # CH1: the novella's four color-houses
         # Resolve random colony count here so the pheromone layer's
         # per-colony axis matches the colonies actually spawned
-        if num_colonies is None or num_colonies == 0:
+        if self.canon:
+            num_colonies = 4  # Red, White, Black, Orange
+        elif num_colonies is None or num_colonies == 0:
             num_colonies = random.randint(3, 5)
         self.pheromones = PheromoneLayer(self.world.dimensions, num_colonies)
         self.automata = CellularAutomata()
@@ -1163,6 +1167,49 @@ class SandKingsSimulation:
         # Initialize colonies with random count (3-5) and positions
         self._spawn_colonies(num_colonies)
     
+    # CH2: the four canonical color-houses (name, epithet, disposition
+    # overrides, starting-food multiplier) keyed by colony_id / COLORS order
+    CANON_HOUSES = {
+        0: ("Crimson", "the Creative",
+            {'plasticity': 0.85, 'fertility': 0.80}, 1.0, 0),
+        1: ("Pale", "the Favored",
+            {'aggression': 0.85, 'expansion_rate': 0.80}, 1.6, 2),
+        2: ("Sable", "the Wise",
+            {'patience': 0.90, 'loyalty': 0.90}, 1.0, 0),
+        3: ("Amber", "the Underdog",
+            {'aggression': 0.35, 'fertility': 0.4, 'plasticity': 0.35}, 0.6, 0),
+    }
+
+    def _apply_canon(self):
+        """CH2: overlay the novella's four houses onto the fresh colonies -
+        names, epithets, dispositions, and starting stock. Presets are the
+        START; mutation/respawn/evolution proceed normally (the underdog
+        can rise)."""
+        epithets = self._house_epithets()
+        for colony in self.colonies:
+            spec = self.CANON_HOUSES.get(colony.colony_id)
+            if spec is None:
+                continue
+            name, epithet, traits, food_mult, extra_workers = spec
+            colony.house = name
+            colony.generation = 1
+            colony.founded_step = 0
+            epithets[name] = epithet
+            # neutralize to a common baseline so each house's signature
+            # trait stands out cleanly (white most aggressive, etc.)
+            for attr in ('aggression', 'tunnel_preference', 'expansion_rate',
+                         'defense_investment', 'fertility', 'patience',
+                         'loyalty', 'plasticity'):
+                setattr(colony.genome, attr, 0.5)
+            for attr, value in traits.items():
+                setattr(colony.genome, attr, value)
+            colony.maw.food_stored *= food_mult
+            for _ in range(extra_workers):
+                colony.spawn_unit(UnitType.WORKER)
+        self._kin_epoch = getattr(self, '_kin_epoch', 0) + 1
+        self._log_event("The four houses wake: Crimson, Pale, Sable,"
+                        " and Amber")
+
     def _spawn_colonies(self, num_colonies: int = None):
         """Spawn Maw queens at randomized locations with min distance"""
         w, h, d = self.world.dimensions
@@ -1234,6 +1281,9 @@ class SandKingsSimulation:
             # Spawn initial workers
             for _ in range(3):
                 colony.spawn_unit(UnitType.WORKER)
+
+        if getattr(self, 'canon', False):  # CH2: seat the four color-houses
+            self._apply_canon()
 
         holder = self.oasis_holder()
         if holder is not None:
@@ -4812,6 +4862,9 @@ def main():
                         help='Skip the 2-year dole ramp: full seasonal scarcity '
                         'from step 0 (T17)')
     parser.add_argument('--num-colonies', type=int, default=0, help='Number of colonies (0=random 3-5)')
+    parser.add_argument('--canon', action='store_true',
+                        help="Seat the novella's four houses: Crimson (creative), "
+                             "Pale (favored), Sable (wise), Amber (underdog)")
     parser.add_argument('--width', type=int, default=80, help='World width')
     parser.add_argument('--height', type=int, default=40, help='World height')
     parser.add_argument('--depth', type=int, default=20, help='World depth')
@@ -4839,7 +4892,8 @@ def main():
     fresh = sim is None
     if fresh:
         sim = SandKingsSimulation(width=args.width, height=args.height,
-                                 depth=args.depth, num_colonies=args.num_colonies)
+                                 depth=args.depth, num_colonies=args.num_colonies,
+                                 canon=getattr(args, 'canon', False))
     sim.harsh = args.harsh  # T17 ramp control (applies to resumed sims too)
 
     # Enable neural mode if requested (fresh sims only - resumed sims keep
