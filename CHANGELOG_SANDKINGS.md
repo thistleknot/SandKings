@@ -1,5 +1,23 @@
 # Sand Kings Changelog
 
+## 2.17.0 - The Evolving Engine (SPEC_EVOLUTION.md EV1-EV6)
+
+- Maw reproduction is now SEXUAL. When a neural colony falls and two or
+  more survivors remain, the new maw is a crossover of TWO parents -
+  dispositions AND neural architecture recombined, then mutated. A maw
+  literally born of two bloodlines.
+- The neural ARCHITECTURE is heritable and evolvable: brain width
+  (n_nodes, `brain_hidden` 24..160) and depth (n_layers, `brain_depth`
+  1..4) are genes that mutate and cross over. Selection - the survival/
+  victory league already running - favors the topologies that win.
+- Brains of DIFFERENT shape reproduce by weight-grafting: each layer
+  copies the overlapping block from a parent, so recombination never
+  needs matching shapes. The child inherits learned structure where it
+  fits and explores where it grew.
+- A recombined maw whose brain outgrew both parents is chronicled:
+  "House X is born of two bloodlines (NxM brain)".
+
+
 ## 2.16.1 - Resume by default (persistence)
 
 - The terrarium now RESUMES its last saved state by default -

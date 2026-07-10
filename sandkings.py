@@ -539,34 +539,58 @@ class ColonyGenome:
     patience: float = 0.5          # TD discount gamma - evolvable temperament (T26)
     loyalty: float = 0.5           # hawk-dove axis: honors commitments (P11)
     plasticity: float = 0.5        # learning-to-learn rate scaler (S3)
-    
+    brain_hidden: int = 64         # evolvable n_nodes per hidden layer (EV1)
+    brain_depth: int = 1           # evolvable n_layers of the encoder (EV1)
+
     # Neural hive mind (Maw brain)
     brain: Optional[HiveMindBrain] = None
     use_neural: bool = False       # Toggle neural vs rule-based AI
-    
+
     def mutate(self, mutation_rate: float = 0.1):
         """Gaussian mutation of genome parameters"""
         mutated = ColonyGenome()
         mutated.use_neural = self.use_neural
-        
+
         for attr in ['aggression', 'tunnel_preference', 'expansion_rate',
                      'defense_investment', 'fertility', 'resilience', 'patience',
                      'loyalty', 'plasticity']:
             current = getattr(self, attr, 0.5)  # pre-trait checkpoints
             noise = np.random.normal(0, mutation_rate)
             setattr(mutated, attr, np.clip(current + noise, 0.0, 1.0))
-        
+
         mutated.foraging_range = max(5, int(self.foraging_range + np.random.normal(0, 2)))
         mutated.swarm_threshold = max(10, int(self.swarm_threshold + np.random.normal(0, 5)))
-        
-        # Neural brain mutation (slow - only when Maw survives)
+
+        # Evolvable brain architecture (EV1): n_nodes and n_layers drift
+        from neuroevolution import (BRAIN_DEPTH_MAX, BRAIN_HIDDEN_MAX,
+                                    BRAIN_HIDDEN_MIN)
+        hid = getattr(self, 'brain_hidden', 64)
+        dep = getattr(self, 'brain_depth', 1)
+        if np.random.random() < mutation_rate * 3:  # width drifts by +-8
+            hid += int(np.random.choice([-8, 8]))
+        if np.random.random() < mutation_rate:      # depth drifts rarely
+            dep += int(np.random.choice([-1, 1]))
+        mutated.brain_hidden = int(np.clip(hid, BRAIN_HIDDEN_MIN, BRAIN_HIDDEN_MAX))
+        mutated.brain_depth = int(np.clip(dep, 1, BRAIN_DEPTH_MAX))
+
+        # Neural brain mutation (slow - only when Maw survives). If the
+        # architecture changed, rebuild+graft; else deep-copy and jitter.
         if self.use_neural and self.brain is not None:
-            import copy
-            mutated.brain = copy.deepcopy(self.brain)
-            mutated.brain.mutate(mutation_rate=mutation_rate * 0.5)  # Slower Maw evolution
+            same_arch = (mutated.brain_hidden == getattr(self, 'brain_hidden', 64)
+                         and mutated.brain_depth == getattr(self, 'brain_depth', 1))
+            if same_arch:
+                import copy
+                mutated.brain = copy.deepcopy(self.brain)
+                mutated.brain.mutate(mutation_rate=mutation_rate * 0.5)
+            else:
+                from neuroevolution import build_brain, graft_into
+                child = build_brain(mutated)
+                graft_into(child, self.brain)  # inherit what fits (EV4)
+                mutated.brain = child
         elif self.use_neural:
-            mutated.brain = HiveMindBrain()
-        
+            from neuroevolution import build_brain
+            mutated.brain = build_brain(mutated)
+
         return mutated
 
 # ============================================================================
@@ -3813,6 +3837,7 @@ class SandKingsSimulation:
         """
         w, h, d = self.world.dimensions
         survivors = [c for c in self.colonies if c.is_alive()]
+        crossed = None  # (parent_a, parent_b) if sexual reproduction happened
         if survivors:
             parent = random.choice(survivors)
             # T40 mutation catalysis: a lineage seated in mild radiation
@@ -3822,7 +3847,16 @@ class SandKingsSimulation:
             rate = 0.15
             if RAD_MILD <= self.radiation_at(px, py):
                 rate *= RAD_MUTATION_MULT
-            genome = parent.genome.mutate(rate)
+            # EV5: >= 2 survivors -> SEXUAL reproduction; a new maw born of
+            # two bloodlines, dispositions and brain topology recombined
+            others = [c for c in survivors if c is not parent]
+            if others and getattr(parent.genome, 'use_neural', False):
+                mate = random.choice(others)
+                from neuroevolution import crossover_genome
+                genome = crossover_genome(parent.genome, mate.genome, rate)
+                crossed = (parent, mate)
+            else:
+                genome = parent.genome.mutate(rate)
         else:
             genome = ColonyGenome()
             genome.aggression = random.uniform(0.5, 1.0)
@@ -3866,6 +3900,15 @@ class SandKingsSimulation:
         self._log_event(f"House {self._house_name(colony)} rises"
                         f" (generation {getattr(colony, 'generation', 1)})"
                         f" as Colony {colony_id}")
+        # EV5: a maw born of two bloodlines whose brain outgrew its parents
+        if crossed is not None:
+            from neuroevolution import architecture_of
+            pa, pb = crossed
+            child_arch = architecture_of(genome)
+            if child_arch not in (architecture_of(pa.genome),
+                                  architecture_of(pb.genome)):
+                self._log_event(f"House {self._house_name(colony)} is born"
+                                f" of two bloodlines ({child_arch} brain)")
         if hasattr(self, 'monitors'):  # fresh colony, fresh mind (M6)
             self.monitors.pop(colony_id, None)
         if hasattr(self, 'learners'):  # and a fresh policy (T26)

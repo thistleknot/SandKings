@@ -60,24 +60,31 @@ class HiveMindBrain(nn.Module):
     Incorporates successful soldier layers via folding
     """
     
-    def __init__(self, input_dim: int = 40, hidden_dim: int = 64, encoding_dim: int = 32):
+    def __init__(self, input_dim: int = 40, hidden_dim: int = 64,
+                 encoding_dim: int = 32, depth: int = 1):
         super().__init__()
-        
-        # Shared perception encoder (slow evolution)
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, encoding_dim),
-            nn.ReLU()
-        )
-        
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.encoding_dim = encoding_dim
+        self.depth = max(1, int(depth))  # hidden layers before the encoder head
+
+        # Evolvable perception encoder: input -> (hidden ->)*depth -> encoding.
+        # The contract downstream (fold/prune read encoder[-2] as the last
+        # Linear, SoldierLayer expects an encoding_dim vector) is preserved:
+        # the encoder always ENDS in Linear(hidden->encoding), ReLU.
+        layers: List[nn.Module] = [nn.Linear(input_dim, hidden_dim), nn.ReLU()]
+        for _ in range(self.depth - 1):
+            layers += [nn.Linear(hidden_dim, hidden_dim), nn.ReLU()]
+        layers += [nn.Linear(hidden_dim, encoding_dim), nn.ReLU()]
+        self.encoder = nn.Sequential(*layers)
+
         # Track activation patterns for pruning, keyed per Linear layer
         self.activation_stats = {
             f'encoder.{i}': ActivationStats()
             for i, layer in enumerate(self.encoder)
             if isinstance(layer, nn.Linear)
         }
-        
+
         # Performance tracking
         self.folded_layer_count = 0
     
