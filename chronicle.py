@@ -46,6 +46,7 @@ SALIENCE = [
     ("too strange", 8),
     ("SPEAKS", 10),
     ("no longer a wall", 10),
+    ("turns on its god", 10),
     ("Shade stage", 10),
     ("split open", 9),
     ("worship", 8),

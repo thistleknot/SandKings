@@ -107,6 +107,11 @@ def build_state(sim: SandKingsSimulation) -> Dict:
         "season": SEASONS[season],
         "dole_pct": int(round(sim.dole_factor() * 100)),
         "drought": bool(getattr(sim, 'drought', False)),
+        "keeper_influence": round(float(getattr(sim, 'keeper_influence', 0.0)), 2),
+        "keeper_influence_word": (sim.keeper_influence_word()
+                                  if hasattr(sim, 'keeper_influence_word') else ""),
+        "keeper_bound": bool(getattr(sim, 'keeper_bound', False)),
+        "keeper_bound_by": str(getattr(sim, 'keeper_bound_by', "")),
         "weather": weather,
         "grains_minted": round(float(getattr(sim, 'grains_minted', 0.0)), 1),
         "world": [int(sim.world.width), int(sim.world.height)],
@@ -537,6 +542,8 @@ function render(){
     `<span class="chip">step <b>${state.step}</b></span>`+
     (state.grains_minted?`<span class="chip"><b>${state.grains_minted}</b> grains</span>`:'')+
     (state.drought?`<span class="chip warn">DROUGHT</span>`:'')+
+    (state.keeper_bound?`<span class="chip warn">BOUND · House ${state.keeper_bound_by}</span>`
+      :(state.keeper_influence_word?`<span class="chip warn">you feel ${state.keeper_influence_word}</span>`:''))+
     state.weather.map(w=>`<span class="chip wx">${w}</span>`).join('');
   const rail=document.getElementById('rail');rail.innerHTML='';
   state.colonies.forEach(col=>{

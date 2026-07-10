@@ -1,5 +1,30 @@
 # Sand Kings Changelog
 
+## 2.26.0 - The Psionic Maw & Keeper-as-Prey (canon; SPEC_PSIONIC.md PS1-PS6)
+
+- The arc's close: the awakened terrarium REACHES BACK. `sim.keeper_
+  influence` (a signed [-1,1] scalar, `_psionic_tick`) is the net emotion the
+  stage-2+ maws project onto you - hunger/dread from a large, hateful maw,
+  an unearned calm from a devout one. It scales with stage (a Shade reaches
+  harder than the new breed) and size, and it stacks across houses. Stage-1
+  insectoids project nothing.
+- It bites back: under the auto-keeper, a strong projected dread
+  (influence <= -0.5) makes the god - gripped by a fear not his own -
+  withhold the dole. The maw's hunger drives the keeper's cruelty, which
+  sours the maw, which projects harder: the loop the story runs on.
+- The turning (keeper-as-prey): a Shade-stage house whose sentiment curdles
+  to hatred (<= 0.2) binds the god - "The terrarium turns on its god - House
+  X binds the keeper's hand" (max salience, fires once, latches). While
+  bound, the keeper's INTERVENTION verbs no-op - keeper_drop_food,
+  keeper_release, keeper_gift, and keeper_drought(on) each stay the hand
+  ("Your hand will not move"). converse/observe survive: the god may plead,
+  but may no longer feed, harm, or gift. This is the canonical breach beyond
+  the glass - not the sandkings escaping, but the keeper being caught.
+- Surfaced: a HUD "You feel a hunger not your own / BOUND" line, a dashboard
+  header chip, and both events chronicled at max salience with a distinct
+  violet tint.
+
+
 ## 2.25.0 - Metamorphosis (canon; SPEC_METAMORPHOSIS.md MT1-MT6)
 
 - The novella's engine: a maw's armored insectoid mobiles "pop open" as it

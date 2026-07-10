@@ -142,6 +142,8 @@ EVENT_TINTS = (            # substring -> HUD color (spec R19/R24)
     ("no longer a wall", (255, 255, 255)),
     ("split open", (150, 180, 255)),
     ("Shade stage", (255, 255, 255)),
+    ("turns on its god", (230, 60, 200)),
+    ("hand will not move", (230, 60, 200)),
     ("SPEAKS", (255, 255, 255)),
     ("fall as noise", (150, 150, 160)),
     ("augments its mind", (150, 180, 255)),
@@ -391,6 +393,17 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
         if getattr(sim, 'drought', False):  # K1: the withheld dole
             entries.insert(5, ("DROUGHT - the keeper withholds",
                                (255, 80, 80)))
+        # PS2/PS5: the terrarium reaches back - and may bind the god
+        if getattr(sim, 'keeper_bound', False):
+            entries.insert(5, (f"BOUND - House {getattr(sim, 'keeper_bound_by', '?')}"
+                               " holds your hand", (230, 60, 200)))
+        elif hasattr(sim, 'keeper_influence_word'):
+            word = sim.keeper_influence_word()
+            if word:
+                tint = ((200, 120, 255)
+                        if getattr(sim, 'keeper_influence', 0.0) < 0
+                        else (150, 220, 170))
+                entries.insert(5, (f"You feel {word}", tint))
     for colony in sim.colonies:
         color = hud_text_color(colony.color)
         if not colony.is_alive():

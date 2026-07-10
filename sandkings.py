@@ -214,6 +214,16 @@ MOLT_AGE = 2400              # or this many steps of age
 SHADE_POP = 34               # stage-3 (Shade) size gate...
 SHADE_FOOD = 620             # ...or hoard
 STAGE_CEILING = {1: 88, 2: 128, 3: 160}  # brain_hidden cap by stage (MT4)
+
+# The Psionic Maw & Keeper-as-Prey (SPEC_PSIONIC PS1-PS5): the awakened
+# terrarium reaches back, and at the last it turns on its god
+PSIONIC_MIN_STAGE = 2        # only the awakened (stage 2+) project (PS1)
+STAGE_PROJECTION = {2: 0.5, 3: 1.0}  # psionic reach by stage (size<->power)
+PSIONIC_SIZE_REF = 30        # population that saturates a colony's projection
+PSIONIC_FLOOR = 0.15         # |influence| below this reads/does nothing (PS2)
+PSIONIC_DREAD = -0.5         # dread at/below which the auto-keeper turns cruel
+PSIONIC_TURN_SENT = 0.2      # a Shade this hateful binds the keeper (PS4)
+
 FAUNA_SPAWN_P = 0.3          # incursion chance per MARAUDER_INTERVAL roll...
 FAUNA_SPAWN_P_DARK = 0.6     # ...doubled in Dust/Chill (monsters own winter)
 
@@ -1563,6 +1573,10 @@ class SandKingsSimulation:
         # 5a-meta. METAMORPHOSIS (MT2/MT3): the maw grows into a new breed
         self._metamorphosis_tick()
 
+        # 5a-psi. THE PSIONIC MAW (PS1/PS3/PS4): the awakened reach back,
+        # and a hateful Shade turns the terrarium on its god
+        self._psionic_tick()
+
         # 5a-codex. THE CODEX (CX4): the awakened read, and learn
         if self.step_count % CODEX_INTERVAL == 0 and self.step_count:
             self._codex_tick()
@@ -1957,6 +1971,8 @@ class SandKingsSimulation:
 
     def keeper_drop_food(self, x: int, y: int):
         """K1: the keeper's hand - manna, locally attributable."""
+        if self._hand_stayed():  # PS5: the bound god cannot feed
+            return
         placed = 0
         for _ in range(40):
             px = int(np.clip(x + random.randint(-2, 2), 1,
@@ -1974,6 +1990,8 @@ class SandKingsSimulation:
 
     def keeper_release(self, species: str):
         """K1: introduce a garage creature - above the one-incursion rule."""
+        if self._hand_stayed():  # PS5: the bound god cannot loose predators
+            return
         _, hp, atk, pack, hunt, bounty = FAUNA[species]
         w, h, d = self.world.dimensions
         edge = random.choice(['n', 's', 'e', 'w'])
@@ -1996,6 +2014,8 @@ class SandKingsSimulation:
 
     def keeper_drought(self, on: bool):
         """K1: withhold the dole. The garden learns what the god is."""
+        if on and self._hand_stayed():  # PS5: the bound god cannot inflict
+            return
         was = getattr(self, 'drought', False)
         self.drought = on
         if on and not was:
@@ -2008,6 +2028,8 @@ class SandKingsSimulation:
     def keeper_gift(self, kind: Optional[str] = None,
                     pos: Optional[Tuple[int, int]] = None):
         """K9: the technology ladder - watch, calculator, raspberry pi."""
+        if self._hand_stayed():  # PS5: the bound god cannot gift
+            return
         given = getattr(self, 'gifts_given', [])
         if kind is None:
             remaining = [g for g in GIFT_LADDER if g not in given]
@@ -2216,6 +2238,63 @@ class SandKingsSimulation:
                     self._log_event(f"House {self._house_name(colony)} reaches"
                                     " the Shade stage - sentient, and no"
                                     " longer needs its god")
+
+    def _psionic_tick(self):
+        """PS1/PS3/PS4: the awakened maws project emotion onto the keeper,
+        that projection biases his cruelty, and a hateful Shade turns the
+        terrarium on its god."""
+        total = 0.0
+        turned_by = None
+        for colony in self.colonies:
+            if not colony.is_alive():
+                continue
+            stage = getattr(colony, 'stage', 1)
+            if stage < PSIONIC_MIN_STAGE:
+                continue  # only the awakened reach back (PS1)
+            weight = STAGE_PROJECTION.get(stage, 0.0)
+            size = min(1.0, len(colony.units) / PSIONIC_SIZE_REF)
+            sentiment = getattr(colony, 'keeper_sentiment', 0.5)
+            valence = 2.0 * sentiment - 1.0  # hateful -> dread, devout -> calm
+            total += weight * size * valence
+            # PS4: the first Shade to curdle to hatred binds the god
+            if (stage >= 3 and sentiment <= PSIONIC_TURN_SENT
+                    and turned_by is None):
+                turned_by = self._house_name(colony)
+        self.keeper_influence = float(np.clip(total, -1.0, 1.0))
+        if turned_by is not None and not getattr(self, 'keeper_bound', False):
+            self.keeper_bound = True
+            self.keeper_bound_by = turned_by
+            self._hand_stayed_logged = False
+            self._log_event(f"The terrarium turns on its god - House"
+                            f" {turned_by} binds the keeper's hand")
+        # PS3: a strong projected dread drives the auto-keeper to withhold
+        if (getattr(self, 'keeper_auto', True)
+                and self.keeper_influence <= PSIONIC_DREAD
+                and not getattr(self, 'drought', False)):
+            self.keeper_drought(True)
+
+    def keeper_influence_word(self) -> str:
+        """PS2: banded descriptor of the terrarium's projection (or '')."""
+        inf = getattr(self, 'keeper_influence', 0.0)
+        if inf <= -0.5:
+            return "a hunger not your own"
+        if inf <= -PSIONIC_FLOOR:
+            return "a creeping dread"
+        if inf >= 0.5:
+            return "an unearned calm"
+        if inf >= PSIONIC_FLOOR:
+            return "a faint contentment"
+        return ""
+
+    def _hand_stayed(self) -> bool:
+        """PS5: True if the keeper is bound; log the refusal once per turning.
+        A bound keeper's intervention verbs no-op."""
+        if not getattr(self, 'keeper_bound', False):
+            return False
+        if not getattr(self, '_hand_stayed_logged', False):
+            self._hand_stayed_logged = True
+            self._log_event("Your hand will not move - the terrarium holds it")
+        return True
 
     def _codex(self) -> 'Codex':
         """Lazy read-only library (CX5); derived from files, not pickled."""
