@@ -92,6 +92,7 @@ def build_state(sim: SandKingsSimulation) -> Dict:
             "breached": bool(getattr(colony, 'breached', False)),
             "augment": int(getattr(colony, 'memory_augment', 0)),
             "currency": round(float(getattr(colony, 'currency', 0.0)), 1),
+            "sentiment": round(float(getattr(colony, 'keeper_sentiment', 0.5)), 2),
             "utterance": str(utterance),
         })
     saga = [text for _s, text, _sal in saga_rows(
@@ -523,6 +524,9 @@ document.getElementById('frame').addEventListener('click',e=>{
   const wy=Math.floor((e.clientY-rect.top)/rect.height*state.world[1]);
   post('/api/keeper/food',{x:wx,y:wy});});
 function attClass(a){return a==='reverent'?'reverent':a==='wrathful'?'wrathful':'';}
+function sentWord(s,att){if(att==='wrathful'||s<0.33)return'hateful';
+  if(s>0.66&&att==='reverent')return'devout';return'wary';}
+function sentColor(s){return s<0.33?'#e0554e':s>0.66?'#f2c14e':'#9aa0ac';}
 function render(){
   if(!state)return; drought=state.drought;
   document.getElementById('droughtBtn').textContent=drought?'Relent':'Withhold';
@@ -548,7 +552,8 @@ function render(){
       `<div class="stats"><span>pop <b>${col.pop}</b></span>`+
       `<span>food <b>${col.food}</b></span><span>maw <b>${col.maw_hp}%</b></span>`+
       `<span>gen <b>${col.generation}</b></span>`+
-      (col.currency?`<span>grains <b>${col.currency}</b></span>`:'')+`</div>`+
+      (col.currency?`<span>grains <b>${col.currency}</b></span>`:'')+
+      `<span>toward you <b style="color:${sentColor(col.sentiment)}">${sentWord(col.sentiment,col.attitude)}</b></span>`+`</div>`+
       (col.alive?`<div class="mood">${col.mood}</div>`:'');
     if(col.breached&&col.utterance)inner+=`<div class="says">says: "${col.utterance}"</div>`;
     if(selected===col.id&&col.breached&&col.alive){

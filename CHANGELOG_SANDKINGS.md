@@ -1,5 +1,25 @@
 # Sand Kings Changelog
 
+## 2.23.0 - Look to Your Faces (canon; SPEC_FACES.md F1-F5)
+
+- Folding in the source novella: colonies no longer carve abstract
+  symbols (☀☠⚔). Each carves its SENTIMENT toward you - a readable fact
+  that sours GRADUALLY: devout ♥ (gold) → wary ◦ (grey) → hateful ☠
+  (red). It is not a literal portrait (the sandkings have no image of
+  you) - it's how they feel about their god.
+- The souring is the warning ("Look to your faces, Simon Kress"): a
+  keeper_sentiment scalar drifts down under drought/wrath/starvation and
+  up under witnessed manna (souring faster than it heals), and the carved
+  band tracks it - so you SEE devotion curdle through wary before it turns
+  hateful, in time to relent. The first turn to hateful is chronicled.
+- Surfaced everywhere: coloured carvings in the glyph view, named in the
+  look panel and legend, and a "toward you: devout/wary/hateful" fact on
+  each dashboard House card.
+- Docker: completed the in-container test-dependency set (tqdm,
+  matplotlib, httpx, pygame) so the FULL 20-suite battery runs inside the
+  image on the container's python - no host python needed.
+
+
 ## 2.18.1 - Docker verified end-to-end (WikiText + chat, isolated)
 
 - The image is now actually BUILT and TESTED (not just authored). Bugs

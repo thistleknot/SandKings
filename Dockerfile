@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir \
         numpy pandas scikit-learn pyarrow pillow \
-        "fastapi==0.115.14" "uvicorn==0.44.0"
+        "fastapi==0.115.14" "uvicorn==0.44.0" httpx pygame tqdm matplotlib
 
 # the game + the pre-fetched local data (GloVe .gz and corpus/wikitext/
 # must exist on the host - run ./prepare_corpus.sh first). COPY bakes

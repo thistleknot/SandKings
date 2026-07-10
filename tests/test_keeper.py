@@ -66,7 +66,11 @@ def test_drought_zeroes_dole_and_wrath_requires_faith():
     assert sim.keeper_attitude(faithful) == 'wrathful'
     assert sim.keeper_attitude(heathen) == 'none', \
         "betrayal requires prior faith"
-    assert any("hateful" in m for _, m in sim.events)
+    # the wrathful colony's carved sentiment curdles (F3, GRADUAL - it
+    # passes through wary before the carve turns hateful and logs)
+    bands = {sim._update_sentiment(faithful) for _ in range(12)}
+    assert 'hateful' in bands
+    assert any("hateful mask" in m for _, m in sim.events)
     sim.keeper_drought(False)
     assert sim.dole_factor() > 0.0
     assert sim.keeper_attitude(faithful) == 'none'
@@ -200,10 +204,11 @@ def test_carvings_match_state_and_purge():
     colony = sim.colonies[0]
     colony.worshipped = True
     sim.keeper_drought(True)
+    colony.keeper_sentiment = 0.1  # already soured (gradual band -> hateful)
     sim.step_count = 200  # carve tick
     sim._keeper_tick()
     from sandkings import CARVE_SYMBOLS
-    assert CARVE_SYMBOLS['wrathful'] in sim._carvings().values()
+    assert CARVE_SYMBOLS['hateful'] in sim._carvings().values()
     pos = next(iter(sim.carvings))
     sim.world.voxels[pos] = VoxelType.AIR.value  # disturb the sand
     sim.step_count = 400

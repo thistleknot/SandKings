@@ -74,6 +74,12 @@ BEAST_GLYPHS = {                    # fauna bestiary (T48)
     'rodent': "n", 'scorpion': "t", 'snake': "S", 'anteater': "A",
 }
 BEAST_COLOR = (200, 80, 220)        # violet: not of any colony
+CARVE_COLORS = {                    # F4: sentiment carving colours by glyph
+    '♥': (255, 235, 140),  # devout - gold
+    '◦': (170, 170, 180),  # wary - pale grey
+    '☠': (230, 70, 60),    # hateful - red
+    '⌂': (150, 180, 255),  # machine-carved - blue
+}
 COPPER_TINT = (184, 115, 51)  # armored soldier letters (R22)
 UNIT_GLYPHS = {UnitType.WORKER: "w", UnitType.SOLDIER: "s", UnitType.SCOUT: "c"}
 MAW_GLYPH = "Ω"
@@ -610,6 +616,13 @@ def build_look_entries(sim: SandKingsSimulation, x: int,
     if (x, y, z) in (getattr(sim, 'fires', None) or {}):
         line += " ON FIRE"
     entries = [(line[:46], (230, 210, 140))]
+    carving = (getattr(sim, 'carvings', None) or {}).get((x, y, z))
+    if carving:  # F4: name the sentiment a carving expresses
+        meaning = {'♥': "devout", '◦': "impassive, watching",
+                   '☠': "twisted with hate", '⌂': "machine-carved"}.get(
+                       carving, carving)
+        entries.append((f" a carving: sentiment {meaning}",
+                        CARVE_COLORS.get(carving, (255, 235, 170))))
     kinds = column_inhabitants(sim, x, y)
     if kinds:
         entries.append((f"here: {len(kinds)} "
@@ -640,16 +653,16 @@ def build_legend_entries() -> List[Tuple[str, Tuple[int, int, int]]]:
         entries.append((f" {glyph}  {species} (wild)", BEAST_COLOR))
     entries.append((f" {FIRE_GLYPH}  fire", FIRE_COLOR))
     entries.append(("", HUD_FG))
-    entries.append(("-- carvings (K4) --", (150, 150, 160)))
+    entries.append(("-- carvings: sentiment toward you (F) --",
+                    (150, 150, 160)))
     from sandkings import CARVE_SYMBOLS
-    carve_names = {'reverent': "reverence - the keeper fed them",
-                   'wrathful': "wrath - the god betrayed them",
-                   'war': "war", 'hunger': "hunger",
-                   'content': "contentment",
+    carve_names = {'devout': "devout - they love their god",
+                   'wary': "wary - impassive, watching",
+                   'hateful': "hateful - the god has soured (look to it!)",
                    'machine': "machine-carved (the terminal)"}
     for key, symbol in CARVE_SYMBOLS.items():
         entries.append((f" {symbol}  {carve_names.get(key, key)}",
-                        (255, 235, 170)))
+                        CARVE_COLORS.get(symbol, (255, 235, 170))))
     entries.append(("", HUD_FG))
     entries.append(("-- colors --", (150, 150, 160)))
     entries.append((" copper letter = armored soldier", COPPER_TINT))
@@ -1272,13 +1285,15 @@ class LiveViewer:
                                    cell - 2, cell - 2)
                 pygame.draw.rect(self._screen, color, rect)
 
-        # K4: carvings - the colonies' souls written on the sand
+        # K4/F4: carvings - the colonies' sentiment toward the keeper,
+        # coloured by band (devout gold -> wary grey -> hateful red)
         if glyph_mode:
             for pos, symbol in (getattr(self.sim, 'carvings', None)
                                 or {}).items():
                 if self._visible_depth(pos) is not None:
-                    self._blit_glyph(symbol, (255, 235, 170),
-                                     pos[0] * cell, pos[1] * cell)
+                    self._blit_glyph(symbol, CARVE_COLORS.get(
+                        symbol, (255, 235, 170)),
+                        pos[0] * cell, pos[1] * cell)
 
         if getattr(self.sim, 'storm_until', 0) > self.sim.step_count:
             haze = pygame.transform.scale(

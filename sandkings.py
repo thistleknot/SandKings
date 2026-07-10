@@ -185,9 +185,15 @@ KEEPER_DROP_FOOD = 6         # FOOD voxels per keeper hand-drop
 KEEPER_MEMORY = 800          # steps of grace per witnessed miracle
 KEEPER_WRATH_MOBILIZATION = 0.75  # war-chest gate multiplier when wrathful
 CARVE_INTERVAL = 200         # steps between carvings (K4)
-CARVE_SYMBOLS = {'reverent': '☀', 'wrathful': '☠',  # sun, skull
-                 'war': '⚔', 'hunger': '♦',         # swords, diamond
-                 'content': '♥', 'machine': '⌂'}    # heart, house
+# Canon (SPEC_FACES): a colony carves its SENTIMENT toward the keeper - a
+# readable fact that sours GRADUALLY, the early warning of rebellion
+# ("look to your faces"). devout ♥ -> wary ◦ -> hateful ☠. 'machine' ⌂ is
+# the terminal's own glyph (K10). (Not a literal portrait: the sandkings
+# have no image of the keeper; the carving is a sentiment tell.)
+CARVE_SYMBOLS = {'devout': '♥', 'wary': '◦', 'hateful': '☠', 'machine': '⌂'}
+SENTIMENT_SOUR = 0.06       # devotion lost per interval under cruelty (F1)
+SENTIMENT_RECOVER = 0.05    # regained under reverence (souring is faster)
+SENTIMENT_DRIFT = 0.02      # drift toward neutral 0.5 when the keeper is absent
 KEEPER_CAT_STEP = 3200       # the cat gets in (auto script, K8)
 KEEPER_GRIEF = 1200          # drought length after the cat is slain
 KEEPER_GIFT_INTERVAL = 1600  # steps between ladder gifts (K9)
@@ -774,6 +780,8 @@ class Colony:
         self.terminal_uses = 0         # sandbox-shell successes (K10)
         self.memory_augment = 0        # KV-cache memory-extension level (AUG2)
         self.currency = 0.0            # grains earned this maw's life (CU1)
+        self.keeper_sentiment = 0.5    # devotion to the keeper 0..1 (F1)
+        self._sentiment_wrath = False  # has the carved sentiment turned hateful
         
     def spawn_unit(self, unit_type: UnitType, step: int = 0):
         """Spawn new unit from Maw; copper armors, timber arms (T25/T44).
@@ -1349,7 +1357,9 @@ class SandKingsSimulation:
                                   ('worshipped', False),
                                   ('breached', False),
                                   ('terminal_uses', 0),
-                                  ('memory_augment', 0)):  # AUG2
+                                  ('memory_augment', 0),  # AUG2
+                                  ('keeper_sentiment', 0.5),  # F1
+                                  ('_sentiment_wrath', False)):
                 if not hasattr(colony, attr):
                     setattr(colony, attr, default)
 
@@ -1832,6 +1842,41 @@ class SandKingsSimulation:
             self.carvings = {}
         return self.carvings
 
+    def _update_sentiment(self, colony: Colony) -> str:
+        """F1/F2: drift the colony's devotion to the keeper and return the
+        carved sentiment band. Souring is gradual - the early warning.
+
+        Reverence/manna lifts it; wrath, drought, or starvation curdles it
+        (faster than it heals); absence drifts it toward neutral. The first
+        turn to 'hateful' is chronicled (F3) - look to your faces."""
+        att = self.keeper_attitude(colony)
+        s = getattr(colony, 'keeper_sentiment', 0.5)
+        starving = colony.maw.food_stored < 2 * BOOTSTRAP_FLOOR
+        if att == 'wrathful' or getattr(self, 'drought', False) or starving:
+            s -= SENTIMENT_SOUR
+        elif att == 'reverent':
+            s += SENTIMENT_RECOVER
+        else:
+            s += SENTIMENT_DRIFT * (1 if s < 0.5 else -1)
+        colony.keeper_sentiment = float(np.clip(s, 0.0, 1.0))
+        # the BAND tracks the (gradual) favor scalar so souring is VISIBLE
+        # devout -> wary -> hateful over time; wrath/drought only accelerate
+        # the decay above, they do not slam the band ("look to your faces")
+        if colony.keeper_sentiment < 0.33:
+            band = 'hateful'
+        elif colony.keeper_sentiment > 0.66:
+            band = 'devout'
+        else:
+            band = 'wary'
+        if band == 'hateful' and not getattr(colony, '_sentiment_wrath', False):
+            colony._sentiment_wrath = True
+            self._log_event(f"The carvings of House"
+                            f" {self._house_name(colony)} curdle into a"
+                            " hateful mask")
+        elif band == 'devout':
+            colony._sentiment_wrath = False  # re-arm the warning
+        return band
+
     def keeper_attitude(self, colony: Colony) -> str:
         """K3: derived, never stored. none | reverent | wrathful."""
         if getattr(self, 'drought', False) and getattr(colony, 'worshipped',
@@ -1887,13 +1932,8 @@ class SandKingsSimulation:
         self.drought = on
         if on and not was:
             self._log_event("The keeper withholds the dole - drought!")
-            for colony in self.colonies:  # betrayal requires prior faith
-                if (colony.is_alive() and getattr(colony, 'worshipped', False)
-                        and not getattr(colony, '_wrath_logged', False)):
-                    colony._wrath_logged = True
-                    self._log_event(f"The carvings of House"
-                                    f" {self._house_name(colony)} twist"
-                                    " into something hateful")
+            # the carvings curdle on their own as sentiment sours (F3);
+            # no instant twist here anymore - the souring is gradual.
         elif was and not on:
             self._log_event("The rains of the keeper return")
 
@@ -1978,13 +2018,8 @@ class SandKingsSimulation:
             for colony in self.colonies:
                 if not colony.is_alive():
                     continue
-                att = self.keeper_attitude(colony)
-                symbol = (CARVE_SYMBOLS['wrathful'] if att == 'wrathful'
-                          else CARVE_SYMBOLS['reverent'] if att == 'reverent'
-                          else CARVE_SYMBOLS['war'] if colony.at_war
-                          else CARVE_SYMBOLS['hunger']
-                          if colony.maw.food_stored < 2 * BOOTSTRAP_FLOOR
-                          else CARVE_SYMBOLS['content'])
+                band = self._update_sentiment(colony)  # F1/F2: sours slowly
+                symbol = CARVE_SYMBOLS[band]
                 mx, my, _ = colony.maw.position
                 for _try in range(12):
                     cx = int(np.clip(mx + random.randint(-3, 3), 1,
