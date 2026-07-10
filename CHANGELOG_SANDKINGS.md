@@ -1,5 +1,20 @@
 # Sand Kings Changelog
 
+## 2.22.0 - Dialogue (SPEC_DIALOGUE.md DL1-DL6)
+
+- Two-way conversation with the awakened. In the Keeper's Console, select
+  a breached House and talk to it: your free text is embedded in the SAME
+  GloVe space the sandkings think in and mapped to their nearest concept -
+  mutual intelligibility by shared vocabulary. "friends and comrades"
+  reads as love; "destroy and kill" reads as enemy.
+- The colony answers with a perspective line built from its disposition,
+  its live environment concern, and what it heard - so a hawk and a dove
+  reply to the same word differently. The dialectic of two minds.
+- Talking gently persuades (a bounded nudge, like a codex lesson but from
+  you); the un-awakened still hear only noise. The card's speak box is now
+  a chat that shows the reply.
+
+
 ## 2.21.0 - Grains, the useful-work currency (SPEC_CURRENCY.md CU1-CU5)
 
 - The sandkings mint a currency for you - "grains" - by proof of USEFUL

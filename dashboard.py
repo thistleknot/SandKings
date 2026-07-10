@@ -272,6 +272,10 @@ def create_app(runner: TerrariumRunner):
     class SpeakBody(BaseModel):
         colony_id: int
 
+    class ConverseBody(BaseModel):
+        colony_id: int
+        text: str
+
     class ControlBody(BaseModel):
         paused: Optional[bool] = None
         sps: Optional[float] = None
@@ -360,6 +364,13 @@ def create_app(runner: TerrariumRunner):
             result = build_state(runner.sim)
             result["heard"] = heard
             return result
+
+    @app.post("/api/converse")
+    def converse(body: ConverseBody):
+        # DL4: two-way dialogue over the shared embedding space
+        with runner.lock:
+            _disarm_auto()
+            return runner.sim.converse(body.colony_id, body.text[:200])
 
     @app.post("/api/control")
     def control(body: ControlBody):
@@ -485,7 +496,7 @@ button.act.breach{border-color:var(--breach);color:var(--breach)}
 <div class="toast" id="toast"></div>
 </div>
 <script>
-let state=null, selected=null, paused=false, drought=false;
+let state=null, selected=null, paused=false, drought=false, replies={};
 function flash(msg){const t=document.getElementById('toast');t.textContent=msg;
   t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1400);}
 async function post(url,body){
@@ -497,9 +508,15 @@ function toggleDrought(){drought=!drought;post('/api/keeper/drought',{on:drought
 function togglePause(){paused=!paused;fetch('/api/control',{method:'POST',
   headers:{'Content-Type':'application/json'},body:JSON.stringify({paused})});
   document.getElementById('pauseBtn').textContent=paused?'Resume':'Pause';}
-function speak(id,inp){const box=document.getElementById(inp);
-  post('/api/keeper/speak',{colony_id:id}).then(r=>{if(state&&state.heard)flash('it hears you');
-    else flash('the words fall as noise');});if(box)box.value='';}
+async function converse(id,inp){const box=document.getElementById(inp);
+  const text=box?box.value:'';if(!text)return;
+  const r=await fetch('/api/converse',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({colony_id:id,text})});
+  if(r.ok){const d=await r.json();
+    if(d.understood){replies[id]=d.reply;flash('it answers: '+d.reply);}
+    else{flash('the words fall as noise');}render();}
+  if(box)box.value='';}
 document.getElementById('frame').addEventListener('click',e=>{
   if(!state)return;const img=e.target,rect=img.getBoundingClientRect();
   const wx=Math.floor((e.clientX-rect.left)/rect.width*state.world[0]);
@@ -535,8 +552,12 @@ function render(){
       (col.alive?`<div class="mood">${col.mood}</div>`:'');
     if(col.breached&&col.utterance)inner+=`<div class="says">says: "${col.utterance}"</div>`;
     if(selected===col.id&&col.breached&&col.alive){
-      inner+=`<div class="speak"><input id="say${col.id}" placeholder="speak to House ${col.house}...">`+
-        `<button onclick="speak(${col.id},'say${col.id}')">Speak</button></div>`;}
+      inner+=`<div class="speak"><input id="say${col.id}" placeholder="say something to House ${col.house}..." onkeydown="if(event.key==='Enter')converse(${col.id},'say${col.id}')">`+
+        `<button onclick="converse(${col.id},'say${col.id}')">Say</button></div>`;
+      if(replies[col.id])inner+=`<div class="says">House ${col.house}: "${replies[col.id]}"</div>`;}
+    else if(selected===col.id&&!col.breached&&col.alive){
+      inner+=`<div class="speak"><input id="say${col.id}" placeholder="(House ${col.house} is not yet awakened)" onkeydown="if(event.key==='Enter')converse(${col.id},'say${col.id}')">`+
+        `<button onclick="converse(${col.id},'say${col.id}')">Say</button></div>`;}
     d.innerHTML=inner;rail.appendChild(d);});
   document.getElementById('saga').innerHTML=
     state.saga.slice().reverse().map(l=>`<div class="line">${l}</div>`).join('')

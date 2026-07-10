@@ -1904,6 +1904,36 @@ class SandKingsSimulation:
         self.gift = ((x, y, z), kind)
         self._log_event("A strange gift descends from above")
 
+    def converse(self, colony_id: int, text: str) -> Dict[str, object]:
+        """DL3: the human speaks to a colony; the awakened answer in the
+        shared vocabulary, shaped by disposition and environment."""
+        colony = self._colony_by_id(colony_id)
+        if colony is None or not colony.is_alive():
+            return {"understood": False, "heard": None, "reply": ""}
+        if not getattr(colony, 'breached', False):
+            self._log_event("The keeper speaks, but the words fall as noise")
+            return {"understood": False, "heard": None, "reply": ""}
+        from dialogue import DIALOGUE_NUDGE, compose_reply, interpret
+        heard = interpret(text)
+        # the awakened hear (K12 speak anchor) and take grace by word
+        if colony.units:
+            colony.units[0].spoken_to_step = self.step_count
+        colony.keeper_fed_step = self.step_count
+        # gentle persuasion: the human can teach through talk (bounded)
+        nudge_map = {'ally': 'loyalty', 'war': 'aggression',
+                     'home': 'patience', 'defense': 'defense_investment',
+                     'gratitude': 'loyalty', 'love': 'loyalty'}
+        attr = nudge_map.get(heard)
+        if attr:
+            g = colony.genome
+            cur = getattr(g, attr, 0.5)
+            setattr(g, attr, float(np.clip(cur + DIALOGUE_NUDGE, 0.0, 1.0)))
+        reply = compose_reply(colony, self, heard)
+        self._monitor(colony.colony_id).log_decision(
+            self.step_count, f"House {self._house_name(colony)}",
+            f"answered the god: {reply}", heard)
+        return {"understood": True, "heard": heard, "reply": reply}
+
     def keeper_speak(self, unit: SandKing) -> bool:
         """K12: the keeper addresses one creature. Returns heard?"""
         colony = self._colony_by_id(unit.colony_id)
