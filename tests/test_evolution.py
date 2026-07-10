@@ -120,6 +120,58 @@ def test_sexual_respawn_recombines():
     assert child.genome.brain(torch.zeros(40)).shape == (32,)
 
 
+def test_courtship_prefers_allied_pair():
+    if not HAVE_TORCH:
+        return _skip()
+    random.seed(1)
+    np.random.seed(1)
+    sim = SandKingsSimulation(width=40, height=30, depth=10, num_colonies=4)
+    sim.harsh = True
+    for c in sim.colonies:
+        c.genome.use_neural = True
+        c.genome.brain = build_brain(c.genome)
+    d = sim._diplomacy()
+    d.rel(1, 2).trust = 60
+    d.rel(2, 1).trust = 60
+    d.update_ally_latch(1, 2)
+    a, b, mode = sim._choose_mates([c for c in sim.colonies])
+    assert mode == "courtship"
+    assert {a.colony_id, b.colony_id} == {1, 2}, "allied pair courts"
+
+
+def test_union_founds_new_house_and_supersedure_grudge():
+    if not HAVE_TORCH:
+        return _skip()
+    random.seed(11)
+    np.random.seed(11)
+    torch.manual_seed(11)
+    sim = SandKingsSimulation(width=44, height=32, depth=10, num_colonies=4)
+    sim.harsh = True
+    for c in sim.colonies:
+        c.genome.use_neural = True
+        c.genome.brain = build_brain(c.genome)
+    d = sim._diplomacy()
+    d.rel(1, 2).trust = 60
+    d.rel(2, 1).trust = 60
+    d.update_ally_latch(1, 2)
+    parent_houses = {sim._house_name(c) for c in sim.colonies}
+    sim.colonies[1].genome.loyalty = 0.1  # a resentful newborn
+    sim.colonies[2].genome.loyalty = 0.1
+    victim = sim.colonies[0]
+    victim.maw.alive = False
+    victim.units.clear()
+    sim._respawn_colony(victim.colony_id)
+    child = sim.colonies[0]
+    assert child.generation == 1, "a union founds a new house"
+    assert any("born of their union" in m for _, m in sim.events)
+    # supersedure: the low-loyalty child holds a grudge against a parent
+    assert any("resents its parent" in m for _, m in sim.events)
+    grudges = sim._house_grudges()
+    assert any(victim_house == sim._house_name(child)
+               for (victim_house, _traitor) in grudges), \
+        "the newborn's grudge is recorded against a parent house"
+
+
 def test_evolved_genome_pickles():
     if not HAVE_TORCH:
         return _skip()

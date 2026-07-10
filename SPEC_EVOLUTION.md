@@ -70,6 +70,29 @@ sim (the OTHER one, EnhancedSandKingsSimulation) still runs. A short
 neuroevolution soak: over several respawns the population's brain
 sizes diversify from the uniform start.
 
+
+
+## CS — Courtship & Supersedure (extends EV5, user request)
+Sexual reproduction is now a DRAMATIC, political event, not an abstract
+crossover:
+- COURTSHIP: `_choose_mates` prefers an ALLIED or truced pair that are
+  physically near (a queen accepted into the nest to mate); with no such
+  pair, the strongest survivor takes the empty nest by CONQUEST and weds
+  the nearest. Loyalty and alliance are literally what decides who breeds.
+- A union of two houses founds a NEW hybrid house (generation 1);
+  awakening/worship pass if EITHER parent carried them.
+- JEALOUSY (pheromone-grounded): a third colony that envies the parents
+  (the jealousy predicate - rival food > 2x mine) resents the match and
+  loses trust toward both; "House W eyes the union with jealousy."
+- SUPERSEDURE (insects are like that): a low-loyalty newborn (loyalty
+  gene < 0.35) is born resenting its weaker parent - a permanent house
+  grudge (D3), the seed of a future war against its own bloodline.
+- Events: "House X and House Y court - House Z is born of their union" /
+  "...takes the empty nest by conquest..." / "House Z, newborn, already
+  resents its parent House X". Verified by tests/test_evolution.py
+  (courtship prefers the allied pair; the union founds a new house and
+  records the supersedure grudge).
+
 ## Status / Reconciliation
 - Drafted + implemented 2026-07-09 (same session). Verified: build_brain
   yields a forward-valid 32-vector encoder at depth 1..4 (encoder still

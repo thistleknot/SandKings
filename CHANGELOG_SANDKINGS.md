@@ -1,5 +1,18 @@
 # Sand Kings Changelog
 
+## 2.17.1 - Courtship & Supersedure (mating drama)
+
+- Maw mating is now political theatre. Reproduction prefers a COURTSHIP
+  between allied, neighbouring houses; with no allies, the strongest
+  takes the empty nest by CONQUEST. Loyalty and alliance decide who breeds.
+- A union of two houses founds a NEW hybrid house.
+- Jealousy: an envious third colony resents the match and loses trust in
+  both parents ("House W eyes the union with jealousy").
+- Supersedure (insects are like that): a low-loyalty newborn is born
+  already resenting its weaker parent - a blood grudge against its own
+  bloodline, the seed of a future war.
+
+
 ## 2.18.0 - The Sandking Sandbox (SPEC_SANDBOX.md SB1-SB5)
 
 - Docker packaging: `docker build -t sandking .` builds a self-contained

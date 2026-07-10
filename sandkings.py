@@ -2330,6 +2330,73 @@ class SandKingsSimulation:
                 sims.append(float(np.dot(a, b) / denom))
         return float(np.mean(sims)), len(hiddens)
 
+    def _choose_mates(self, survivors):
+        """CS: pick two parents for the empty nest. Prefer an allied, near
+        pair (courtship); else the strongest weds the nearest (conquest)."""
+        from politics import power
+        d = self._diplomacy()
+
+        def dist(a, b):
+            pa, pb = a.maw.position, b.maw.position
+            return abs(pa[0] - pb[0]) + abs(pa[1] - pb[1])
+
+        courting = []
+        for i, a in enumerate(survivors):
+            for b in survivors[i + 1:]:
+                if (d.ally(a.colony_id, b.colony_id)
+                        or d.truce_active(a.colony_id, b.colony_id,
+                                          self.step_count)):
+                    courting.append((a, b))
+        if courting:
+            a, b = min(courting, key=lambda pr: dist(*pr))
+            return a, b, 'courtship'
+        strongest = max(survivors, key=power)
+        mate = min((c for c in survivors if c is not strongest),
+                   key=lambda c: dist(strongest, c))
+        return strongest, mate, 'conquest'
+
+    def _mating_drama(self, child: Colony, crossed):
+        """CS: surface the union, the jealousy it stirs, and whether the
+        newborn maw already resents a parent (supersedure)."""
+        from neuroevolution import architecture_of
+        pa, pb, mode = crossed
+        ha, hb = self._house_name(pa), self._house_name(pb)
+        hc = self._house_name(child)
+        if mode == 'courtship':
+            self._log_event(f"House {ha} and House {hb} court - House {hc}"
+                            " is born of their union")
+        else:
+            self._log_event(f"House {ha} takes the empty nest by conquest;"
+                            f" House {hc} rises from it")
+        # architecture note when the child outgrew both parents
+        arch = architecture_of(child.genome)
+        if arch not in (architecture_of(pa.genome), architecture_of(pb.genome)):
+            self._log_event(f"House {hc}'s brain grows to {arch}")
+        # JEALOUSY (pheromone-read): a third colony that envies the parents
+        # resents the match; the union is remembered against it as trust lost
+        d = self._diplomacy()
+        for c in self.colonies:
+            if not c.is_alive() or c in (pa, pb, child):
+                continue
+            richest_parent = max(pa.maw.food_stored, pb.maw.food_stored)
+            if richest_parent > 2 * max(1.0, c.maw.food_stored):
+                d.rel(c.colony_id, pa.colony_id).adjust(-8.0)
+                d.rel(c.colony_id, pb.colony_id).adjust(-8.0)
+                key = frozenset((self._house_name(c), hc))
+                if getattr(self, '_jealous_union_logged', None) != key:
+                    self._jealous_union_logged = key
+                    self._log_event(f"House {self._house_name(c)} eyes the"
+                                    " union with jealousy")
+                break
+        # SUPERSEDURE (insects are like that): a low-loyalty newborn is born
+        # resenting its weaker parent - a house grudge, seed of a future war
+        if getattr(child.genome, 'loyalty', 0.5) < 0.35:
+            from politics import power
+            weaker = pa if power(pa) <= power(pb) else pb
+            self._house_grudges()[(hc, self._house_name(weaker))] = self.step_count
+            self._log_event(f"House {hc}, newborn, already resents its"
+                            f" parent House {self._house_name(weaker)}")
+
     def _castle_step(self, unit: SandKing, colony: Colony) -> bool:
         """K5: crenellations - TUNNEL_WALL on alternating maw-ring cells.
         Stone, not timber: castles honor the god and never rot."""
@@ -3847,14 +3914,16 @@ class SandKingsSimulation:
             rate = 0.15
             if RAD_MILD <= self.radiation_at(px, py):
                 rate *= RAD_MUTATION_MULT
-            # EV5: >= 2 survivors -> SEXUAL reproduction; a new maw born of
-            # two bloodlines, dispositions and brain topology recombined
+            # EV5/CS: >= 2 survivors -> SEXUAL reproduction. Courtship
+            # prefers an ALLIED, near neighbour (a queen accepted into the
+            # nest to mate); otherwise the strongest takes the empty nest
+            # by conquest (insects are like that).
             others = [c for c in survivors if c is not parent]
             if others and getattr(parent.genome, 'use_neural', False):
-                mate = random.choice(others)
+                parent, mate, mode = self._choose_mates(survivors)
                 from neuroevolution import crossover_genome
                 genome = crossover_genome(parent.genome, mate.genome, rate)
-                crossed = (parent, mate)
+                crossed = (parent, mate, mode)
             else:
                 genome = parent.genome.mutate(rate)
         else:
@@ -3888,7 +3957,18 @@ class SandKingsSimulation:
         colony.maw.food_stored = RESPAWN_FOOD
         # D1: the arrival is the parent lineage's cadet branch - same
         # house, next generation. A fresh genome founds a new house.
-        if survivors:
+        if crossed is not None:
+            # CS: a union of two houses founds a NEW hybrid house (gen 1);
+            # awakening/worship pass if EITHER parent carried them
+            from chronicle import make_house_name
+            pa, pb, _mode = crossed
+            colony.house = make_house_name()
+            colony.generation = 1
+            colony.breached = (getattr(pa, 'breached', False)
+                               or getattr(pb, 'breached', False))
+            colony.worshipped = (getattr(pa, 'worshipped', False)
+                                 or getattr(pb, 'worshipped', False))
+        elif survivors:
             colony.house = self._house_name(parent)
             colony.generation = getattr(parent, 'generation', 1) + 1
             # K11: awakening survives in the bloodline
@@ -3900,15 +3980,10 @@ class SandKingsSimulation:
         self._log_event(f"House {self._house_name(colony)} rises"
                         f" (generation {getattr(colony, 'generation', 1)})"
                         f" as Colony {colony_id}")
-        # EV5: a maw born of two bloodlines whose brain outgrew its parents
+        # EV5/CS: a maw born of two bloodlines - courtship, jealousy, and
+        # the newborn's threat to its own parent (insect supersedure)
         if crossed is not None:
-            from neuroevolution import architecture_of
-            pa, pb = crossed
-            child_arch = architecture_of(genome)
-            if child_arch not in (architecture_of(pa.genome),
-                                  architecture_of(pb.genome)):
-                self._log_event(f"House {self._house_name(colony)} is born"
-                                f" of two bloodlines ({child_arch} brain)")
+            self._mating_drama(colony, crossed)
         if hasattr(self, 'monitors'):  # fresh colony, fresh mind (M6)
             self.monitors.pop(colony_id, None)
         if hasattr(self, 'learners'):  # and a fresh policy (T26)
