@@ -288,6 +288,15 @@ def create_app(runner: TerrariumRunner):
             png = render_frame_png(runner.sim)
         return Response(content=png, media_type="image/png")
 
+    @app.get("/api/telemetry")
+    def telemetry():
+        # TL4: the free Dwarf-Therapist-style stat feed, per colony
+        with runner.lock:
+            tel = runner.sim._telemetry()
+            data = {c.colony_id: tel.history(c.colony_id)
+                    for c in runner.sim.colonies}
+        return JSONResponse(data)
+
     @app.post("/api/keeper/food")
     def food(body: FoodBody):
         with runner.lock:

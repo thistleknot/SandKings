@@ -1473,6 +1473,11 @@ class SandKingsSimulation:
         if self.step_count % CODEX_INTERVAL == 0 and self.step_count:
             self._codex_tick()
 
+        # 5a-tel. TELEMETRY (TL1): the free Dwarf-Therapist-style stat feed
+        from telemetry import TELEMETRY_INTERVAL as _TI
+        if self.step_count % _TI == 0 and self.step_count:
+            self._telemetry().record(self)
+
         # 5b. DIPLOMACY (SPEC_POLITICS): a truce signed this step prevents
         # this step's bloodshed
         self._resolve_diplomacy()
@@ -2068,6 +2073,39 @@ class SandKingsSimulation:
                     == VoxelType.SAND.value):
                 self._carvings()[(mx - 2, my, cz)] = CARVE_SYMBOLS['machine']
 
+    def _telemetry(self) -> 'Telemetry':
+        """Lazy telemetry collector (TL1); pickles with the sim."""
+        if not hasattr(self, 'telemetry') or self.telemetry is None:
+            from telemetry import Telemetry
+            self.telemetry = Telemetry()
+        return self.telemetry
+
+    def _predict_tool(self, colony: Colony) -> bool:
+        """TL3: the pre-wrapped regression call - a colony reads its own
+        telemetry, foresees its fortunes, and prepares accordingly."""
+        from telemetry import TOOL_NUDGE, predict_food
+        rows = self._telemetry().history(colony.colony_id)
+        result = predict_food(rows)
+        if result is None:
+            return False
+        _predicted, slope = result
+        if not getattr(colony, '_predicted_logged', False):
+            colony._predicted_logged = True
+            self._log_event(f"House {self._house_name(colony)} computes"
+                            " its fortunes")
+        g = colony.genome
+        if slope < 0:  # lean times foreseen: hoard
+            g.patience = float(np.clip(getattr(g, 'patience', 0.5)
+                                       + TOOL_NUDGE, 0.0, 1.0))
+            self._log_event(f"House {self._house_name(colony)} foresees"
+                            " lean times, and hoards")
+        else:          # plenty foreseen: grow
+            g.fertility = float(np.clip(getattr(g, 'fertility', 0.5)
+                                        + TOOL_NUDGE, 0.0, 1.0))
+            self._log_event(f"House {self._house_name(colony)} foresees"
+                            " plenty, and grows")
+        return True
+
     def _install_augment(self, colony: Colony) -> bool:
         """AUG2: the pre-wrapped memory-extension call - no engineering,
         just an upgrade. Bounded at AUG_MAX; awakened/pi colonies only."""
@@ -2098,6 +2136,8 @@ class SandKingsSimulation:
                 self._carvings()[(mx + 2, my, cz)] = CARVE_SYMBOLS['machine']
         elif value == 3:  # install: the pre-wrapped KV-cache augment (AUG2)
             self._install_augment(colony)
+        elif value == 4:  # predict: the pre-wrapped regression tool (TL3)
+            self._predict_tool(colony)
         else:
             return
         colony.terminal_uses = getattr(colony, 'terminal_uses', 0) + 1

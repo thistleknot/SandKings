@@ -1,5 +1,20 @@
 # Sand Kings Changelog
 
+## 2.20.0 - Tools & Telemetry (SPEC_TOOLS.md TL1-TL6)
+
+- Environment stats are now freely available - a Dwarf-Therapist-style
+  telemetry feed (food, pop, maw HP, war, season, oasis, attitude) per
+  colony, exposed to the human at /api/telemetry.
+- The awakened get a PRE-WRAPPED regression tool: a raspberry-pi colony
+  invokes a terminal call that fits its own food history (sklearn, with
+  a numpy fallback and a TabPFM-pluggable seam) and predicts its
+  fortunes. A falling trend makes it hoard (patience up); a rising one
+  makes it grow (fertility up). "House X computes its fortunes... and
+  hoards against lean times."
+- No engineering, no codegen: a fixed, whitelisted analysis call the
+  sandkings compose - data-driven decisions, safely.
+
+
 ## 2.19.0 - Augments (SPEC_AUGMENTS.md AUG1-AUG5)
 
 - The awakened can UPGRADE themselves. A raspberry-pi colony invokes a
