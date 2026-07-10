@@ -25,7 +25,7 @@ if ($Console) {
   & docker run @common `
     "-p" "127.0.0.1:8000:8000" `
     $Image `
-    python dashboard.py --persist /state/terrarium.db --port 8000
+    python dashboard.py --persist /state/terrarium.db --port 8000 --host 0.0.0.0
 } else {
   Write-Host "[sandbox] isolated run (--network none); state in volume $Volume"
   & docker run @common `

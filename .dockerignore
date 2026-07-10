@@ -4,7 +4,7 @@ __pycache__
 *.gif
 terrarium*.db
 terrarium_saga.txt
-glove-wiki-gigaword-50.gz
+*.parquet
 .venv
 venv
 *.egg-info

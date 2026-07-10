@@ -206,3 +206,9 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 glove-wiki-gigaword-50.gz
+
+# Sandking local data (baked into Docker via COPY, not committed)
+corpus/wikitext/
+terrarium*.db
+*.parquet
+terrarium_saga.txt

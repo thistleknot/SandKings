@@ -1,5 +1,26 @@
 # Sand Kings Changelog
 
+## 2.18.1 - Docker verified end-to-end (WikiText + chat, isolated)
+
+- The image is now actually BUILT and TESTED (not just authored). Bugs
+  found only by building/running it, all fixed:
+  - Build is 100% LOCAL: prepare_corpus.sh fetches GloVe + the public
+    WikiText-103 parquet (HF, no token needed) on the host; the
+    Dockerfile COPYs them and downloads NOTHING at build time. The dead
+    metamind S3 URL is gone.
+  - pip: torch's CPU index doesn't serve pandas -> split installs.
+  - matplotlib/tqdm are now OPTIONAL imports in sandkings.py (only the
+    GIF Visualizer/CLI need them); the headless sim, dashboard, and chat
+    import cleanly without them, keeping the image lean.
+  - dashboard gains --host; console mode binds 0.0.0.0 INSIDE the
+    container so the host's published 127.0.0.1-only port can reach it
+    (safe: the port is published only to host loopback).
+- Verified inside a hardened `--network none` / read-only / non-root
+  container: WikiText baked and ingested (codex 572 passages vs ~132),
+  the chat path works (converse: "destroy you"->enemy), the web console
+  serves and /api/converse responds, outbound network blocked.
+
+
 ## 2.16.2 - Codex reads baked corpora (WikiText fix)
 
 - The codex now globs corpus/**/*.md RECURSIVELY, so material baked into

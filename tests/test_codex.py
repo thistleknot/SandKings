@@ -27,8 +27,22 @@ def make_sim(seed: int = 44) -> SandKingsSimulation:
     return sim
 
 
+def curated_codex():
+    """A Codex over ONLY the curated corpus/*.md (no specs, no baked
+    WikiText), so retrieval assertions are deterministic regardless of
+    what optional material is baked into corpus/wikitext/."""
+    import glob
+    import os
+    import tempfile
+    import shutil
+    tmp = tempfile.mkdtemp()
+    for path in glob.glob(os.path.join(codex_mod.CORPUS_DIR, "*.md")):
+        shutil.copy(path, tmp)  # curated files only; skips the wikitext/ dir
+    return Codex(corpus_dir=tmp, spec_dir=None)
+
+
 def test_corpus_loads_and_coop_is_modal():
-    cx = Codex()
+    cx = Codex()  # the REAL corpus (curated + specs + any baked WikiText)
     assert len(cx.passages) > 20, "corpus + specs ingested"
     lessons = [l for _t, l, _v, _k in cx.passages]
     from collections import Counter
@@ -38,13 +52,15 @@ def test_corpus_loads_and_coop_is_modal():
 
 
 def test_retrieval_matches_query_intent():
-    cx = Codex()
-    _p, coop = cx.consult(["ally", "truce", "gift"])
+    cx = curated_codex()
+    _p, coop = cx.consult(["ally", "truce", "coalition"])
     assert coop == "coop"
     _p, dig = cx.consult(["tunnel", "underground", "frost"])
     assert dig == "dig"
     _p, fort = cx.consult(["wall", "palisade", "siege"])
     assert fort == "fortify"
+    _p, trade = cx.consult(["gift", "tribute", "envoy"])
+    assert trade == "trade"
 
 
 def test_keyword_fallback_without_vectors(monkeypatch=None):
@@ -52,7 +68,7 @@ def test_keyword_fallback_without_vectors(monkeypatch=None):
     saved = codex_mod._GLOVE
     codex_mod._GLOVE = {}
     try:
-        cx = Codex()
+        cx = curated_codex()
         _p, lesson = cx.consult(["wall", "castle", "defense"])
         assert lesson == "fortify", "keyword overlap still retrieves"
     finally:

@@ -1,51 +1,42 @@
 # The Sandking Sandbox (SPEC_SANDBOX.md) — a self-contained terrarium.
 #
-# Two-stage: the BUILD stage has network (to bake GloVe + optionally
-# WikiText-103 into the image); the RUNTIME is meant to be launched with
-# NO network (`docker run --network none ...`), non-root, read-only
-# source. Nothing inside ever needs the internet - the corpus is baked.
+# 100% LOCAL: the GloVe embedding space and the WikiText corpus are
+# downloaded ONCE on the host and baked into the image by COPY - the
+# build performs NO data downloads (only pip from PyPI). The runtime is
+# meant to run with NO network at all (`docker run --network none ...`),
+# non-root, read-only source.
 #
+#   # one-time host prep (fetches the pieces locally):
+#   ./prepare_corpus.sh
 #   docker build -t sandking .
-#   # optional: bake WikiText-103 (the GPT-Neo corpus, ~181MB):
-#   docker build --build-arg BUILD_WIKITEXT=1 -t sandking .
 #
 # See run_sandbox.sh / run_sandbox.ps1 for hardened launch.
 
-FROM python:3.11-slim AS build
+FROM python:3.11-slim
 WORKDIR /opt/sandking
 
-# system libs torch/pillow need, then the Python stack the user asked for
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl unzip libgomp1 && rm -rf /var/lib/apt/lists/*
+# libgomp1 is the only system lib torch needs at runtime
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
 
+# The useful libraries (the user asked for these): torch from the CPU
+# wheel index (that index serves only torch), the rest from PyPI. pyarrow
+# lets pandas read parquet; TabPFM can be added here as a drop-in
+# regression backend (telemetry.REGRESSION_BACKENDS).
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir \
-        numpy==2.2.6 pandas==2.2.3 scikit-learn==1.5.2 \
-        torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu \
-    && pip install --no-cache-dir \
-        pillow==10.4.0 fastapi==0.115.14 uvicorn==0.44.0
+        numpy pandas scikit-learn pyarrow pillow \
+        "fastapi==0.115.14" "uvicorn==0.44.0"
 
-# the game itself (source copy; the runtime mounts it read-only too)
+# the game + the pre-fetched local data (GloVe .gz and corpus/wikitext/
+# must exist on the host - run ./prepare_corpus.sh first). COPY bakes
+# them; nothing is fetched at build time.
 COPY . /opt/sandking
 
-# bake the shared embedding space (GloVe wiki-gigaword-50, ~66MB). Done
-# AFTER the COPY so the build context (which .dockerignore's the .gz) can
-# never clobber it.
-RUN curl -fsSL -o glove-wiki-gigaword-50.gz \
-    https://github.com/piskvorky/gensim-data/releases/download/glove-wiki-gigaword-50/glove-wiki-gigaword-50.gz
-
-# optionally bake WikiText-103 (the corpus GPT-Neo trained on) into the
-# codex corpus dir - AFTER the COPY, so it survives; the codex reads
-# corpus/**/*.md recursively (SB4). Opt-in to keep the default image lean.
-ARG BUILD_WIKITEXT=0
-RUN if [ "$BUILD_WIKITEXT" = "1" ]; then \
-        curl -fsSL -o /tmp/wt.zip \
-          https://s3.amazonaws.com/research.metamind.io/wikitext/wikitext-103-v1.zip \
-        && unzip -q /tmp/wt.zip -d /tmp \
-        && mkdir -p corpus/wikitext \
-        && head -c 6000000 /tmp/wikitext-103/wiki.valid.tokens \
-             > corpus/wikitext/wikitext103_sample.md \
-        && rm -rf /tmp/wt.zip /tmp/wikitext-103 ; \
-    fi
+# fail loudly at build if the local pieces are missing, so a broken image
+# is never shipped silently
+RUN test -f glove-wiki-gigaword-50.gz \
+      || (echo "MISSING glove-wiki-gigaword-50.gz - run ./prepare_corpus.sh" && exit 1)
 
 # a dedicated unprivileged user; the terrarium state lives in a volume
 RUN useradd -m -u 10001 keeper && mkdir -p /state && chown keeper /state
@@ -53,6 +44,5 @@ USER keeper
 ENV PYTHONUNBUFFERED=1 PYTHONIOENCODING=utf-8 SANDKING_STATE=/state
 
 # default: run the sim headless, autosaving to the mounted /state volume.
-# (The web console is opt-in via run_sandbox --console; under
-# `--network none` it is reachable only through `docker exec`.)
+# (The web console is opt-in via run_sandbox --console.)
 CMD ["python", "sandkings.py", "--persist", "/state/terrarium.db"]

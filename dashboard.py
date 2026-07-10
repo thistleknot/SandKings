@@ -580,6 +580,12 @@ def main():
                         help="ignore saved state and start new")
     parser.add_argument("--sps", type=float, default=6.0)
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--host", type=str, default="127.0.0.1",
+                        help="bind address. Default 127.0.0.1 (localhost "
+                             "only). Inside the isolated container, console "
+                             "mode passes 0.0.0.0 so the host's published "
+                             "loopback port can reach it - safe because the "
+                             "port is published ONLY to the host's 127.0.0.1.")
     parser.add_argument("--width", type=int, default=80)
     parser.add_argument("--height", type=int, default=40)
     parser.add_argument("--depth", type=int, default=20)
@@ -599,9 +605,8 @@ def main():
     app = create_app(runner)
     runner.start()
     import uvicorn
-    print(f"[keeper] console live at http://127.0.0.1:{args.port}")
-    # DB1: localhost ONLY - never 0.0.0.0
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    print(f"[keeper] console live on {args.host}:{args.port}")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 
 if __name__ == "__main__":

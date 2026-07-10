@@ -15,12 +15,22 @@ from enum import Enum
 from dataclasses import dataclass, field
 from collections import deque
 from typing import List, Tuple, Set, Optional, Dict
-import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend
-import matplotlib.pyplot as plt
 from PIL import Image
 import io
-from tqdm import tqdm
+# matplotlib (GIF Visualizer) and tqdm (CLI loop) are optional: the
+# headless sim, dashboard, and chat must import without them so the
+# container stays lean (SPEC_SANDBOX). GIF mode requires matplotlib.
+try:
+    import matplotlib
+    matplotlib.use('Agg')  # Non-interactive backend
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None
+try:
+    from tqdm import tqdm
+except ImportError:
+    def tqdm(iterable=None, *args, **kwargs):
+        return iterable if iterable is not None else []
 import torch
 
 # Neural hive mind
@@ -1031,6 +1041,9 @@ class Visualizer:
         Generate 3D visualization using scatter plots (like 3D Conway's Life).
         Plots all voxels directly without clustering.
         """
+        if plt is None:
+            raise RuntimeError("GIF mode requires matplotlib; install it or "
+                               "use --live / the dashboard instead.")
         try:
             fig = plt.figure(figsize=(12, 10))
             ax = fig.add_subplot(111, projection='3d')
