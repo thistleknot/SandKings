@@ -23,6 +23,19 @@ _STOP = frozenset("a an the to of and or is are be am was were i you we us "
                   "yes with for on in at it this that they them he she his "
                   "her please can could shall may might".split())
 
+# Antonyms sit close together in GloVe (peace ≈ war, love ≈ hate share
+# contexts), so a bare nearest-anchor lookup inverts sentiment-loaded words.
+# Pin the common human words to the anchor plainly meant, checked before the
+# embedding step (DL1). Every value is a real ANCHOR_SEED.
+_SYNONYMS = {
+    "peace": "ally", "truce": "ally", "friend": "ally", "friends": "ally",
+    "friendship": "ally", "alliance": "ally", "ally": "ally", "allies": "ally",
+    "calm": "home", "safe": "home", "rest": "home", "stay": "home",
+    "attack": "war", "fight": "war", "kill": "war", "destroy": "war",
+    "thanks": "gratitude", "thank": "gratitude", "grateful": "gratitude",
+    "hate": "enemy",
+}
+
 _ANCHOR_VECS: Optional[Dict[str, np.ndarray]] = None
 
 
@@ -50,6 +63,11 @@ def interpret(text: str) -> Optional[str]:
     # direct mention wins (the human named a concept outright)
     for anchor in ANCHOR_SEEDS:
         if anchor in low:
+            return anchor
+    # then sentiment-pinned synonyms, before the antonym-prone embedding step
+    for token in low.split():
+        anchor = _SYNONYMS.get(token.strip(".,!?;:'\"()"))
+        if anchor:
             return anchor
     vecs = _anchor_vectors()
     content = " ".join(w for w in low.split() if w not in _STOP)

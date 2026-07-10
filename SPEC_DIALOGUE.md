@@ -20,6 +20,13 @@ GloVe space, cosine-rank against the anchor seed vectors, return the
 nearest anchor (keyword fallback if vectors absent). This is the
 mutual-intelligibility step: arbitrary human words become one of the
 sandkings' concepts because both live in the same embedding space.
+Order of resolution: (1) a direct anchor mention wins; (2) a small
+sentiment-pinned SYNONYM map (`_SYNONYMS`) then fixes the words GloVe
+misplaces — antonyms share contexts, so a bare nearest-neighbor maps
+"peace"→"war" and "hate"→"love"; the map pins peace/truce/friend→ally,
+attack/fight/kill→war, thanks→gratitude, etc.; (3) only then the
+embedding nearest-anchor; (4) keyword fallback. This keeps the
+mutual-intelligibility promise from inverting on sentiment-loaded words.
 
 ## DL2 — The colony's reply (disposition x environment x heard)
 `dialogue.compose_reply(colony, sim, heard) -> str`: a perspective line

@@ -33,6 +33,16 @@ def test_interpret_maps_direct_mentions():
     assert interpret("i bring you food") == "food"
 
 
+def test_interpret_pins_sentiment_synonyms():
+    # antonyms sit close in GloVe; bare "peace" must NOT map to war (DL1
+    # synonym pin). No "ally" substring here, so this exercises the pin, not
+    # the direct-mention path.
+    assert interpret("peace") == "ally"
+    assert interpret("can we have a truce") == "ally"
+    assert interpret("i attack") == "war"
+    assert interpret("thanks") == "gratitude"
+
+
 def test_interpret_embeds_unnamed_words():
     # words that don't literally name an anchor should still map via GloVe
     heard = interpret("let us be friends and comrades")
