@@ -28,7 +28,8 @@ never needs it; it's localhost + it only advances the sim it already owns).
 ## PK3 — Actions (thin wrappers over existing endpoints)
 `feed(x=None, y=None)` (defaults to world center), `gift()`,
 `release(species)` (any of the AR1 roster), `cat()`, `drought(on=True)`,
-`temp(direction)` (arena heat/cold, AR3), `speak(colony_id)`,
+`temp(direction)` (arena heat/cold, AR3), `water(big, x, y)` /
+`seed(x, y)` (HH1/HH3), `speak(colony_id)`,
 `say(colony_id, text) -> {understood, heard, reply}` (converse),
 `pause()/resume()`, `sps(v)`, `mirror(on=True)`, `step(n=1)`. Each mutating
 call returns the new state dict (or the converse reply for `say`).
@@ -62,7 +63,8 @@ Scenarios use `seed` for reproducibility and short step budgets.
 - `--repl` a terminal loop with the same `dispatch()` commands: `step [n]`,
   `feed [x y]`, `gift`, a bare species name (`cricket`/`ant`/`spider`/
   `scorpion`/`snake`/`squirrel`/`rabbit`/`small_spider`) or `release <sp>`,
-  `cat`, `drought on|off`, `heat`, `cold`, `say <cid> <text>`, `speak <cid>`,
+  `cat`, `drought on|off`, `heat`, `cold`, `rain`, `deluge`, `seeds`,
+  `say <cid> <text>`, `speak <cid>`,
   `state`/`summary`, `events [n]`, `quit`; prints `summary()` after each.
 - `--url URL` targets a live console (remote transport) instead of in-process.
 - `--seed N`, `--no-canon` options.

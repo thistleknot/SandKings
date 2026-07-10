@@ -1,5 +1,22 @@
 # Sand Kings Changelog
 
+## 2.28.0 - The hand's water & seeds (SPEC_HYDRO_HAND.md HH1-HH5)
+
+- Two keeper Gifts that reuse the flood + crop systems. `keeper_water(x,y,big)`:
+  a small pour irrigates (tills sand, speeds crops, drops fertile food, never
+  drowns), a large pour is a local deluge - and terraforming shapes it FOR FREE,
+  because the water fill parts around any column raised above the water line
+  (raised banks shelter, dug channels drain). So a maw that dammed itself
+  survives a deluge that drowns one caught in the open.
+- `keeper_seed(x,y)`: scatters seeds - sand/tilled becomes crop the colonies
+  tend and harvest through the existing lifecycle.
+- Surfaced: /api/keeper/water + /api/keeper/seed; dashboard Gifts gain Seeds +
+  Rain, Wrath gains Deluge; live-view keys w rain / j seeds / d deluge with a
+  blue water overlay, HUD weather line, legend, event tints, and chronicle
+  salience. Bound keeper (PS5) can do neither. 5 new tests + full 27-suite
+  battery green; play_kit drives it (rain/deluge/seeds) and grows sown crops.
+
+
 ## 2.27.0 - Nature until the Great Other (SPEC_AWARENESS.md AW1-AW6)
 
 - Fixes an incoherence: colonies formed worship/hatred of a keeper they had

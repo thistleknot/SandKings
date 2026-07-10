@@ -197,6 +197,17 @@ ARENA_FOOD_DRAIN = 0.6       # hoard drained per exposed unit per tick
 ARENA_DRAIN_CAP = 6          # exposed units counted toward the drain
 ARENA_WILT_P = 0.05          # per crop per tick: ripe->crop, crop->tilled
 
+# The hand's water & seeds (SPEC_HYDRO_HAND HH1-HH3): reuse the flood + crop
+# systems; terraforming (dams/channels, read from column height) shapes it
+WATER_RAIN_DUR = 30          # steps a gentle irrigation lasts
+WATER_FLOOD_DUR = 60         # steps a keeper deluge lasts
+WATER_RAIN_RADIUS = 5        # irrigation reach
+WATER_FLOOD_RADIUS = 12      # deluge reach
+WATER_TILL_P = 0.15          # per cell per tick: wet SAND -> TILLED
+WATER_CROP_BOOST = 2         # extra crop growth-ticks per watered cell
+WATER_FOOD_P = 0.02          # per cell per tick: fertile FOOD deposit
+SEED_COUNT = 12              # crops sown per keeper_seed
+
 # The Keeper constants (SPEC_KEEPER.md K1-K12)
 KEEPER_DROP_FOOD = 6         # FOOD voxels per keeper hand-drop
 KEEPER_MEMORY = 800          # steps of grace per witnessed miracle
@@ -1397,6 +1408,9 @@ class SandKingsSimulation:
         # heat/cold - drains hoards and wilts fields, never kills
         self._arena_tick()
 
+        # 3c-h. THE HAND'S WATER (SPEC_HYDRO_HAND HH2): irrigation / deluge
+        self._keeper_water_tick()
+
         # 3d. CROP GROWTH (T19/T20)
         if self.step_count % CROP_TICK == 0:
             self._grow_crops()
@@ -2096,6 +2110,37 @@ class SandKingsSimulation:
             self.arena_cold_until = until
             self._log_event("The keeper turns the air to a biting cold")
 
+    def keeper_water(self, x: int, y: int, big: bool = False):
+        """HH1: pour water. A small pour irrigates; a large pour floods -
+        terraforming (raised banks / dug channels) steers it. Bound god can't."""
+        if self._hand_stayed():
+            return
+        self.kw_center = (int(x), int(y))
+        self.kw_big = bool(big)
+        self.kw_until = self.step_count + (WATER_FLOOD_DUR if big
+                                           else WATER_RAIN_DUR)
+        self._log_event("The keeper looses a deluge over the sands" if big
+                        else "The keeper's rain waters the sands")
+
+    def keeper_seed(self, x: int, y: int):
+        """HH3: scatter seeds - sand/tilled becomes crop the colonies tend."""
+        if self._hand_stayed():
+            return
+        planted = 0
+        for _ in range(SEED_COUNT):
+            px = int(np.clip(x + random.randint(-2, 2), 1, self.world.width - 2))
+            py = int(np.clip(y + random.randint(-2, 2), 1, self.world.height - 2))
+            pz = self.world.surface_z(px, py)
+            if not (0 <= pz < self.world.depth):
+                continue
+            if self.world.voxels[px, py, pz] in (VoxelType.SAND.value,
+                                                 VoxelType.TILLED.value):
+                self.world.voxels[px, py, pz] = VoxelType.CROP.value
+                self._crops()[(px, py, pz)] = 0
+                planted += 1
+        if planted:
+            self._log_event("The keeper scatters seeds across the sand")
+
     def keeper_gift(self, kind: Optional[str] = None,
                     pos: Optional[Tuple[int, int]] = None):
         """K9: the technology ladder - watch, calculator, raspberry pi."""
@@ -2584,6 +2629,66 @@ class SandKingsSimulation:
                 seen.add((nx, ny))
                 frontier.append((nx, ny))
         return seen
+
+    def _water_cells(self, cx: int, cy: int, radius: int, rise: int) -> set:
+        """HH1: 4-connected fill from (cx,cy) to radius, inundating a column
+        only if its surface is at/below the water line - the same dam rule as
+        the natural flood, so raised banks shelter and dug channels conduct."""
+        w, h = self.world.width, self.world.height
+        if not (0 <= cx < w and 0 <= cy < h) or radius <= 0:
+            return set()
+        water_line = self.world.surface_z(cx, cy) + rise
+        seen = {(cx, cy)}
+        frontier = [(cx, cy)]
+        r2 = radius * radius
+        while frontier:
+            x, y = frontier.pop()
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nx, ny = x + dx, y + dy
+                if (nx, ny) in seen or not (0 <= nx < w and 0 <= ny < h):
+                    continue
+                if (nx - cx) ** 2 + (ny - cy) ** 2 > r2:
+                    continue
+                if self.world.surface_z(nx, ny) > water_line:  # a dam / bank
+                    continue
+                seen.add((nx, ny))
+                frontier.append((nx, ny))
+        return seen
+
+    def _keeper_water_tick(self):
+        """HH2: the keeper's water. Irrigation tills sand and speeds crops (no
+        drowning); a deluge additionally drowns exposed units caught in the open
+        (sheltered/dammed units are simply not in the flooded cells)."""
+        if getattr(self, 'kw_until', 0) <= self.step_count:
+            self.kw_cells = set()
+            return
+        cx, cy = getattr(self, 'kw_center', (self.world.width // 2,
+                                             self.world.height // 2))
+        big = getattr(self, 'kw_big', False)
+        radius = WATER_FLOOD_RADIUS if big else WATER_RAIN_RADIUS
+        rise = FLOOD_RISE if big else 0
+        cells = self._water_cells(cx, cy, radius, rise)
+        self.kw_cells = cells
+        if big:
+            for colony in self.colonies:
+                for unit in colony.units[:]:
+                    if unit.position[:2] in cells and self._exposed(unit):
+                        self._weather_kill(unit, colony, FLOOD_DAMAGE)
+        crops = self._crops()
+        for (px, py) in cells:
+            z = self.world.surface_z(px, py)
+            if not (0 <= z < self.world.depth):
+                continue
+            v = self.world.voxels[px, py, z]
+            if v == VoxelType.SAND.value and random.random() < WATER_TILL_P:
+                self.world.voxels[px, py, z] = VoxelType.TILLED.value
+            elif v in (VoxelType.CROP.value, VoxelType.CROP_RIPE.value):
+                crops[(px, py, z)] = crops.get((px, py, z), 0) + WATER_CROP_BOOST
+            zz = z + 1
+            if (zz < self.world.depth
+                    and self.world.voxels[px, py, zz] == VoxelType.AIR.value
+                    and random.random() < WATER_FOOD_P):
+                self.world.voxels[px, py, zz] = VoxelType.FOOD.value
 
     def _arena_tick(self):
         """AR3: the keeper's non-lethal temperature. While a heat or cold wave

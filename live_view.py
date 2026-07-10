@@ -152,6 +152,9 @@ EVENT_TINTS = (            # substring -> HUD color (spec R19/R24)
     ("blistering heat", (255, 140, 60)),   # AR3 arena temperature
     ("biting cold", (150, 200, 255)),
     ("easy prey to learn", (150, 200, 150)),
+    ("deluge over the sands", (60, 140, 240)),   # HH2 the hand's water
+    ("rain waters the sands", (110, 170, 240)),
+    ("scatters seeds", (150, 200, 150)),
     ("SPEAKS", (255, 255, 255)),
     ("fall as noise", (150, 150, 160)),
     ("augments its mind", (150, 180, 255)),
@@ -397,6 +400,9 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
             ("arena_heat_until", "HEAT WAVE", (255, 140, 60)),   # AR3
             ("arena_cold_until", "COLD WAVE", (150, 200, 255)),  # AR3
         ) if getattr(sim, attr, 0) > sim.step_count]
+        if getattr(sim, 'kw_until', 0) > sim.step_count:  # HH2
+            active.append(("deluge" if getattr(sim, 'kw_big', False)
+                           else "rain", (90, 160, 255)))
         if active:
             entries.insert(5, ("Weather: " + ", ".join(n for n, _t in active),
                                active[0][1]))
@@ -473,8 +479,9 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
                       "I inspect (click too)  F follow  L legend",
                       "M manager  H saga  G capture  ESC quit",
                       "GIFTS: 1food 2crick 3ant 4spidr 5tech",
+                      "       w rain  j seeds",
                       "WRATH: 6spidr 7scorp 8snake 9drgt 0cat",
-                      "       [ cold  ] heat        T speak",
+                      "       [ cold  ] heat  d deluge  T speak",
                       "NEUTRAL: n squirrel  b rabbit"):
         entries.append((help_line, (140, 140, 150)))
     return entries
@@ -1199,6 +1206,18 @@ class LiveViewer:
                 with self.runner.lock:
                     self.sim.keeper_auto = False
                     self.sim.keeper_release('rabbit')
+            elif key == pygame.K_w:                     # GIFT: rain (irrigate)
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    self.sim.keeper_water(*self.cursor, big=False)
+            elif key == pygame.K_j:                     # GIFT: seeds
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    self.sim.keeper_seed(*self.cursor)
+            elif key == pygame.K_d:                     # WRATH: deluge
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    self.sim.keeper_water(*self.cursor, big=True)
             elif (key == pygame.K_t and self.inspected is not None
                   and self.inspected[0] == 'unit'
                   and target_alive(self.sim, self.inspected)):
@@ -1446,6 +1465,12 @@ class LiveViewer:
             water.set_alpha(110)
             for (x, y) in getattr(self.sim, 'flood_cells', None) or ():
                 self._screen.blit(water, (x * cell, y * cell))
+        if getattr(self.sim, 'kw_until', 0) > step:  # HH2: the hand's water
+            kw = pygame.Surface((cell, cell))
+            kw.fill((60, 140, 240))
+            kw.set_alpha(90 if getattr(self.sim, 'kw_big', False) else 55)
+            for (x, y) in getattr(self.sim, 'kw_cells', None) or ():
+                self._screen.blit(kw, (x * cell, y * cell))
 
         # R32/R33: look cursor, target highlight, and the inspect panel
         if self.look_mode:

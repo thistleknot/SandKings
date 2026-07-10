@@ -69,6 +69,8 @@ def build_state(sim: SandKingsSimulation) -> Dict:
         ("arena_heat_until", "heat wave"),  # AR3: keeper's arena temperature
         ("arena_cold_until", "cold wave"))
         if getattr(sim, attr, 0) > sim.step_count]
+    if getattr(sim, 'kw_until', 0) > sim.step_count:  # HH2: the hand's water
+        weather.append("deluge" if getattr(sim, 'kw_big', False) else "rain")
     colonies: List[Dict] = []
     for colony in sim.colonies:
         castes = {t.name.lower(): 0 for t in UnitType}
@@ -312,6 +314,15 @@ def create_app(runner: TerrariumRunner):
     class TempBody(BaseModel):
         dir: str  # 'heat' | 'cold'
 
+    class WaterBody(BaseModel):
+        x: Optional[int] = None
+        y: Optional[int] = None
+        big: bool = False
+
+    class SeedBody(BaseModel):
+        x: Optional[int] = None
+        y: Optional[int] = None
+
     class SpeakBody(BaseModel):
         colony_id: int
 
@@ -418,6 +429,26 @@ def create_app(runner: TerrariumRunner):
         with runner.lock:
             _disarm_auto()
             runner.sim.keeper_temperature(body.dir)
+            return build_state(runner.sim)
+
+    @app.post("/api/keeper/water")
+    def water(body: WaterBody):
+        with runner.lock:
+            _disarm_auto()
+            w, h = runner.sim.world.width, runner.sim.world.height
+            x = w // 2 if body.x is None else max(1, min(w - 2, body.x))
+            y = h // 2 if body.y is None else max(1, min(h - 2, body.y))
+            runner.sim.keeper_water(x, y, big=body.big)
+            return build_state(runner.sim)
+
+    @app.post("/api/keeper/seed")
+    def seed(body: SeedBody):
+        with runner.lock:
+            _disarm_auto()
+            w, h = runner.sim.world.width, runner.sim.world.height
+            x = w // 2 if body.x is None else max(1, min(w - 2, body.x))
+            y = h // 2 if body.y is None else max(1, min(h - 2, body.y))
+            runner.sim.keeper_seed(x, y)
             return build_state(runner.sim)
 
     @app.post("/api/keeper/speak")
@@ -559,11 +590,14 @@ button.act.breach{border-color:var(--breach);color:var(--breach)}
 <div class="console"><div class="bar">
   <div class="grp"><span class="lab">Gifts</span>
     <button class="act" onclick="feed()">Feed</button>
+    <button class="act" onclick="seed()">Seeds</button>
+    <button class="act" onclick="water(false)">Rain</button>
     <button class="act" onclick="release('cricket')">Crickets</button>
     <button class="act" onclick="release('ant')">Ants</button>
     <button class="act" onclick="release('small_spider')">Small Spider</button>
     <button class="act gold" onclick="post('/api/keeper/gift')">Tech Gift</button></div>
   <div class="grp"><span class="lab">Wrath</span>
+    <button class="act wrath" onclick="water(true)">Deluge</button>
     <button class="act wrath" onclick="release('spider')">Big Spider</button>
     <button class="act wrath" onclick="release('scorpion')">Scorpion</button>
     <button class="act wrath" onclick="release('snake')">Snake</button>
@@ -590,6 +624,8 @@ async function post(url,body){
   if(r.ok){state=await r.json();render();flash('the hand moves');}return r;}
 function release(s){post('/api/keeper/release',{species:s});}
 function temp(d){post('/api/keeper/temp',{dir:d});}
+function water(big){post('/api/keeper/water',{big});}
+function seed(){post('/api/keeper/seed',{});}
 function toggleDrought(){drought=!drought;post('/api/keeper/drought',{on:drought});}
 function togglePause(){paused=!paused;fetch('/api/control',{method:'POST',
   headers:{'Content-Type':'application/json'},body:JSON.stringify({paused})});

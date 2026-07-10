@@ -87,6 +87,12 @@ class Terrarium:
     def temp(self, direction: str) -> Dict:
         return self._post("/api/keeper/temp", {"dir": direction})
 
+    def water(self, big: bool = False, x=None, y=None) -> Dict:
+        return self._post("/api/keeper/water", {"x": x, "y": y, "big": big})
+
+    def seed(self, x=None, y=None) -> Dict:
+        return self._post("/api/keeper/seed", {"x": x, "y": y})
+
     def speak(self, colony_id: int) -> Dict:
         return self._post("/api/keeper/speak", {"colony_id": int(colony_id)})
 
@@ -276,6 +282,12 @@ def dispatch(t: Terrarium, line: str) -> str:
         t.drought(not args or args[0] != "off")
     elif cmd in ("heat", "cold"):
         t.temp(cmd)
+    elif cmd in ("rain", "water"):
+        t.water(big=False)
+    elif cmd == "deluge":
+        t.water(big=True)
+    elif cmd in ("seed", "seeds"):
+        t.seed()
     elif cmd == "say" and len(args) >= 2:
         r = t.say(int(args[0]), " ".join(args[1:]))
         return f"  it answers: {r.get('reply') or '(noise)'}"
