@@ -1,5 +1,19 @@
 # Sand Kings Changelog
 
+## 2.16.2 - Codex reads baked corpora (WikiText fix)
+
+- The codex now globs corpus/**/*.md RECURSIVELY, so material baked into
+  subdirectories (corpus/wikitext/, SB4) is actually ingested - the prior
+  non-recursive glob silently ignored it.
+- Plain-text corpora (a raw WikiText dump has no markdown headers) are
+  now chunked into paragraphs, lesson-tagged by keyword, capped at
+  CORPUS_MAX_PASSAGES per file, with "= header =" lines skipped. Verified
+  against a WikiText-style sample (cooperation->coop, tunnels->dig,
+  trade routes->trade).
+- Dockerfile: the GloVe and WikiText bakes now run AFTER `COPY .` so the
+  build context can never clobber them.
+
+
 ## 2.22.0 - Dialogue (SPEC_DIALOGUE.md DL1-DL6)
 
 - Two-way conversation with the awakened. In the Keeper's Console, select

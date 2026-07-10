@@ -24,12 +24,18 @@ RUN pip install --no-cache-dir \
     && pip install --no-cache-dir \
         pillow==10.4.0 fastapi==0.115.14 uvicorn==0.44.0
 
-# bake the shared embedding space (GloVe wiki-gigaword-50, ~66MB)
+# the game itself (source copy; the runtime mounts it read-only too)
+COPY . /opt/sandking
+
+# bake the shared embedding space (GloVe wiki-gigaword-50, ~66MB). Done
+# AFTER the COPY so the build context (which .dockerignore's the .gz) can
+# never clobber it.
 RUN curl -fsSL -o glove-wiki-gigaword-50.gz \
     https://github.com/piskvorky/gensim-data/releases/download/glove-wiki-gigaword-50/glove-wiki-gigaword-50.gz
 
 # optionally bake WikiText-103 (the corpus GPT-Neo trained on) into the
-# codex corpus dir - only when asked, to keep the default image lean
+# codex corpus dir - AFTER the COPY, so it survives; the codex reads
+# corpus/**/*.md recursively (SB4). Opt-in to keep the default image lean.
 ARG BUILD_WIKITEXT=0
 RUN if [ "$BUILD_WIKITEXT" = "1" ]; then \
         curl -fsSL -o /tmp/wt.zip \
@@ -40,9 +46,6 @@ RUN if [ "$BUILD_WIKITEXT" = "1" ]; then \
              > corpus/wikitext/wikitext103_sample.md \
         && rm -rf /tmp/wt.zip /tmp/wikitext-103 ; \
     fi
-
-# the game itself (source copy; the runtime mounts it read-only too)
-COPY . /opt/sandking
 
 # a dedicated unprivileged user; the terrarium state lives in a volume
 RUN useradd -m -u 10001 keeper && mkdir -p /state && chown keeper /state

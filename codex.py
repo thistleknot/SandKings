@@ -24,6 +24,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 GLOVE_PATH = os.path.join(_HERE, "glove-wiki-gigaword-50.gz")
 CORPUS_DIR = os.path.join(_HERE, "corpus")
 GLOVE_TOP = 40_000        # frequency-ordered words loaded for embedding
+CORPUS_MAX_PASSAGES = 400  # cap per plain-text file (a WikiText dump is huge)
 
 LESSONS = ("coop", "fortify", "dig", "patience", "trade")
 # keyword -> lesson, for untagged spec passages (CX2)
@@ -119,17 +120,31 @@ class Codex:
         self.passages.append((text, lesson, embed(text), _tokens(text)))
 
     def _ingest_corpus(self, corpus_dir: str):
-        for path in sorted(glob.glob(os.path.join(corpus_dir, "*.md"))):
-            with open(path, encoding="utf-8") as fh:
+        # recursive: curated lore in corpus/ AND baked material in
+        # subdirs like corpus/wikitext/ (SPEC_SANDBOX SB4)
+        for path in sorted(glob.glob(os.path.join(corpus_dir, "**", "*.md"),
+                                     recursive=True)):
+            with open(path, encoding="utf-8", errors="ignore") as fh:
                 body = fh.read()
-            for chunk in re.split(r"\n##\s", body):
-                m = re.search(r"LESSON:\s*(\w+)", chunk)
-                lesson = m.group(1).strip() if m else infer_lesson(chunk)
-                if lesson not in LESSONS:
-                    lesson = "coop"
-                clean = re.sub(r"LESSON:\s*\w+", "", chunk)
-                clean = re.sub(r"^#+\s.*", "", clean).strip()
-                self._add(clean, lesson)
+            if "LESSON:" in body:  # curated: split on ## passages
+                for chunk in re.split(r"\n##\s", body):
+                    m = re.search(r"LESSON:\s*(\w+)", chunk)
+                    lesson = m.group(1).strip() if m else infer_lesson(chunk)
+                    if lesson not in LESSONS:
+                        lesson = "coop"
+                    clean = re.sub(r"LESSON:\s*\w+", "", chunk)
+                    clean = re.sub(r"^#+\s.*", "", clean).strip()
+                    self._add(clean, lesson)
+            else:  # plain text (e.g. WikiText): paragraph chunks, capped
+                added = 0
+                for para in re.split(r"\n\s*\n", body):
+                    para = para.strip()
+                    if len(para) < 40 or para.startswith("="):
+                        continue  # skip headers and stubs
+                    self._add(para[:600], infer_lesson(para))
+                    added += 1
+                    if added >= CORPUS_MAX_PASSAGES:
+                        break  # a 6MB dump must not explode the index
 
     def _ingest_specs(self, spec_dir: str):
         for path in sorted(glob.glob(os.path.join(spec_dir, "SPEC_*.md"))):
