@@ -38,7 +38,9 @@ def test_manna_attribution_not_the_dole():
     sim._feed_terrarium()
     assert not colony.worshipped
     # a keeper drop, eaten, reveals the god (field cleared of dole food
-    # first - the grab must find the manna, not the scatter)
+    # first - the grab must find the manna, not the scatter). AW3: worship of
+    # the hand only once the colony is AWARE of the great other (breached).
+    colony.breached = True
     sim.world.voxels[sim.world.voxels == VoxelType.FOOD.value] = \
         VoxelType.AIR.value
     mx, my, _ = colony.maw.position
@@ -202,6 +204,7 @@ def test_keeper_speak_heard_only_by_the_awakened():
 def test_carvings_match_state_and_purge():
     sim = make_sim()
     colony = sim.colonies[0]
+    colony.breached = True  # AW1: keeper-face carvings need awareness
     colony.worshipped = True
     sim.keeper_drought(True)
     colony.keeper_sentiment = 0.1  # already soured (gradual band -> hateful)

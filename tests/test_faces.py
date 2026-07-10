@@ -110,6 +110,7 @@ def test_warning_fires_once_and_rearms():
 def test_carving_is_sentiment_glyph_and_purges():
     sim = make_sim()
     colony = sim.colonies[0]
+    colony.breached = True  # AW1: keeper-face carvings need awareness
     sim.step_count = 200
     sim._keeper_tick()
     carv = sim._carvings()

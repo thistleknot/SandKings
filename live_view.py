@@ -81,6 +81,9 @@ CARVE_COLORS = {                    # F4: sentiment carving colours by glyph
     '◦': (170, 170, 180),  # wary - pale grey
     '☠': (230, 70, 60),    # hateful - red
     '⌂': (150, 180, 255),  # machine-carved - blue
+    '☀': (255, 210, 90),   # AW2 bounty - warm sun
+    '☁': (170, 185, 200),  # AW2 lean - pale cloud
+    '☈': (120, 160, 235),  # AW2 dread - storm
 }
 COPPER_TINT = (184, 115, 51)  # armored soldier letters (R22)
 UNIT_GLYPHS = {UnitType.WORKER: "w", UnitType.SOLDIER: "s", UnitType.SCOUT: "c"}
@@ -643,12 +646,19 @@ def build_look_entries(sim: SandKingsSimulation, x: int,
         line += " ON FIRE"
     entries = [(line[:46], (230, 210, 140))]
     carving = (getattr(sim, 'carvings', None) or {}).get((x, y, z))
-    if carving:  # F4: name the sentiment a carving expresses
-        meaning = {'♥': "devout", '◦': "impassive, watching",
-                   '☠': "twisted with hate", '⌂': "machine-carved"}.get(
-                       carving, carving)
-        entries.append((f" a carving: sentiment {meaning}",
-                        CARVE_COLORS.get(carving, (255, 235, 170))))
+    if carving:  # F4/AW2: name what a carving expresses
+        nature = {'☀': "a carving of the plentiful sun (unexplained)",
+                  '☁': "a carving of a quiet sky (unexplained)",
+                  '☈': "a carving of a ruinous storm (unexplained)"}
+        if carving in nature:
+            entries.append((f" {nature[carving]}",
+                            CARVE_COLORS.get(carving, (255, 235, 170))))
+        else:
+            meaning = {'♥': "devout", '◦': "impassive, watching",
+                       '☠': "twisted with hate", '⌂': "machine-carved"}.get(
+                           carving, carving)
+            entries.append((f" a carving: sentiment {meaning}",
+                            CARVE_COLORS.get(carving, (255, 235, 170))))
     kinds = column_inhabitants(sim, x, y)
     if kinds:
         entries.append((f"here: {len(kinds)} "
@@ -679,14 +689,17 @@ def build_legend_entries() -> List[Tuple[str, Tuple[int, int, int]]]:
         entries.append((f" {glyph}  {species} (wild)", BEAST_COLOR))
     entries.append((f" {FIRE_GLYPH}  fire", FIRE_COLOR))
     entries.append(("", HUD_FG))
-    entries.append(("-- carvings: sentiment toward you (F) --",
+    entries.append(("-- carvings (AW): forces before breakout, the god after --",
                     (150, 150, 160)))
-    from sandkings import CARVE_SYMBOLS
+    from sandkings import CARVE_SYMBOLS, NATURE_SYMBOLS
     carve_names = {'devout': "devout - they love their god",
                    'wary': "wary - impassive, watching",
                    'hateful': "hateful - the god has soured (look to it!)",
-                   'machine': "machine-carved (the terminal)"}
-    for key, symbol in CARVE_SYMBOLS.items():
+                   'machine': "machine-carved (the terminal)",
+                   'bounty': "bounty - unexplained plenty (pre-breakout)",
+                   'lean': "lean - the forces are quiet (pre-breakout)",
+                   'dread': "dread - unexplained ruin (pre-breakout)"}
+    for key, symbol in {**NATURE_SYMBOLS, **CARVE_SYMBOLS}.items():
         entries.append((f" {symbol}  {carve_names.get(key, key)}",
                         CARVE_COLORS.get(symbol, (255, 235, 170))))
     entries.append(("", HUD_FG))

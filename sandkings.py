@@ -208,6 +208,9 @@ CARVE_INTERVAL = 200         # steps between carvings (K4)
 # the terminal's own glyph (K10). (Not a literal portrait: the sandkings
 # have no image of the keeper; the carving is a sentiment tell.)
 CARVE_SYMBOLS = {'devout': '♥', 'wary': '◦', 'hateful': '☠', 'machine': '⌂'}
+# AW2: pre-breach a colony carves the FORCES it feels, not a keeper's face -
+# the sun, the sky, the storm. Awareness of the "great other" comes at breakout.
+NATURE_SYMBOLS = {'bounty': '☀', 'lean': '☁', 'dread': '☈'}
 SENTIMENT_SOUR = 0.06       # devotion lost per interval under cruelty (F1)
 SENTIMENT_RECOVER = 0.05    # regained under reverence (souring is faster)
 SENTIMENT_DRIFT = 0.02      # drift toward neutral 0.5 when the keeper is absent
@@ -823,6 +826,7 @@ class Colony:
         self.keeper_sentiment = 0.5    # devotion to the keeper 0..1 (F1)
         self._sentiment_wrath = False  # has the carved sentiment turned hateful
         self.stage = 1                 # metamorphosis stage 1/2/3 (MT1)
+        self.revelation = False        # has met the "great other" post-breakout (AW4)
         
     def spawn_unit(self, unit_type: UnitType, step: int = 0):
         """Spawn new unit from Maw; copper armors, timber arms (T25/T44).
@@ -1455,7 +1459,8 @@ class SandKingsSimulation:
                                   ('memory_augment', 0),  # AUG2
                                   ('keeper_sentiment', 0.5),  # F1
                                   ('_sentiment_wrath', False),
-                                  ('stage', 1)):  # MT1
+                                  ('stage', 1),  # MT1
+                                  ('revelation', False)):  # AW4
                 if not hasattr(colony, attr):
                     setattr(colony, attr, default)
 
@@ -1980,6 +1985,36 @@ class SandKingsSimulation:
             colony._sentiment_wrath = False  # re-arm the warning
         return band
 
+    def _nature_mood(self, colony: Colony) -> str:
+        """AW2: a pre-breach colony's read of unexplained FORCES, not a keeper.
+        bounty (fed/full) | lean | dread (drought, want, or harsh weather)."""
+        step = self.step_count
+        starving = colony.maw.food_stored < 2 * BOOTSTRAP_FLOOR
+        harsh = getattr(self, 'drought', False) or starving or any(
+            getattr(self, a, 0) > step for a in (
+                'cold_until', 'arena_cold_until', 'arena_heat_until',
+                'flood_until', 'hail_until', 'storm_until'))
+        if harsh:
+            return 'dread'
+        if (self.keeper_attitude(colony) == 'reverent'
+                or colony.maw.food_stored > 4 * BOOTSTRAP_FLOOR):
+            return 'bounty'
+        return 'lean'
+
+    def _reveal(self, colony: Colony):
+        """AW4: the 13th-Floor moment - at breakout the colony learns there is
+        an outside, a 'great other', the hand that fed and starved it. Its
+        opening stance toward the now-known god is seeded by how it was treated
+        as nature. Fires once."""
+        if getattr(colony, 'revelation', False):
+            return
+        colony.revelation = True
+        colony.keeper_sentiment = {'bounty': 0.7, 'lean': 0.5,
+                                   'dread': 0.3}[self._nature_mood(colony)]
+        self._log_event(f"House {self._house_name(colony)} glimpses the world"
+                        " beyond the glass - and knows the hand that fed"
+                        " and starved it")
+
     def keeper_attitude(self, colony: Colony) -> str:
         """K3: derived, never stored. none | reverent | wrathful."""
         if getattr(self, 'drought', False) and getattr(colony, 'worshipped',
@@ -2144,8 +2179,12 @@ class SandKingsSimulation:
             for colony in self.colonies:
                 if not colony.is_alive():
                     continue
-                band = self._update_sentiment(colony)  # F1/F2: sours slowly
-                symbol = CARVE_SYMBOLS[band]
+                # AW1: keeper-directed feeling only once aware of the great
+                # other (breached); before that, the mood of raw nature.
+                if getattr(colony, 'breached', False):
+                    symbol = CARVE_SYMBOLS[self._update_sentiment(colony)]
+                else:
+                    symbol = NATURE_SYMBOLS[self._nature_mood(colony)]
                 mx, my, _ = colony.maw.position
                 for _try in range(12):
                     cx = int(np.clip(mx + random.randint(-3, 3), 1,
@@ -2192,9 +2231,9 @@ class SandKingsSimulation:
             mx = self.world.width // 2
             my = self.world.height // 2
             self.keeper_drop_food(mx, my)  # the relenting miracle
-        if (any(getattr(c, 'worshipped', False) and c.is_alive()
-                for c in self.colonies)
-                and self.keeper_attitude_any('reverent')
+        # AW5: a FLOURISHING (recently-fed) colony draws the operator's hand -
+        # gated on fortune, not on pre-breach worship (which no longer exists)
+        if (self.keeper_attitude_any('reverent')
                 and step - getattr(self, 'last_gift_step', 0)
                 > KEEPER_GIFT_INTERVAL
                 and len(getattr(self, 'gifts_given', [])) < len(GIFT_LADDER)
@@ -2240,8 +2279,11 @@ class SandKingsSimulation:
         """MT4: promote a colony's metamorphosis stage and raise its brain
         ceiling accordingly (size -> intelligence)."""
         colony.stage = stage
-        if stage >= 2:
+        if stage >= 2 and not getattr(colony, 'breached', False):
             colony.breached = True  # stage 2+ is the awakened state (K10)
+            self._reveal(colony)    # AW4: the 13th-Floor moment
+        elif stage >= 2:
+            colony.breached = True
         ceiling = STAGE_CEILING.get(stage, 88)
         if getattr(colony.genome, 'brain_ceiling', 88) < ceiling:
             colony.genome.brain_ceiling = ceiling
@@ -4402,6 +4444,10 @@ class SandKingsSimulation:
                                         getattr(pb, 'memory_augment', 0))  # AUG3
             colony.stage = max(getattr(pa, 'stage', 1),
                                getattr(pb, 'stage', 1))  # MT1: molt in blood
+            # AW4: awareness of the great other survives in the blood
+            colony.keeper_sentiment = max(getattr(pa, 'keeper_sentiment', 0.5),
+                                          getattr(pb, 'keeper_sentiment', 0.5))
+            colony.revelation = colony.breached
         elif survivors:
             colony.house = self._house_name(parent)
             colony.generation = getattr(parent, 'generation', 1) + 1
@@ -4410,6 +4456,8 @@ class SandKingsSimulation:
             colony.worshipped = getattr(parent, 'worshipped', False)
             colony.memory_augment = getattr(parent, 'memory_augment', 0)  # AUG3
             colony.stage = getattr(parent, 'stage', 1)  # MT1
+            colony.keeper_sentiment = getattr(parent, 'keeper_sentiment', 0.5)
+            colony.revelation = colony.breached  # AW4: born knowing, if aware
         colony.founded_step = self.step_count
         self.colonies[index] = colony
         self._kin_epoch = getattr(self, '_kin_epoch', 0) + 1  # kin map stale
@@ -4466,10 +4514,12 @@ class SandKingsSimulation:
                     if voxel == VoxelType.CORPSE:  # T42: bones from the fallen
                         colony.bone = getattr(colony, 'bone', 0) + 1
                     elif (nx, ny, nz) in getattr(self, 'keeper_manna', ()):
-                        # K3: a witnessed miracle - the god is revealed
+                        # K3/AW3: bounty is good fortune to all, but only the
+                        # AWARE (breached) read it as worship of a hand
                         self.keeper_manna.discard((nx, ny, nz))
                         colony.keeper_fed_step = self.step_count
-                        if not getattr(colony, 'worshipped', False):
+                        if (getattr(colony, 'breached', False)
+                                and not getattr(colony, 'worshipped', False)):
                             colony.worshipped = True
                             self._log_event(
                                 f"House {self._house_name(colony)} begins"

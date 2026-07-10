@@ -98,6 +98,12 @@ def build_state(sim: SandKingsSimulation) -> Dict:
             "augment": int(getattr(colony, 'memory_augment', 0)),
             "currency": round(float(getattr(colony, 'currency', 0.0)), 1),
             "sentiment": round(float(getattr(colony, 'keeper_sentiment', 0.5)), 2),
+            # AW1: aware of the "great other" only post-breakout; before that a
+            # nature mood, not a keeper sentiment
+            "aware": bool(getattr(colony, 'breached', False)),
+            "nature_mood": (sim._nature_mood(colony)
+                            if not getattr(colony, 'breached', False)
+                            and hasattr(sim, '_nature_mood') else ""),
             "utterance": str(utterance),
         })
     saga = [text for _s, text, _sal in saga_rows(
@@ -643,7 +649,9 @@ function render(){
       `<span>food <b>${col.food}</b></span><span>maw <b>${col.maw_hp}%</b></span>`+
       `<span>gen <b>${col.generation}</b></span>`+
       (col.currency?`<span>grains <b>${col.currency}</b></span>`:'')+
-      `<span>toward you <b style="color:${sentColor(col.sentiment)}">${sentWord(col.sentiment,col.attitude)}</b></span>`+`</div>`+
+      (col.aware
+        ? `<span>toward you <b style="color:${sentColor(col.sentiment)}">${sentWord(col.sentiment,col.attitude)}</b></span>`
+        : `<span>feels <b>${col.nature_mood||'—'}</b> <i style="opacity:.6">(unexplained forces)</i></span>`)+`</div>`+
       (col.alive?`<div class="mood">${col.mood}</div>`:'');
     if(col.breached&&col.utterance)inner+=`<div class="says">says: "${col.utterance}"</div>`;
     if(selected===col.id&&col.breached&&col.alive){

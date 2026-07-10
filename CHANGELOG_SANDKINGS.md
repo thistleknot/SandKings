@@ -1,5 +1,31 @@
 # Sand Kings Changelog
 
+## 2.27.0 - Nature until the Great Other (SPEC_AWARENESS.md AW1-AW6)
+
+- Fixes an incoherence: colonies formed worship/hatred of a keeper they had
+  never encountered. Now the keeper-directed emotional layer (worship,
+  keeper_sentiment, the carved "faces", the wrathful attitude) is gated on
+  `breached` - awareness of the "great other" that only comes at breakout.
+- Pre-breach a colony feels only NATURE - "opinions about unexplained forces":
+  a `_nature_mood` (bounty/lean/dread from food, drought, and weather) carved as
+  NATURE_SYMBOLS (☀ sun / ☁ sky / ☈ storm), not a keeper's face. keeper_sentiment
+  is frozen; eating manna is good fortune (sets keeper_fed_step) but never
+  worship.
+- The breakout is the 13th-Floor revelation (`_reveal`, fires once): "House X
+  glimpses the world beyond the glass - and knows the hand that fed and starved
+  it." It SEEDS the colony's opening stance toward the now-known god from how it
+  was treated as nature - well-fed wakes grateful (0.7), starved/droughted wakes
+  resentful (0.3). Cadets born into an aware bloodline inherit the stance without
+  a second revelation.
+- The tech-gift ladder now gates on a pre-breach FLOURISHING state (recently
+  fed) instead of worship, so the ladder->pi->terminal->breach path survives the
+  reframe. The psionic turning was already breach-gated (unchanged).
+- Surfaced: nature-glyph carvings + legend, the look panel names them, the
+  dashboard card shows "feels <mood> (unexplained forces)" pre-breach and "toward
+  you <sentiment>" only once aware. 7 new tests + full 26-suite battery green;
+  verified via play_kit (grateful vs resentful awakening).
+
+
 ## 2.26.0 - The Psionic Maw & Keeper-as-Prey (canon; SPEC_PSIONIC.md PS1-PS6)
 
 - The arc's close: the awakened terrarium REACHES BACK. `sim.keeper_

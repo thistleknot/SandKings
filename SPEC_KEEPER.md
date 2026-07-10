@@ -46,6 +46,15 @@ cricket/ant/cat have weight 0 (keeper-introduced only).
 
 ## K3 — Worship is earned ("they don't know of 'the gods' until
 they start seeing food introduced")
+> **AW amendment (SPEC_AWARENESS):** worship is now earned only AFTER breakout.
+> Pre-breach a colony feels unexplained NATURE (no worship or hatred of a
+> being); eating manna still sets `keeper_fed_step` (fortune) but sets
+> `worshipped` only when `breached`. The breakout is the "great other"
+> revelation (`_reveal`), which seeds `keeper_sentiment` from prior treatment
+> (well-fed → grateful, starved → resentful). The tech-gift ladder (K9) gates
+> on a pre-breach FLOURISHING state (reverent/recently-fed), not worship, so the
+> ladder→breach path survives.
+
 Per-colony keeper attitude, derived (never stored as a scalar):
 - NONE: default. The keeper is weather. The automated dole (T1) is
   NOT attributed — it predates their memory, it simply IS.
