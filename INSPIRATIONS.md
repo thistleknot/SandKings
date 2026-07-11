@@ -147,6 +147,11 @@ This is the lineage, mapped to the specs and mechanics each one shaped.
   resourceful — agile, improvise, adapt, overcome.
 - **The Bittensor economy gets a sink**: grains, minted for accurate forecasts,
   are finally SPENT — to research native technology.
+- **Mage Knight (minus the magic)**: each maw IS a one-city civilization — a
+  single seat directing units, tech, expansion, and war across the board. Not a
+  colony among colonies so much as a lone hero-faction building up from one tile.
+  Tactical combat depth (OnePageRules), recruit/spawn management, day/night and
+  siege pacing — the maw as the player, the spawn as the warband.
 
 ## The Standing Directive
 

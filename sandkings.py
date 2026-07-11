@@ -268,6 +268,14 @@ TECH_OBSERVE_RANGE = 8       # Chebyshev maw-distance to learn by watching
 TECH_OBSERVE_XP = 0.03       # xp gained per observe tick (× relationship)
 TECH_GRAIN_COST = 8.0        # grains spent to buy research (the currency sink)
 TECH_GRAIN_XP = 0.15         # xp bought per grain spend
+
+# T2b bonuses (SPEC_TECH TE10): proficiency confers capability. DEFAULT-NEUTRAL
+# at proficiency 0 (so every prior test/behaviour is unchanged).
+FARM_YIELD_BONUS = 0.5       # farming: +50% harvest at mastery
+METAL_WEAPON_BONUS = 0.6     # metallurgy: spear/weapon attack scaling
+METAL_PICK_BONUS = 0.5       # metallurgy: mining speed (picks)
+PLOW_COST_BONUS = 0.4        # plow: cheaper seed / faster sowing
+MASON_WALL_BONUS = 1.0       # masonry: wall durability
 TERMINAL_UNLOCK = 40         # pi operate-ticks before the terminal (K10)
 TERMINAL_MASTERY = 16        # successful commands before the breach
 SPOKEN_MEMORY = 50           # steps the `speak` anchor stays lit (K12)
@@ -740,6 +748,7 @@ class SandKing:
     gift_kind: str = ""        # 'food' | 'gold'
     gift_to: int = -1          # recipient colony id (-1 = not an envoy)
     weapon_expires: int = 0    # spear splinter step; 0 = unarmed (T44)
+    spear_bonus: int = 0       # actual spear attack bonus (TE10 scaled by metallurgy)
     torch: bool = False        # can put fields to the torch (T44/T45)
     poisoned_until: int = 0    # scorpion venom DoT end step (T48)
     spoken_to_step: int = -10**9  # last time the keeper addressed it (K12)
@@ -900,7 +909,12 @@ class Colony:
                         and getattr(self, 'bone', 0) >= 1):
                     self.wood -= 1
                     self.bone -= 1
-                    unit.attack += SPEAR_ATTACK
+                    # TE10: metallurgy hardens the spearhead
+                    mprof = getattr(self, 'tech_xp', {}).get('metallurgy', 0.0)
+                    bonus = int(round(SPEAR_ATTACK
+                                      * (1 + METAL_WEAPON_BONUS * mprof)))
+                    unit.attack += bonus
+                    unit.spear_bonus = bonus
                     unit.weapon_expires = step + SPEAR_LIFE
                 # T45: wartime soldiers may carry a torch (thrown once)
                 if self.at_war and getattr(self, 'wood', 0) >= 1:
@@ -1552,7 +1566,8 @@ class SandKingsSimulation:
             for unit in colony.units:
                 exp = getattr(unit, 'weapon_expires', 0)
                 if exp and self.step_count >= exp:
-                    unit.attack -= SPEAR_ATTACK
+                    unit.attack -= getattr(unit, 'spear_bonus', SPEAR_ATTACK)
+                    unit.spear_bonus = 0
                     unit.weapon_expires = 0
                     self._monitor(colony.colony_id).log_decision(
                         self.step_count, self._unit_label(unit),
@@ -2013,7 +2028,10 @@ class SandKingsSimulation:
             colony.wood -= 1
             self.world.voxels[best] = VoxelType.WOOD_WALL.value
             self.world.ownership[best] = colony.colony_id
-            self._rot()[best] = self.step_count + WALL_ROT
+            # TE10: masonry raises walls that endure longer
+            dur = int(WALL_ROT * (1 + MASON_WALL_BONUS
+                                  * self._prof(colony, 'masonry')))
+            self._rot()[best] = self.step_count + dur
             self._practice(colony, 'masonry')  # TE7: raising walls
             self._milestone(colony, 'palisade',
                             f"Colony {colony.colony_id} raises palisades"
@@ -2485,6 +2503,10 @@ class SandKingsSimulation:
                     self._practice(colony, tech, TECH_GRAIN_XP)
                     self._log_event(f"House {self._house_name(colony)} pours"
                                     f" grains into {tech}")
+
+    def _prof(self, colony: Colony, tech: str) -> float:
+        """TE10: a colony's proficiency in a tech (0..1; 0 if unknown)."""
+        return getattr(colony, 'tech_xp', {}).get(tech, 0.0)
 
     def _are_allied(self, a: int, b: int) -> bool:
         """Ally latch between two colonies (TE8 weighting)."""
@@ -3626,11 +3648,13 @@ class SandKingsSimulation:
     def _farm_step(self, unit: SandKing, colony: Colony) -> bool:
         """T18 branch 5: sow an adjacent owned TILLED, else till toward a site."""
         x, y, z = unit.position
-        if colony.maw.food_stored >= SEED_COST:
+        # TE10: plow makes the seed go further (cheaper sowing)
+        seed_cost = SEED_COST * (1 - PLOW_COST_BONUS * self._prof(colony, 'plow'))
+        if colony.maw.food_stored >= seed_cost:
             for nx, ny, nz in self.world.get_neighbors_3d(unit.position, radius=1):
                 if (self.world.voxels[nx, ny, nz] == VoxelType.TILLED.value
                         and self.world.ownership[nx, ny, nz] == colony.colony_id):
-                    colony.maw.food_stored -= SEED_COST
+                    colony.maw.food_stored -= seed_cost
                     self.world.voxels[nx, ny, nz] = VoxelType.CROP.value
                     self._crops()[(nx, ny, nz)] = 0
                     self._practice(colony, 'plow')  # TE7: breaking the soil
@@ -3683,6 +3707,9 @@ class SandKingsSimulation:
         unit.mine_progress = getattr(unit, 'mine_progress', 0) + 1
         work_needed = (SALVAGE_MINE_TIME
                        if voxel == VoxelType.SALVAGE.value else MINE_TIME)
+        # TE10: metallurgy forges picks - ore comes faster
+        work_needed = max(1, int(round(
+            work_needed * (1 - METAL_PICK_BONUS * self._prof(colony, 'metallurgy')))))
         if unit.mine_progress >= work_needed:
             kind = {VoxelType.COPPER_ORE.value: 'copper',
                     VoxelType.GOLD_ORE.value: 'gold',
@@ -4881,6 +4908,8 @@ class SandKingsSimulation:
                     from politics import COOP_YIELD_BONUS
                     payout = CROP_YIELD * (1 + COOP_YIELD_BONUS
                                            if len(tenders) >= 2 else 1)
+                    payout *= 1 + FARM_YIELD_BONUS * self._prof(  # TE10
+                        colony, 'farming')
                     if foreign and d.ally(colony.colony_id, owner):
                         colony.maw.eat(payout * 0.6)  # co-op split (P10)
                         owner_colony = self._colony_by_id(owner)

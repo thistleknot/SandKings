@@ -66,6 +66,22 @@ than an enemy); a house with grains and partial xp SPENDS them to research (and
 its `currency` drops); proficiency is exposed; all default-neutral; pickles;
 evolution inert.
 
+## TE10 — Bonuses: proficiency confers capability (T2b)
+A colony's `_prof(colony, tech)` (its `tech_xp`, 0..1) multiplies the mapped
+hooks, DEFAULT-NEUTRAL at 0 (every prior behaviour unchanged at proficiency 0):
+- **farming** → harvest payout ×`(1 + FARM_YIELD_BONUS·prof)` (up to +50%);
+- **metallurgy** → the spawn spear bonus ×`(1 + METAL_WEAPON_BONUS·prof)` (the
+  exact bonus is stored on the unit so expiry reverses it), AND `_mine_step`
+  work-needed ×`(1 - METAL_PICK_BONUS·prof)` (picks — faster ore);
+- **plow** → sowing seed cost ×`(1 - PLOW_COST_BONUS·prof)` (the seed goes
+  further);
+- **masonry** → a raised wall's rot time ×`(1 + MASON_WALL_BONUS·prof)` (walls
+  endure). These are the DF role bonuses realised: a soldier profits from the
+  house's metallurgy, a worker from its farming/plow/masonry/metallurgy skill,
+  in the OnePageRules shape (skill→better weapon/defense/efficiency).
+Acceptance (tests/test_tech_bonus.py): each bonus measurably helps at proficiency
+1 and is exactly neutral at 0; the spear bonus reverses cleanly on expiry.
+
 ## Status / Reconciliation
 - T1 (TE1-TE6) drafted+implemented 2026-07-10 (commit 14bde16). T2a (TE7-TE9)
   same session. T2b (bonuses/skills), T2c (gunpowder/siege/naval), T2d (crafting)
