@@ -155,6 +155,7 @@ EVENT_TINTS = (            # substring -> HUD color (spec R19/R24)
     ("deluge over the sands", (60, 140, 240)),   # HH2 the hand's water
     ("rain waters the sands", (110, 170, 240)),
     ("scatters seeds", (150, 200, 150)),
+    ("lights a firecracker", (255, 120, 40)),    # arena firecracker disaster
     ("SPEAKS", (255, 255, 255)),
     ("fall as noise", (150, 150, 160)),
     ("augments its mind", (150, 180, 255)),
@@ -486,7 +487,8 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
                       "GIFTS: 1food 2crick 3ant 4spidr 5tech",
                       "       w rain  j seeds",
                       "WRATH: 6spidr 7scorp 8snake 9drgt 0cat",
-                      "       [ cold  ] heat  d deluge  T speak",
+                      "       [ cold  ] heat  d deluge  u firecrckr",
+                      "       T speak",
                       "NEUTRAL: n squirrel  b rabbit",
                       "PANEL: x/c water +/-  a/z sun +/-"):
         entries.append((help_line, (140, 140, 150)))
@@ -1229,6 +1231,10 @@ class LiveViewer:
                 with self.runner.lock:
                     self.sim.keeper_auto = False
                     self.sim.keeper_water(*self.cursor, big=True)
+            elif key == pygame.K_u:                     # WRATH: firecracker
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    self.sim.keeper_ignite(*self.cursor)
             elif key == pygame.K_x:                     # PANEL: more water
                 with self.runner.lock:
                     self.sim.keeper_set_water(

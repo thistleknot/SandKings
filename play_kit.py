@@ -87,6 +87,9 @@ class Terrarium:
     def temp(self, direction: str) -> Dict:
         return self._post("/api/keeper/temp", {"dir": direction})
 
+    def ignite(self, x=None, y=None) -> Dict:
+        return self._post("/api/keeper/ignite", {"x": x, "y": y})
+
     def water(self, big: bool = False, x=None, y=None) -> Dict:
         return self._post("/api/keeper/water", {"x": x, "y": y, "big": big})
 
@@ -277,7 +280,7 @@ SCENARIOS = {
 
 # short command aliases for the REPL / --do runner
 _SPECIES = {"cricket", "ant", "small_spider", "spider", "scorpion", "snake",
-            "squirrel", "rabbit"}
+            "squirrel", "rabbit", "fly", "mouse"}
 
 
 def dispatch(t: Terrarium, line: str) -> str:
@@ -302,6 +305,10 @@ def dispatch(t: Terrarium, line: str) -> str:
         t.drought(not args or args[0] != "off")
     elif cmd in ("heat", "cold"):
         t.temp(cmd)
+    elif cmd in ("firecracker", "ignite", "fire"):
+        t.ignite()
+    elif cmd == "flies":
+        t.release("fly")
     elif cmd in ("rain", "water"):
         t.water(big=False)
     elif cmd == "deluge":

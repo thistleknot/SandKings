@@ -78,6 +78,22 @@ lines updated to the three groups.
 - state pickles; `EnhancedSandKingsSimulation.step` stays inert
   (`_arena_tick` not in its co_names).
 
+## AR8 — Kid-with-a-terrarium content (SimCity disasters + roster)
+The keeper is a child playing god with warrior ants.
+- **Firecracker** — `keeper_ignite(x,y)` WRATH action (`_hand_stayed`-gated): a
+  blast of radius `FIRECRACKER_RADIUS` (3) that `_ignite`s flammable voxels (crops/
+  wood) in range AND deals `FIRECRACKER_DAMAGE` (4) to exposed units caught in it
+  (corpses left) — a SimCity disaster, real chaos but not tank-ending. The lit
+  fires then spread/burn via the existing `_fire_tick`.
+- **Wingless flies** (`fly`) — a GIFT: weak swarm prey (hp 3, pack 4-8, bounty 1),
+  food the maws chase.
+- **Mouse** (`mouse`) — a NEUTRAL: a lone critter (hp 20, bites back, bounty 5).
+Surfaced: `/api/keeper/ignite`; dashboard Gifts gains Flies, Wrath gains
+Firecracker, Neutral gains Mouse; live-view key `u` (firecracker); event tint +
+chronicle salience. `KEEPER_GIFTS` gains `fly`, `KEEPER_NEUTRAL` gains `mouse`.
+Acceptance: a firecracker on a crop patch lights fire + scorches an exposed unit;
+fly is a gift, mouse a neutral, both releasable; a bound keeper can't ignite.
+
 ## Status / Reconciliation
 - Drafted 2026-07-10; implemented the same session (the mayhem mandate).
 - SPEC_WEATHER note: arena temperature is a keeper track distinct from W3.

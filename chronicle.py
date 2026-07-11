@@ -67,6 +67,7 @@ SALIENCE = [
     ("deluge over the sands", 6),
     ("blistering heat", 5),
     ("biting cold", 5),
+    ("lights a firecracker", 5),
     ("rain waters the sands", 4),
     ("scatters seeds", 4),
     ("Hail", 4),

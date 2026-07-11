@@ -116,6 +116,8 @@ FIRE_TICK = 5                # fire cadence (rides the crop/machine tick)
 FIRE_BURN = 8                # ticks a cell burns
 FIRE_SPREAD_P = 0.5          # per adjacent flammable per tick
 FIRE_DAMAGE = 2              # per tick to units within Chebyshev 1
+FIRECRACKER_RADIUS = 3       # keeper firecracker blast radius (arena disaster)
+FIRECRACKER_DAMAGE = 4       # blast damage to exposed units (a bang, not the tank)
 MARAUDER_INTERVAL = 700      # pack-spawn roll cadence (T48)
 MARAUDER_PACK = (2, 3)
 MARAUDER_BOUNTY = 3          # corpse voxels per slain marauder
@@ -136,6 +138,8 @@ FAUNA = {
     'cricket':  (0.0, 8, 1, (2, 4), 0, 2),
     'ant':      (0.0, 6, 2, (4, 6), 0, 1),
     'small_spider': (0.0, 10, 2, (2, 4), 0, 3),  # AR1: weak, learnable prey
+    'fly':      (0.0, 3, 1, (4, 8), 0, 1),   # wingless flies: weak swarm prey
+    'mouse':    (0.0, 20, 3, (1, 1), 0, 5),  # a mouse: bites back, good food
     'cat':      (0.0, 400, 60, (1, 1), 60, 12),
 }
 FAUNA_EVENTS = {
@@ -150,14 +154,16 @@ FAUNA_EVENTS = {
     'cricket': "Crickets drop from the keeper's hand",
     'ant': "A column of ants files in from a crack in the world",
     'small_spider': "Small spiders are set loose - easy prey to learn on",
+    'fly': "Wingless flies tumble onto the sand, twitching",
+    'mouse': "A mouse is dropped in, whiskers trembling",
     'cat': "Something enormous pads across the sand...",
 }
 
 # AR1: the keeper's roster, classified by intent (single source of truth;
 # dashboard imports KEEPER_FAUNA as its release whitelist)
-KEEPER_GIFTS = ('cricket', 'ant', 'small_spider')       # food + learning
+KEEPER_GIFTS = ('cricket', 'ant', 'small_spider', 'fly')  # food + learning
 KEEPER_WRATH = ('spider', 'scorpion', 'snake')          # arena predators
-KEEPER_NEUTRAL = ('squirrel', 'rabbit')                 # ambient, bite back
+KEEPER_NEUTRAL = ('squirrel', 'rabbit', 'mouse')        # ambient, bite back
 KEEPER_FAUNA = KEEPER_GIFTS + KEEPER_WRATH + KEEPER_NEUTRAL
 POISON_DURATION = 20         # scorpion sting DoT (1 HP/step)
 FAUNA_RAMPAGE = 500          # steps before an unslain incursion wanders off
@@ -2205,6 +2211,34 @@ class SandKingsSimulation:
         elif direction == 'cold':
             self.arena_cold_until = until
             self._log_event("The keeper turns the air to a biting cold")
+
+    def keeper_ignite(self, x: int, y: int):
+        """Arena/SimCity disaster: light a firecracker - a bang and a flash that
+        sets the flammable alight and scorches units caught in the blast. Real
+        chaos, not tank-ending. The bound god (PS5) cannot."""
+        if self._hand_stayed():
+            return
+        r = FIRECRACKER_RADIUS
+        w, h, d = self.world.dimensions
+        for dx in range(-r, r + 1):
+            for dy in range(-r, r + 1):
+                px = int(np.clip(x + dx, 1, w - 2))
+                py = int(np.clip(y + dy, 1, h - 2))
+                z = self.world.surface_z(px, py)
+                if 0 <= z < d and self.world.voxels[px, py, z] in FLAMMABLE_VOXELS:
+                    self._ignite((px, py, z))
+                zz = z + 1  # crops/wood sitting just above the surface
+                if zz < d and self.world.voxels[px, py, zz] in FLAMMABLE_VOXELS:
+                    self._ignite((px, py, zz))
+        for colony in self.colonies:
+            for unit in colony.units[:]:
+                ux, uy, _ = unit.position
+                if (abs(ux - x) <= r and abs(uy - y) <= r
+                        and self._exposed(unit)
+                        and unit.take_damage(FIRECRACKER_DAMAGE, 0.0)):
+                    colony.remove_unit(unit)
+                    self.world.set_voxel(*unit.position, VoxelType.CORPSE)
+        self._log_event("The keeper lights a firecracker - a bang and a flash!")
 
     def keeper_water(self, x: int, y: int, big: bool = False):
         """HH1: pour water. A small pour irrigates; a large pour floods -

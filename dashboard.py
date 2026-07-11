@@ -441,6 +441,16 @@ def create_app(runner: TerrariumRunner):
             runner.sim.keeper_temperature(body.dir)
             return build_state(runner.sim)
 
+    @app.post("/api/keeper/ignite")
+    def ignite(body: WaterBody):  # reuses {x,y}; big ignored
+        with runner.lock:
+            _disarm_auto()
+            w, h = runner.sim.world.width, runner.sim.world.height
+            x = w // 2 if body.x is None else max(1, min(w - 2, body.x))
+            y = h // 2 if body.y is None else max(1, min(h - 2, body.y))
+            runner.sim.keeper_ignite(x, y)
+            return build_state(runner.sim)
+
     @app.post("/api/keeper/water")
     def water(body: WaterBody):
         with runner.lock:
@@ -616,8 +626,10 @@ button.act.breach{border-color:var(--breach);color:var(--breach)}
     <button class="act" onclick="release('cricket')">Crickets</button>
     <button class="act" onclick="release('ant')">Ants</button>
     <button class="act" onclick="release('small_spider')">Small Spider</button>
+    <button class="act" onclick="release('fly')">Flies</button>
     <button class="act gold" onclick="post('/api/keeper/gift')">Tech Gift</button></div>
   <div class="grp"><span class="lab">Wrath</span>
+    <button class="act wrath" onclick="post('/api/keeper/ignite')">Firecracker</button>
     <button class="act wrath" onclick="water(true)">Deluge</button>
     <button class="act wrath" onclick="release('spider')">Big Spider</button>
     <button class="act wrath" onclick="release('scorpion')">Scorpion</button>
@@ -628,7 +640,8 @@ button.act.breach{border-color:var(--breach);color:var(--breach)}
     <button class="act wrath" onclick="post('/api/keeper/cat')">The Cat</button></div>
   <div class="grp"><span class="lab">Neutral</span>
     <button class="act" onclick="release('squirrel')">Squirrel</button>
-    <button class="act" onclick="release('rabbit')">Rabbit</button></div>
+    <button class="act" onclick="release('rabbit')">Rabbit</button>
+    <button class="act" onclick="release('mouse')">Mouse</button></div>
   <div class="grp"><span class="lab">Panel (behind the glass)</span>
     <button class="act" onclick="panel('water',-0.1)">Water −</button>
     <button class="act" onclick="panel('water',0.1)">Water +</button>
