@@ -400,6 +400,29 @@ def test_legend_covers_every_glyph_and_species():
     assert "fire" in joined and "armored" in joined
 
 
+def test_legend_layout_never_cuts_off_vertically():
+    """R34 regression: the legend column-wraps so NO entry renders past area_h.
+    The old single-column layout placed row i at y=10+i*16 with no height bound,
+    so once the entries exceeded the window height the bottom rows were cut off."""
+    from live_view import (build_legend_entries, legend_layout,
+                           LEGEND_TOP, LEGEND_LINE_H)
+    entries = build_legend_entries()
+    n = len(entries)
+    # a window deliberately shorter than a single legend column would need
+    area_w, area_h = 672, 400
+    single_col_bottom = LEGEND_TOP + n * LEGEND_LINE_H
+    assert single_col_bottom > area_h, (
+        "test premise: the legend must overflow one column at this size "
+        f"(needs {single_col_bottom}px, have {area_h}px)")
+    positions = legend_layout(n, area_w, area_h)
+    assert len(positions) == n, "every entry must get a position (none dropped)"
+    for (x, y) in positions:
+        assert LEGEND_TOP <= y < area_h, f"entry at y={y} is cut off (area_h={area_h})"
+        assert 0 <= x < area_w, f"entry at x={x} is outside area_w={area_w}"
+    # the fix must actually wrap into more than one column here
+    assert len({x for x, _y in positions}) >= 2, "layout should use multiple columns"
+
+
 def test_column_inhabitants_orders_by_height_and_inspect_reads():
     from live_view import (build_inspect_entries, column_inhabitants,
                            target_alive)

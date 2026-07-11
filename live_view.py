@@ -785,6 +785,35 @@ def build_legend_entries() -> List[Tuple[str, Tuple[int, int, int]]]:
     return entries
 
 
+LEGEND_LINE_H = 16     # px between legend rows (matches the historical single-column spacing)
+LEGEND_TOP = 10        # px top (and bottom) margin inside the legend area
+LEGEND_LEFT = 14       # px left margin of the first column
+
+
+def legend_layout(n_entries: int, area_w: int, area_h: int,
+                  line_h: int = LEGEND_LINE_H, top: int = LEGEND_TOP,
+                  left: int = LEGEND_LEFT) -> List[Tuple[int, int]]:
+    """R34: column-wrapped (x, y) pixel position for each of the n_entries legend
+    rows, so the legend NEVER overflows area_h. The historical single-column layout
+    placed row i at y=top+i*line_h with no height bound, so once the entry count
+    exceeded the window height the bottom rows rendered off-screen (cut off). Here
+    the rows fill as many columns as needed: each column holds `max_rows` rows that
+    fit within area_h, and the columns are spread evenly across area_w.
+
+    Pure: no pygame. Guarantees every returned y is within [top, area_h) as long as
+    a single row fits (line_h <= area_h - 2*top); columns advance in x instead.
+    """
+    usable_h = max(line_h, area_h - 2 * top)
+    max_rows = max(1, usable_h // line_h)
+    n_cols = max(1, (n_entries + max_rows - 1) // max_rows)
+    col_w = max(1, (area_w - left) // n_cols)
+    positions: List[Tuple[int, int]] = []
+    for i in range(n_entries):
+        col, row = divmod(i, max_rows)
+        positions.append((left + col * col_w, top + row * line_h))
+    return positions
+
+
 def build_manager_entries(sim: SandKingsSimulation,
                           colony_id: int) -> List[Tuple[str, Tuple[int, int, int]]]:
     """Manager screen content as (text, color) pairs (SPEC_HIVE_MONITOR M5).
@@ -1728,10 +1757,11 @@ class LiveViewer:
         self._screen.fill(HUD_BG)
         pygame.draw.rect(self._screen, (36, 36, 30),
                          pygame.Rect(0, 0, area_w, area_h), 1)
-        for i, (line, color) in enumerate(build_legend_entries()):
+        entries = build_legend_entries()
+        positions = legend_layout(len(entries), area_w, area_h)
+        for (line, color), (x, y) in zip(entries, positions):
             if line:
-                self._screen.blit(self._font.render(line, True, color),
-                                  (14, 10 + i * 16))
+                self._screen.blit(self._font.render(line, True, color), (x, y))
         hud_x = area_w + 12
         for i, (line, color) in enumerate(build_hud_entries(
                 self.sim, self.pacer.steps_per_second,

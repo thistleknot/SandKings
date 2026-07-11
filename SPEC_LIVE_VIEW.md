@@ -301,7 +301,10 @@ this ledger is the canonical resolution.)
   (colony colors, copper = armored, magenta = retreating, gold =
   envoy, violet = beast). The legend MUST enumerate from the live
   GLYPHS/BEAST_GLYPHS dicts so a new voxel or species cannot silently
-  miss the legend (asserted in tests).
+  miss the legend (asserted in tests). The legend MUST also column-wrap
+  (pure `legend_layout()`) so no entry renders past the window height —
+  the enumeration guarantee extends to display: nothing is cut off
+  vertically, however many entries there are (asserted in tests).
 
 ## 4. Structural Spec
 
