@@ -1935,15 +1935,20 @@ class SandKingsSimulation:
         return self.house_grudges
 
     def _house_name(self, colony: Colony) -> str:
-        """Raw house name (D1); lazily founded so colonies from
-        pre-dynasty checkpoints earn names on first use."""
-        from chronicle import make_house_name
+        """Display house name with its cadet-generation numeral (D1/D2). The base
+        dynasty lives in `colony.house` (kin/grudges match on THAT, shared across a
+        bloodline); the display appends the Roman generation ("Vex-Karn II") so a
+        living parent and its cadet branch read distinctly instead of colliding as
+        "House X trades with House X". gen 1 -> the bare base (house_label identity),
+        so every founding house is unchanged. Lazily founds a name for pre-dynasty
+        saves."""
+        from chronicle import make_house_name, house_label
         if not getattr(colony, 'house', ''):
             colony.house = make_house_name()
             colony.generation = 1
             colony.founded_step = self.step_count
             self._kin_epoch = getattr(self, '_kin_epoch', 0) + 1
-        return colony.house
+        return house_label(colony.house, getattr(colony, 'generation', 1))
 
     def _house(self, colony: Colony) -> str:
         """Display label: 'Vex-Karn II, the Oath-Broken' (D1/D2)."""
@@ -5963,7 +5968,10 @@ class SandKingsSimulation:
             colony.crafted = set(getattr(pa, 'crafted', set())) | set(
                 getattr(pb, 'crafted', set()))
         elif survivors:
-            colony.house = self._house_name(parent)
+            self._house_name(parent)       # ensure the parent's base dynasty is founded
+            colony.house = parent.house    # inherit the BASE (kin/grudge identity), NOT
+            #                                the display numeral -> avoids "House X trades
+            #                                with House X" while staying kin to the parent
             colony.generation = getattr(parent, 'generation', 1) + 1
             # K11: awakening survives in the bloodline
             colony.breached = getattr(parent, 'breached', False)

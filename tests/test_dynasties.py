@@ -80,9 +80,15 @@ def test_succession_earns_epithet_and_cadet_inherits():
     assert any("will be remembered" in m for _, m in sim.events)
     sim._respawn_colony(victim.colony_id)
     cadet = sim.colonies[1]
-    parents = {sim._house_name(c) for c in sim.colonies
-               if c.colony_id != victim.colony_id}
-    assert sim._house_name(cadet) in parents, "cadet of a living house"
+    parent_bases = {c.house for c in sim.colonies
+                    if c.colony_id != victim.colony_id}
+    # cadet inherits the parent's BASE dynasty (kin) ...
+    assert cadet.house in parent_bases, "cadet of a living house (same base dynasty)"
+    # ... but its display disambiguates via the generation numeral (no
+    # "House X trades with House X"): its rendered name is NOT a bare parent name.
+    assert sim._house_name(cadet) not in {c.house for c in sim.colonies
+                                          if c.colony_id != victim.colony_id}
+    assert sim._house_name(cadet).endswith(" II")
     assert cadet.generation >= 2
     assert cadet.founded_step == sim.step_count
 
