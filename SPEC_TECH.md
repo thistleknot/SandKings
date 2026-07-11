@@ -114,6 +114,27 @@ Technology also moves BETWEEN living/dying houses (observation was TE8):
 Acceptance (tests/test_tech_diffusion.py): a conqueror inherits a fallen enemy's
 tech; a truce transfers a tech from the richer to the poorer house.
 
+## TE13 — Materials → crafting (T2d, the warrior-ants fantasy)
+The keeper drops raw MATERIALS; a house with the enabling native tech reshapes
+them into tools/weapons, else inert scrap. `keeper_material(kind, x, y)`
+(`_hand_stayed`-gated). `CRAFT_RECIPES` maps `(material, tech) -> item`, applied
+by the NEAREST living house:
+- toothpick + metallurgy → `spear` (+attack); toothpick + fire → `firespike`
+  (+defense); string + metallurgy → `bow` (+attack); lego_log + masonry →
+  `bastion` (+defense); copper_pipe + metallurgy → `cannon` (UNLOCKS the
+  `catapult` siege tech — a shortcut past research).
+Crafted items (`colony.crafted`, pickled/inherited) buff the house's SOLDIERS at
+spawn (`CRAFTED_EFFECTS`), like copper-armor/spear. **Tacks are NOT crafted** —
+`keeper_material('tacks')` scatters `CALTROP_COUNT` loose caltrops
+(`sim.caltrops`); `_caltrop_tick` pricks any exposed unit that stands on one
+(`CALTROP_DAMAGE`). They persist and can be repositioned (unit-repositioning is
+future). Surfaced: `/api/keeper/material`, a dashboard Materials group, the card/
+build_state `crafted` field, play_kit material commands.
+Acceptance (tests/test_crafting.py): a material + the right tech crafts the item
+and buffs a soldier; without the tech it's scrap; a copper-pipe cannon unlocks
+the catapult; tacks scatter caltrops that damage a unit on them; a bound keeper
+can craft nothing; state pickles/inherits.
+
 ## Status / Reconciliation
 - T1 (TE1-TE6) drafted+implemented 2026-07-10 (commit 14bde16). T2a (TE7-TE9)
   same session. T2b (bonuses/skills), T2c (gunpowder/siege/naval), T2d (crafting)

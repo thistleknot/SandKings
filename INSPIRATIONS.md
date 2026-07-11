@@ -153,6 +153,31 @@ This is the lineage, mapped to the specs and mechanics each one shaped.
   Tactical combat depth (OnePageRules), recruit/spawn management, day/night and
   siege pacing — the maw as the player, the spawn as the warband.
 
+## Kindred Games (researched 2026-07 — fuel for future features)
+
+- **RimWorld's AI Storyteller** (Cassandra Classic / Phoebe Chillax / Randy
+  Random): an unseen director that PACES events off colony state — wealth,
+  population, recent deaths — so raids/disasters/boons feel *authored*, not
+  random. → The keeper's auto-script should become a **Storyteller**: a director
+  that reads the terrarium's wealth/tech/tension and paces gifts, predators,
+  droughts, and firecrackers into rising arcs, with difficulty personae
+  (merciful / chaotic / random). Turns the auto-keeper into a narrative engine.
+- **Empires of the Undergrowth**: you are the colony's emergent intelligence —
+  you set **pheromone trails** and the ants follow *suggestions*, not orders;
+  distinct ant castes/abilities; colony-vs-colony. → We already have pheromones
+  + hive minds + the mastermind/underling split; fuel for **pheromone-order
+  markers** the maw lays (rally/forage/retreat trails) and richer per-caste
+  abilities.
+- **Oxygen Not Included**: a CLOSED-system sim — every resource cycles, nothing
+  is free. → validates the closed water/sun budget; fuel for closing more loops
+  (air, waste→silt, heat).
+- **Frostpunk**: survival under one crushing environmental constraint, hard moral
+  dials. → the drought/cold/heat pressure as the crucible that forges (or breaks)
+  a civilization.
+- **Factorio / Banished / Amazing Cultivation Simulator**: automation chains,
+  harsh growth curves, a single grandmaster raising an order from nothing (the
+  one-city-civ again).
+
 ## The Standing Directive
 
 "Dazzle me, but keep it ASCII" (the glyph views) — later joined by

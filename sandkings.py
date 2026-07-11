@@ -296,6 +296,28 @@ CATAPULT_RANGE = 40          # how far a catapult can lob (whole-board)
 CATAPULT_DAMAGE = 14         # maw damage per shot at mastery
 CATAPULT_SPLASH = 2          # Chebyshev radius of the impact blast
 GUNPOWDER_ATTACK = 6         # firearm punch added to a gunpowder soldier at spawn
+
+# T2d materials -> crafting (SPEC_TECH TE13): the kid drops raw materials; a house
+# with the enabling tech reshapes them into tools/weapons. Otherwise inert scrap.
+MATERIALS = ('toothpick', 'string', 'lego_log', 'copper_pipe', 'tacks')
+CRAFT_RECIPES = {          # (material, required tech) -> crafted item
+    ('toothpick', 'metallurgy'): 'spear',
+    ('toothpick', 'fire'):       'firespike',
+    ('string', 'metallurgy'):    'bow',
+    ('lego_log', 'masonry'):     'bastion',
+    ('copper_pipe', 'metallurgy'): 'cannon',
+}
+CRAFTED_EFFECTS = {        # crafted item -> per-soldier spawn effect / tech grant
+    'spear':     {'attack': 3},
+    'firespike': {'defense': 6},
+    'bow':       {'attack': 4},
+    'bastion':   {'defense': 10},
+    'cannon':    {'tech': 'catapult'},  # a copper-pipe cannon IS a siege engine
+}
+# tacks are NOT crafted - the hand scatters them as loose CALTROPS (area denial);
+# they persist and can be repositioned (units crossing them are pricked)
+CALTROP_COUNT = 10           # caltrops scattered per keeper_material('tacks')
+CALTROP_DAMAGE = 2           # per step to a unit standing on a caltrop
 TERMINAL_UNLOCK = 40         # pi operate-ticks before the terminal (K10)
 TERMINAL_MASTERY = 16        # successful commands before the breach
 SPOKEN_MEMORY = 50           # steps the `speak` anchor stays lit (K12)
@@ -908,6 +930,7 @@ class Colony:
         self.revelation = False        # has met the "great other" post-breakout (AW4)
         self.techs = set()             # technologies this house knows (TE1)
         self.tech_xp = {}              # per-tech proficiency 0..1 (DF skill, TE1)
+        self.crafted = set()           # items crafted from gifted materials (TE13)
         
     def spawn_unit(self, unit_type: UnitType, step: int = 0):
         """Spawn new unit from Maw; copper armors, timber arms (T25/T44).
@@ -940,6 +963,13 @@ class Colony:
                 gprof = getattr(self, 'tech_xp', {}).get('gunpowder', 0.0)
                 if gprof:
                     unit.attack += int(round(GUNPOWDER_ATTACK * gprof))
+                # TE13: crafted gear (spear/bow/firespike/bastion) arms the soldier
+                for item in getattr(self, 'crafted', ()):
+                    eff = CRAFTED_EFFECTS.get(item, {})
+                    unit.attack += eff.get('attack', 0)
+                    if eff.get('defense'):
+                        unit.max_health += eff['defense']
+                        unit.health = unit.max_health
                 # T45: wartime soldiers may carry a torch (thrown once)
                 if self.at_war and getattr(self, 'wood', 0) >= 1:
                     self.wood -= 1
@@ -1512,6 +1542,9 @@ class SandKingsSimulation:
         # 3c-s. SIEGE (SPEC_TECH TE11): catapults hurl shot across the board
         self._catapult_tick()
 
+        # 3c-c. CALTROPS (SPEC_TECH TE13): loose tacks prick whoever crosses
+        self._caltrop_tick()
+
         # 3d. CROP GROWTH (T19/T20)
         if self.step_count % CROP_TICK == 0:
             self._grow_crops()
@@ -1583,6 +1616,8 @@ class SandKingsSimulation:
                 colony.techs = set()
             if not hasattr(colony, 'tech_xp'):
                 colony.tech_xp = {}
+            if not hasattr(colony, 'crafted'):
+                colony.crafted = set()  # TE13
 
             # Organic rot (T42): timber and bone decay; metal is forever
             if self.step_count % ROT_INTERVAL == 0:
@@ -2260,6 +2295,73 @@ class SandKingsSimulation:
                     colony.remove_unit(unit)
                     self.world.set_voxel(*unit.position, VoxelType.CORPSE)
         self._log_event("The keeper lights a firecracker - a bang and a flash!")
+
+    def keeper_material(self, kind: str, x: int, y: int):
+        """TE13: drop a raw MATERIAL. Tacks scatter as loose caltrops; every
+        other material is reshaped into a tool by the NEAREST house IF it has
+        the enabling tech - otherwise it is inert scrap."""
+        if self._hand_stayed() or kind not in MATERIALS:
+            return
+        if kind == 'tacks':
+            self._scatter_caltrops(x, y)
+            return
+        best, bestd = None, None
+        for c in self.colonies:
+            if not c.is_alive():
+                continue
+            d = (c.maw.position[0] - x) ** 2 + (c.maw.position[1] - y) ** 2
+            if bestd is None or d < bestd:
+                best, bestd = c, d
+        if best is not None:
+            self._claim_material(best, kind)
+
+    def _claim_material(self, colony: Colony, kind: str):
+        """TE13: the craft - material + the right tech becomes a tool."""
+        if not hasattr(colony, 'crafted'):
+            colony.crafted = set()
+        made = []
+        for (mat, tech), item in CRAFT_RECIPES.items():
+            if (mat == kind and tech in getattr(colony, 'techs', set())
+                    and item not in colony.crafted):
+                colony.crafted.add(item)
+                made.append(item)
+                eff = CRAFTED_EFFECTS[item]
+                if 'tech' in eff:  # e.g. a copper-pipe cannon unlocks the siege
+                    self._grant_tech(colony, eff['tech'])
+                    colony.tech_xp[eff['tech']] = max(
+                        colony.tech_xp.get(eff['tech'], 0.0), TECH_LEARN_XP)
+        house = self._house_name(colony)
+        if made:
+            self._log_event(f"House {house} crafts {', '.join(made)}"
+                            f" from the {kind}")
+        else:
+            self._log_event(f"House {house} turns the {kind} over - inert"
+                            " scrap, without the craft")
+
+    def _scatter_caltrops(self, x: int, y: int):
+        """TE13: loose caltrops the maws can reposition (area denial)."""
+        if not hasattr(self, 'caltrops'):
+            self.caltrops = set()
+        w, h, d = self.world.dimensions
+        for _ in range(CALTROP_COUNT):
+            px = int(np.clip(x + random.randint(-2, 2), 1, w - 2))
+            py = int(np.clip(y + random.randint(-2, 2), 1, h - 2))
+            z = self.world.surface_z(px, py)
+            if 0 <= z < d:
+                self.caltrops.add((px, py, z))
+        self._log_event("The keeper scatters tacks across the sand - caltrops!")
+
+    def _caltrop_tick(self):
+        """TE13: a unit that stands on a loose caltrop is pricked."""
+        caltrops = getattr(self, 'caltrops', None)
+        if not caltrops:
+            return
+        for colony in self.colonies:
+            for unit in colony.units[:]:
+                if (tuple(unit.position) in caltrops and self._exposed(unit)
+                        and unit.take_damage(CALTROP_DAMAGE, 0.0)):
+                    colony.remove_unit(unit)
+                    self.world.set_voxel(*unit.position, VoxelType.CORPSE)
 
     def keeper_water(self, x: int, y: int, big: bool = False):
         """HH1: pour water. A small pour irrigates; a large pour floods -
@@ -4500,6 +4602,8 @@ class SandKingsSimulation:
                 colony.techs = set()          # TE1
             if not hasattr(colony, 'tech_xp'):
                 colony.tech_xp = {}
+            if not hasattr(colony, 'crafted'):
+                colony.crafted = set()        # TE13
 
             # discovery ladder (T29): any unit near the wreck AABB
             if colony.machine_arc == 'none':
@@ -4960,6 +5064,8 @@ class SandKingsSimulation:
                 getattr(pb, 'techs', set()))
             colony.tech_xp = {**getattr(pa, 'tech_xp', {}),
                               **getattr(pb, 'tech_xp', {})}
+            colony.crafted = set(getattr(pa, 'crafted', set())) | set(
+                getattr(pb, 'crafted', set()))
         elif survivors:
             colony.house = self._house_name(parent)
             colony.generation = getattr(parent, 'generation', 1) + 1
@@ -4972,6 +5078,7 @@ class SandKingsSimulation:
             colony.revelation = colony.breached  # AW4: born knowing, if aware
             colony.techs = set(getattr(parent, 'techs', set()))  # TE5
             colony.tech_xp = dict(getattr(parent, 'tech_xp', {}))
+            colony.crafted = set(getattr(parent, 'crafted', set()))  # TE13
         colony.founded_step = self.step_count
         self.colonies[index] = colony
         self._kin_epoch = getattr(self, '_kin_epoch', 0) + 1  # kin map stale

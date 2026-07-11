@@ -103,6 +103,7 @@ def build_state(sim: SandKingsSimulation) -> Dict:
             # AW1: aware of the "great other" only post-breakout; before that a
             # nature mood, not a keeper sentiment
             "techs": sorted(getattr(colony, 'techs', set())),  # TE5
+            "crafted": sorted(getattr(colony, 'crafted', set())),  # TE13
             "tech_xp": {t: round(float(x), 2)  # TE9 proficiency
                         for t, x in getattr(colony, 'tech_xp', {}).items()},
             "aware": bool(getattr(colony, 'breached', False)),
@@ -333,6 +334,11 @@ def create_app(runner: TerrariumRunner):
         water: Optional[float] = None  # reservoir set point 0..1
         sun: Optional[float] = None    # daylight hours
 
+    class MaterialBody(BaseModel):
+        kind: str
+        x: Optional[int] = None
+        y: Optional[int] = None
+
     class SpeakBody(BaseModel):
         colony_id: int
 
@@ -439,6 +445,16 @@ def create_app(runner: TerrariumRunner):
         with runner.lock:
             _disarm_auto()
             runner.sim.keeper_temperature(body.dir)
+            return build_state(runner.sim)
+
+    @app.post("/api/keeper/material")
+    def material(body: MaterialBody):
+        with runner.lock:
+            _disarm_auto()
+            w, h = runner.sim.world.width, runner.sim.world.height
+            x = w // 2 if body.x is None else max(1, min(w - 2, body.x))
+            y = h // 2 if body.y is None else max(1, min(h - 2, body.y))
+            runner.sim.keeper_material(body.kind, x, y)
             return build_state(runner.sim)
 
     @app.post("/api/keeper/ignite")
@@ -628,6 +644,12 @@ button.act.breach{border-color:var(--breach);color:var(--breach)}
     <button class="act" onclick="release('small_spider')">Small Spider</button>
     <button class="act" onclick="release('fly')">Flies</button>
     <button class="act gold" onclick="post('/api/keeper/gift')">Tech Gift</button></div>
+  <div class="grp"><span class="lab">Materials</span>
+    <button class="act" onclick="mat('toothpick')">Toothpick</button>
+    <button class="act" onclick="mat('string')">String</button>
+    <button class="act" onclick="mat('lego_log')">Lego Log</button>
+    <button class="act" onclick="mat('copper_pipe')">Copper Pipe</button>
+    <button class="act" onclick="mat('tacks')">Tacks</button></div>
   <div class="grp"><span class="lab">Wrath</span>
     <button class="act wrath" onclick="post('/api/keeper/ignite')">Firecracker</button>
     <button class="act wrath" onclick="water(true)">Deluge</button>
@@ -665,6 +687,7 @@ function release(s){post('/api/keeper/release',{species:s});}
 function temp(d){post('/api/keeper/temp',{dir:d});}
 function water(big){post('/api/keeper/water',{big});}
 function seed(){post('/api/keeper/seed',{});}
+function mat(kind){post('/api/keeper/material',{kind});}
 function panel(which,delta){if(!state)return;
   const cur=which==='water'?state.water_target:state.sun_hours;
   post('/api/keeper/panel',{[which]:cur+delta});}
@@ -733,6 +756,7 @@ function render(){
         : `<span>feels <b>${col.nature_mood||'—'}</b> <i style="opacity:.6">(unexplained forces)</i></span>`)+`</div>`+
       (col.alive?`<div class="mood">${col.mood}</div>`:'');
     if(col.techs&&col.techs.length)inner+=`<div class="mood">tech: ${col.techs.map(t=>col.tech_xp&&col.tech_xp[t]!=null?`${t} ${Math.round(col.tech_xp[t]*100)}%`:t).join(', ')}</div>`;
+    if(col.crafted&&col.crafted.length)inner+=`<div class="mood">crafted: ${col.crafted.join(', ')}</div>`;
     if(col.breached&&col.utterance)inner+=`<div class="says">says: "${col.utterance}"</div>`;
     if(selected===col.id&&col.breached&&col.alive){
       inner+=`<div class="speak"><input id="say${col.id}" placeholder="say something to House ${col.house}..." onkeydown="if(event.key==='Enter')converse(${col.id},'say${col.id}')">`+

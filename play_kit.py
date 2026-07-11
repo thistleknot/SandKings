@@ -90,6 +90,9 @@ class Terrarium:
     def ignite(self, x=None, y=None) -> Dict:
         return self._post("/api/keeper/ignite", {"x": x, "y": y})
 
+    def material(self, kind: str, x=None, y=None) -> Dict:
+        return self._post("/api/keeper/material", {"kind": kind, "x": x, "y": y})
+
     def water(self, big: bool = False, x=None, y=None) -> Dict:
         return self._post("/api/keeper/water", {"x": x, "y": y, "big": big})
 
@@ -309,6 +312,8 @@ def dispatch(t: Terrarium, line: str) -> str:
         t.ignite()
     elif cmd == "flies":
         t.release("fly")
+    elif cmd in ("toothpick", "string", "lego_log", "copper_pipe", "tacks"):
+        t.material(cmd)
     elif cmd in ("rain", "water"):
         t.water(big=False)
     elif cmd == "deluge":
