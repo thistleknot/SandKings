@@ -5,6 +5,7 @@ gate at temp==0, sun_effective not drawn, multiple skies per day, determinism
 loss with positive variance, drift of the mean from the setpoint.
 """
 
+import math
 import os
 import random
 import sys
@@ -15,6 +16,7 @@ import numpy as np
 
 from sandkings import (
     BIOME_TICK, SUN_HOURS_DEFAULT, SUN_MAX, SUN_MIN, SUN_JITTER_SD,
+    SUN_OSC_AMP, SUN_OSC_PERIOD, SUN_EMA_ALPHA, EPS_POWER,
     SandKingsSimulation, jitter, soft_gate, power_ratio,
     CAPTURE_CHANCE, CAPTURE_CENTER, CAPTURE_TEMP, CAPTURE_HEALTH,
 )
@@ -484,6 +486,324 @@ def test_spa11_canon_under_softness():
         sandkings.CAPTURE_CHANCE = original_capture_chance
         sandkings.CAPTURE_TEMP = original_capture_temp
         sandkings.CAPTURE_CENTER = original_capture_center
+
+
+# SP10 Oscillator + EMA Observer Tests (SPA-12 through SPA-17)
+
+def test_spa12_identity_oscillator_zero():
+    """SPA-12: IDENTITY (gating; keeps the battery byte-identical).
+    With SUN_OSC_AMP == 0.0 and SUN_JITTER_SD == 0.0, over a run >= 3·BIOME_TICK
+    steps: sun_effective == sun_hours on every day (byte-identical to SP5).
+    Under a random.gauss counting spy, the SP10 draw+EMA block adds zero gauss draws.
+    sun_ema_mean converges to sun_hours."""
+    import sandkings
+    original_osc_amp = sandkings.SUN_OSC_AMP
+    original_jitter_sd = sandkings.SUN_JITTER_SD
+
+    sandkings.SUN_OSC_AMP = 0.0
+    sandkings.SUN_JITTER_SD = 0.0
+
+    try:
+        # Spy on gauss draws
+        gauss_count = {'count': 0}
+        original_gauss = random.gauss
+
+        def counting_gauss(mu, sigma):
+            gauss_count['count'] += 1
+            return original_gauss(mu, sigma)
+
+        random.gauss = counting_gauss
+        try:
+            sim = make_sim()
+            # Run for at least 3*BIOME_TICK steps, stepping through boundaries
+            for step in range(1, 3 * BIOME_TICK + 10):
+                sim.step_count = step
+                sim._biome_tick()
+                assert sim.sun_effective == sim.sun_hours, \
+                    f"step {step}: sun_effective {sim.sun_effective} != sun_hours {sim.sun_hours}"
+
+            # Assert zero gauss draws
+            assert gauss_count['count'] == 0, \
+                f"SPA-12: expected 0 gauss draws, got {gauss_count['count']}"
+
+            # Assert sun_ema_mean converges to sun_hours
+            assert abs(sim.sun_ema_mean - sim.sun_hours) < 1e-9, \
+                f"SPA-12: sun_ema_mean {sim.sun_ema_mean} not converged to sun_hours {sim.sun_hours}"
+        finally:
+            random.gauss = original_gauss
+    finally:
+        sandkings.SUN_OSC_AMP = original_osc_amp
+        sandkings.SUN_JITTER_SD = original_jitter_sd
+
+
+def test_spa13_oscillator_mean_only():
+    """SPA-13: OSCILLATOR (mean-only).
+    With SUN_OSC_AMP = 3.0, SUN_JITTER_SD = 0.0, SUN_OSC_PERIOD = 5 * BIOME_TICK,
+    sun_hours = 12: sample one sun_effective per biome-day over >= one full period.
+    Assert for every sample abs(sun_effective - (12 + 3.0*math.sin(...))) < 1e-9.
+    Assert peak-to-peak span ~= 2*3.0 == 6.0 (tolerance ±0.2)."""
+    import sandkings
+    original_osc_amp = sandkings.SUN_OSC_AMP
+    original_osc_period = sandkings.SUN_OSC_PERIOD
+    original_jitter_sd = sandkings.SUN_JITTER_SD
+
+    sandkings.SUN_OSC_AMP = 3.0
+    sandkings.SUN_OSC_PERIOD = 5 * BIOME_TICK
+    sandkings.SUN_JITTER_SD = 0.0
+
+    try:
+        sim = make_sim()
+        sim.sun_hours = 12.0
+
+        samples = []
+        # Sample over at least one full period: SUN_OSC_PERIOD days
+        for day in range(sandkings.SUN_OSC_PERIOD + 1):
+            sim.step_count = day * BIOME_TICK if day > 0 else 1
+            sim._biome_tick()
+            # Expected value for this day
+            expected = 12.0 + 3.0 * math.sin(2.0 * math.pi * day / sandkings.SUN_OSC_PERIOD)
+            actual = sim.sun_effective
+            assert abs(actual - expected) < 1e-9, \
+                f"SPA-13: day {day} expected {expected}, got {actual}"
+            samples.append(actual)
+
+        # Assert peak-to-peak is approximately 6.0 (±0.2)
+        peak_to_peak = max(samples) - min(samples)
+        assert abs(peak_to_peak - 6.0) <= 0.2, \
+            f"SPA-13: peak-to-peak {peak_to_peak} not within 6.0±0.2"
+    finally:
+        sandkings.SUN_OSC_AMP = original_osc_amp
+        sandkings.SUN_OSC_PERIOD = original_osc_period
+        sandkings.SUN_JITTER_SD = original_jitter_sd
+
+
+def test_spa14_ema_tracks_keeper_step():
+    """SPA-14: EMA tracks a keeper step.
+    SUN_OSC_AMP = 0.0. Start sun_hours = 12, SUN_JITTER_SD = 0.0; step to steady
+    state so sun_ema_mean ~= 12. Then keeper_set_sun(18) and sample sun_ema_mean
+    once per day. Assert monotonically increasing, each > 12 and <= 18, converges
+    toward 18. Separately: run to steady state with SUN_JITTER_SD = 0.0 (sun_ema_sd ~= 0)
+    versus SUN_JITTER_SD = 2.0 (sun_ema_sd > 0) and assert positive-SD is strictly greater."""
+    import sandkings
+    original_osc_amp = sandkings.SUN_OSC_AMP
+    original_jitter_sd = sandkings.SUN_JITTER_SD
+
+    # Test 1: EMA tracks a keeper step (monotonic, no overshoot, convergence)
+    sandkings.SUN_OSC_AMP = 0.0
+    sandkings.SUN_JITTER_SD = 0.0
+
+    try:
+        sim = make_sim()
+        sim.sun_hours = 12.0
+
+        # Step to steady state
+        for _ in range(10 * BIOME_TICK):
+            sim.step_count += 1
+            sim._biome_tick()
+
+        # At steady state, should be at 12
+        assert abs(sim.sun_ema_mean - 12.0) < 0.1, \
+            f"SPA-14: not at steady state, sun_ema_mean = {sim.sun_ema_mean}"
+
+        # Now step sun to 18
+        sim.keeper_set_sun(18.0)
+        ema_sequence = []
+
+        # Step and collect sun_ema_mean after each day boundary
+        for _ in range(20 * BIOME_TICK):
+            sim.step_count += 1
+            if sim.step_count % BIOME_TICK == 0:
+                sim._biome_tick()
+                ema_sequence.append(sim.sun_ema_mean)
+            else:
+                sim._biome_tick()
+
+        # Assert monotonically increasing
+        for i in range(1, len(ema_sequence)):
+            assert ema_sequence[i] >= ema_sequence[i - 1], \
+                f"SPA-14: EMA not monotone at index {i}: {ema_sequence[i - 1]} > {ema_sequence[i]}"
+
+        # Assert all in (12, 18]
+        for val in ema_sequence:
+            assert 12.0 < val <= 18.0, \
+                f"SPA-14: EMA value {val} outside (12, 18]"
+
+        # Assert converges toward 18
+        assert abs(ema_sequence[-1] - 18.0) < 0.5, \
+            f"SPA-14: final EMA {ema_sequence[-1]} not close to 18"
+
+        # Test 2: Compare sd with and without jitter
+        sandkings.SUN_JITTER_SD = 0.0
+        sim2a = make_sim()
+        sim2a.sun_hours = 12.0
+        for _ in range(20 * BIOME_TICK):
+            sim2a.step_count += 1
+            sim2a._biome_tick()
+        sd_no_jitter = sim2a.sun_ema_sd
+
+        sandkings.SUN_JITTER_SD = 2.0
+        sim2b = make_sim()
+        sim2b.sun_hours = 12.0
+        for _ in range(20 * BIOME_TICK):
+            sim2b.step_count += 1
+            sim2b._biome_tick()
+        sd_with_jitter = sim2b.sun_ema_sd
+
+        assert sd_with_jitter > sd_no_jitter, \
+            f"SPA-14: sd_with_jitter {sd_with_jitter} not > sd_no_jitter {sd_no_jitter}"
+    finally:
+        sandkings.SUN_OSC_AMP = original_osc_amp
+        sandkings.SUN_JITTER_SD = original_jitter_sd
+
+
+def test_spa15_z_normalization():
+    """SPA-15: z / normalization.
+    SUN_OSC_AMP = 0.0, SUN_JITTER_SD = 2.0, sun_hours = 12. Step many days;
+    collect sim._sun_z(). Assert every value is finite, long-run mean ~= 0
+    (tolerance ±0.3 over >= 200 days). Also assert _sun_z() is computable
+    at init and equals 0.0 (sun_effective == sun_ema_mean)."""
+    import sandkings
+    original_osc_amp = sandkings.SUN_OSC_AMP
+    original_jitter_sd = sandkings.SUN_JITTER_SD
+
+    sandkings.SUN_OSC_AMP = 0.0
+    sandkings.SUN_JITTER_SD = 2.0
+
+    try:
+        sim = make_sim()
+        sim.sun_hours = 12.0
+
+        # Assert _sun_z() at init is 0.0 (sun_effective == sun_ema_mean)
+        z_init = sim._sun_z()
+        assert z_init == 0.0, \
+            f"SPA-15: _sun_z() at init must be 0.0, got {z_init}"
+
+        # Step many days and collect z
+        z_samples = []
+        for _ in range(200 * BIOME_TICK + 10):
+            sim.step_count += 1
+            sim._biome_tick()
+            z_samples.append(sim._sun_z())
+
+        # Assert all finite
+        for z in z_samples:
+            assert math.isfinite(z), \
+                f"SPA-15: _sun_z() returned non-finite value {z}"
+
+        # Assert long-run mean ~= 0 (±0.3)
+        z_mean = np.mean(z_samples)
+        assert abs(z_mean) <= 0.3, \
+            f"SPA-15: long-run z mean {z_mean} not within ±0.3"
+    finally:
+        sandkings.SUN_OSC_AMP = original_osc_amp
+        sandkings.SUN_JITTER_SD = original_jitter_sd
+
+
+def test_spa16_acyclic_daylight_independent_water():
+    """SPA-16: ACYCLIC (daylight ⊥ water).
+    SUN_OSC_AMP = 3.0, SUN_JITTER_SD = 0.0 (so sun_effective is a PURE function
+    of step_count and sun_hours — NO RNG is consumed). Build two sims with SAME seed
+    but very different starting water: sim_a.water_level = 0.05 and
+    sim_b.water_level = 0.95. Step both the same number of days, collecting
+    sun_effective sequence. Assert the two sequences are BYTE-IDENTICAL."""
+    import sandkings
+    original_osc_amp = sandkings.SUN_OSC_AMP
+    original_jitter_sd = sandkings.SUN_JITTER_SD
+
+    sandkings.SUN_OSC_AMP = 3.0
+    sandkings.SUN_JITTER_SD = 0.0
+
+    try:
+        seed = 77
+
+        # Sim A: water_level = 0.05
+        random.seed(seed)
+        np.random.seed(seed)
+        sim_a = SandKingsSimulation(width=48, height=36, depth=12, num_colonies=3)
+        sim_a.water_level = 0.05
+        sim_a.water_target = 0.05
+
+        seq_a = []
+        for _ in range(100 * BIOME_TICK + 10):
+            sim_a.step_count += 1
+            if sim_a.step_count == 1 or sim_a.step_count % BIOME_TICK == 0:
+                sim_a._biome_tick()
+                seq_a.append(sim_a.sun_effective)
+
+        # Sim B: water_level = 0.95
+        random.seed(seed)
+        np.random.seed(seed)
+        sim_b = SandKingsSimulation(width=48, height=36, depth=12, num_colonies=3)
+        sim_b.water_level = 0.95
+        sim_b.water_target = 0.95
+
+        seq_b = []
+        for _ in range(100 * BIOME_TICK + 10):
+            sim_b.step_count += 1
+            if sim_b.step_count == 1 or sim_b.step_count % BIOME_TICK == 0:
+                sim_b._biome_tick()
+                seq_b.append(sim_b.sun_effective)
+
+        # Assert sequences are byte-identical
+        assert len(seq_a) == len(seq_b), \
+            f"SPA-16: sequence lengths differ: {len(seq_a)} vs {len(seq_b)}"
+        for i, (a, b) in enumerate(zip(seq_a, seq_b)):
+            assert a == b, \
+                f"SPA-16: sequence mismatch at index {i}: {a} != {b}"
+    finally:
+        sandkings.SUN_OSC_AMP = original_osc_amp
+        sandkings.SUN_JITTER_SD = original_jitter_sd
+
+
+def test_spa17_canon_under_dynamism():
+    """SPA-17: CANON under dynamism.
+    SUN_OSC_AMP = 3.0, SUN_JITTER_SD = 1.0, SUN_OSC_PERIOD default.
+    Two runs, each preceded by SAME random.seed(s); np.random.seed(s),
+    sample one sun_effective per biome-day over >= 10·BIOME_TICK steps.
+    Assert the two sequences are IDENTICAL."""
+    import sandkings
+    original_osc_amp = sandkings.SUN_OSC_AMP
+    original_jitter_sd = sandkings.SUN_JITTER_SD
+
+    sandkings.SUN_OSC_AMP = 3.0
+    sandkings.SUN_JITTER_SD = 1.0
+
+    try:
+        seed = 88
+
+        # First run
+        random.seed(seed)
+        np.random.seed(seed)
+        sim1 = SandKingsSimulation(width=48, height=36, depth=12, num_colonies=3)
+
+        seq1 = []
+        for _ in range(10 * BIOME_TICK + 10):
+            sim1.step_count += 1
+            if sim1.step_count == 1 or sim1.step_count % BIOME_TICK == 0:
+                sim1._biome_tick()
+                seq1.append(sim1.sun_effective)
+
+        # Second run with same seed
+        random.seed(seed)
+        np.random.seed(seed)
+        sim2 = SandKingsSimulation(width=48, height=36, depth=12, num_colonies=3)
+
+        seq2 = []
+        for _ in range(10 * BIOME_TICK + 10):
+            sim2.step_count += 1
+            if sim2.step_count == 1 or sim2.step_count % BIOME_TICK == 0:
+                sim2._biome_tick()
+                seq2.append(sim2.sun_effective)
+
+        # Sequences should be identical
+        assert len(seq1) == len(seq2), \
+            f"SPA-17: sequence lengths differ: {len(seq1)} vs {len(seq2)}"
+        for i, (v1, v2) in enumerate(zip(seq1, seq2)):
+            assert v1 == v2, \
+                f"SPA-17: sequence mismatch at index {i}: {v1} != {v2}"
+    finally:
+        sandkings.SUN_OSC_AMP = original_osc_amp
+        sandkings.SUN_JITTER_SD = original_jitter_sd
 
 
 if __name__ == "__main__":

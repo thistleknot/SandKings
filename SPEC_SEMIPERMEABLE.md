@@ -1,4 +1,4 @@
-# SPEC: Semi-Permeable Parameters — learnable soft params + the daylight tracer (SP1–SP9)
+# SPEC: Semi-Permeable Parameters — learnable soft params + the daylight tracer (SP1–SP10)
 
 A reusable **semi-permeable parameter** primitive plus ONE tracer application
 (daylight). The terrarium today is mostly frozen constants and hard `if metric >
@@ -18,15 +18,26 @@ soft params can later be **evolved / fit** exactly like `ColonyGenome.brain_hidd
 >   count helper method (`_dominance_counts`), a mode-switch in `_try_capture`,
 >   and two constants (`CAPTURE_CENTER`, `CAPTURE_TEMP`, both default identity) —
 >   migrating the frozen capture coin-flip to the `soft_gate` membrane.
+> - **ADDS (SP10)** an OSCILLATOR-driven, self-normalizing daylight signal that
+>   GROWS the SP5 flat per-day Gaussian draw: the per-day mean swings around the
+>   keeper setpoint (`SUN_OSC_AMP`, `SUN_OSC_PERIOD`), and a pure EMA observer
+>   (`sun_ema_mean`, `sun_ema_sd`, smoothed by `SUN_EMA_ALPHA`) tracks a rolling
+>   mean/sigma for a NEW normalized read `z`. Two new observer fields, three new
+>   constants, one pure read helper. `SUN_OSC_AMP == 0.0` (default) is identity —
+>   the oscillator term is `0.0` and the EMA consumes ZERO RNG, so the battery
+>   stays byte-identical. The one-way `sun → water` (`SUN_DRYING`) edge is
+>   preserved and NO `water → sun` edge is added (the graph stays ACYCLIC).
 > - **REUSES** the existing seeded module RNG streams (`random` + `np.random`,
 >   seeded by tests / `play_kit` at construction), the `_clamp01` module-helper
 >   convention (`sandkings.py:526`), and the whole `BIOME_TICK` weather cadence
->   (`:222`) as the day boundary — no new cadence constant.
+>   (`:222`) as the day boundary — no new cadence constant. SP10 additionally
+>   REUSES the existing `EPS_POWER = 1e-9` divisor guard (`:365`) — no new EPS.
 > - **CHANGES nothing at neutral.** `SUN_JITTER_SD == 0.0` and `temp <= 0` make
 >   every effect the identity transform; the primitive consumes **zero RNG** at
 >   neutral, so the shared draw stream is byte-identical and `--canon` reruns
 >   match today exactly. SP9 keeps this: `CAPTURE_TEMP == 0.0` is the byte-for-byte
->   flat-gate identity path.
+>   flat-gate identity path. SP10 keeps this: `SUN_OSC_AMP == 0.0` makes the swing
+>   term `0.0` and the EMA is pure arithmetic (no RNG), so the stream is unmoved.
 
 Layer: **Requirements + Structural + Behavioral.** Observable soft-param
 behaviour (requirements), two pure primitives + holders + contracts
@@ -742,6 +753,286 @@ def _capture_probe(enforcers, defenders, capture_chance, capture_temp,
 
 ---
 
+## SP10 — Behavioral: the oscillator-driven, self-normalizing daylight signal
+
+Grows the SP5 daylight tracer from a **flat per-day Gaussian draw** into an
+**oscillator-driven, self-normalizing signal**. Two independent drivers — daylight
+(this block) and water (the existing `_biome_tick` equilibrium) — **combine at the
+existing weather rolls**; the dependency graph stays **ACYCLIC** (the one-way
+`sun → water` `SUN_DRYING` edge is preserved; NO `water → sun` edge is added).
+
+SP10 has three parts, all gated to identity at the neutral defaults:
+
+- **(A) OSCILLATOR (mean-only swing).** The per-day daylight *mean* swings around
+  the keeper setpoint `sun_hours` by a sinusoid in the biome-day index. `sigma`
+  (`SUN_JITTER_SD`) is **not** modulated.
+- **(B) EMA OBSERVER (rolling mean + rolling sigma).** After each per-day draw, two
+  new per-sim fields track an exponential-moving mean and mean-absolute-deviation
+  (≈ rolling sigma). **Observer-only:** nothing that affects existing behaviour
+  reads them. Pure arithmetic — **zero RNG**.
+- **(C) NORMALIZED READ (`z`).** A pure read helper exposes the standardized signal
+  `z = (sun_effective − sun_ema_mean) / max(EPS_POWER, sun_ema_sd)` for future
+  regime logic and display. **Nothing existing consumes it this pass.**
+
+This is the signal-modulation non-stationary-normalization pattern: an oscillating
+non-stationary source, standardized on-line by its own rolling statistics.
+
+### SP10.1 — Requirements (observable behaviour + acceptance)
+
+| # | Requirement | Acceptance criterion (mechanically checkable) |
+|---|---|---|
+| SP10.1a | **Identity at neutral** | `SUN_OSC_AMP == 0.0` (DEFAULT) ⇒ the swing term is exactly `0.0`, `mean(day) == sun_hours`, and `sun_effective` is byte-identical to SP5 for every day. The EMA update is pure arithmetic (consumes ZERO RNG) regardless of `SUN_EMA_ALPHA`, so the shared RNG stream is unperturbed and the whole battery + `--canon` stay byte-identical (SPA-12). |
+| SP10.1b | **Oscillator (mean-only)** | With `SUN_OSC_AMP > 0` and `SUN_JITTER_SD == 0`, `sun_effective(day) == sun_hours + SUN_OSC_AMP * sin(2π · day / SUN_OSC_PERIOD)` within float tolerance; peak-to-peak span ≈ `2·SUN_OSC_AMP`; `sigma` is not modulated (SPA-13). |
+| SP10.1c | **EMA observer tracks the signal** | After a keeper setpoint step, `sun_ema_mean` moves monotonically toward the new setpoint (approaches, does not overshoot) with the EMA time-constant; `sun_ema_sd` is larger under `SUN_JITTER_SD > 0` than under `== 0` (SPA-14). |
+| SP10.1d | **Normalized read** | `z = (sun_effective − sun_ema_mean) / max(EPS_POWER, sun_ema_sd)` is computable and finite for all states; with `SUN_JITTER_SD > 0` its long-run mean ≈ `0` (SPA-15). |
+| SP10.1e | **ACYCLIC (daylight ⊥ water)** | `mean(day)` and `sun_effective` are computed from `sun_hours` and `step_count` ONLY — never from `water_level`, `water_target`, or any weather state. Two runs identical except for a very different starting `water_level` produce the IDENTICAL `sun_effective` sequence (SPA-16). |
+| SP10.1f | **Canon under dynamism** | With `SUN_OSC_AMP > 0` AND `SUN_JITTER_SD > 0`, two same-seed runs produce identical `sun_effective` sequences (SPA-17). |
+| SP10.1g | **Security** | Pure numeric, in-process. The oscillator uses `math.sin`/`math.pi` (already imported); the EMA and `z` helper are arithmetic reads. No RNG beyond the existing SP5 `jitter` draw, no I/O, no mutation of anything but the two new observer fields. |
+
+### SP10.2 — Structural: new state (two observer fields)
+
+Initialise **beside `sun_effective`** at `sandkings.py:1528` (right after
+`self.sun_effective = SUN_HOURS_DEFAULT`):
+
+```python
+        self.sun_ema_mean = SUN_HOURS_DEFAULT    # SP10: rolling-mean daylight observer (observer-only)
+        self.sun_ema_sd = 0.0                    # SP10: rolling abs-deviation ~ rolling sigma (observer-only)
+```
+
+- Both getattr-guarded on read (`getattr(self, 'sun_ema_mean', SUN_HOURS_DEFAULT)`,
+  `getattr(self, 'sun_ema_sd', 0.0)`) so a pre-SP10 pickle / the evolution engine
+  reads a neutral value.
+- **Observer-only invariant:** these two fields are WRITTEN by the SP10.4 update
+  and READ only by the SP10.3 `z` helper (a new read consumed by nobody existing).
+  No existing behaviour (`_biome_growth_units`, the water equilibrium, the weather
+  rolls) may read them — that would create a new coupling.
+
+### SP10.3 — Structural: the normalized-signal read helper (`_sun_z`)
+
+A pure read method on `SandKingsSimulation` (placement: beside the other sun
+readers, e.g. directly after `_biome_growth_units` at `:2745`, or after
+`keeper_set_sun` — any pure-read home). REUSES the existing `EPS_POWER = 1e-9`
+divisor guard (`sandkings.py:365`); **no new EPS constant is added.**
+
+```python
+    def _sun_z(self) -> float:
+        """SP10: normalized daylight signal (standardized on-line by the EMA observer).
+
+        z = (sun_effective - sun_ema_mean) / max(EPS_POWER, sun_ema_sd)
+
+        A NEW read exposed for future regime logic and display; NOTHING existing
+        consumes it this pass. Pure: no RNG, no I/O, no mutation. All fields are
+        getattr-guarded so a pre-SP10 sim reads neutral (z == 0.0 at init, since
+        sun_effective == sun_ema_mean == SUN_HOURS_DEFAULT and the guard floors
+        the divisor at EPS_POWER).
+        """
+        se = getattr(self, 'sun_effective', getattr(self, 'sun_hours', SUN_HOURS_DEFAULT))
+        m = getattr(self, 'sun_ema_mean', SUN_HOURS_DEFAULT)
+        s = getattr(self, 'sun_ema_sd', 0.0)
+        return (se - m) / max(EPS_POWER, s)
+```
+
+**Contract (`_sun_z`):**
+- **Require** — none beyond a constructed sim (all reads getattr-guarded).
+- **Guarantee** — returns a finite float for every state (the `max(EPS_POWER, s)`
+  guard prevents division by zero); consumes NO RNG; mutates nothing.
+- **Maintain** — the observer-only invariant: `_sun_z` is a read; it does not write
+  `sun_ema_mean`/`sun_ema_sd`.
+- **Assert** — at init (`sun_effective == sun_ema_mean`), `_sun_z() == 0.0`.
+
+### SP10.4 — Behavioral: the oscillator draw + EMA update in `_biome_tick`
+
+Modify the SP5.2 once-per-day draw block at the top of `_biome_tick`
+(`sandkings.py:2762–2765`). The day-boundary predicate is UNCHANGED
+(`self.step_count == 1 or self.step_count % BIOME_TICK == 0`). The rest of
+`_biome_tick` (target/equilibrium/water/weather rolls at `:2766+`) is UNCHANGED.
+
+**Before (SP5.2, current `:2762–2765`):**
+
+```python
+        if self.step_count == 1 or self.step_count % BIOME_TICK == 0:
+            self.sun_effective = jitter(
+                mean=getattr(self, 'sun_hours', SUN_HOURS_DEFAULT),
+                sd=SUN_JITTER_SD, lo=SUN_MIN, hi=SUN_MAX)
+```
+
+**After (SP10.4):**
+
+```python
+        if self.step_count == 1 or self.step_count % BIOME_TICK == 0:
+            # SP10: biome-day index — REUSES the SP5 BIOME_TICK cadence, NO new
+            # time source. day advances by 1 each biome-day (step 1 -> 0, step
+            # BIOME_TICK -> 1, 2*BIOME_TICK -> 2, ...).
+            day = self.step_count // BIOME_TICK
+            # SP10 OSCILLATOR (mean-only swing). At SUN_OSC_AMP == 0.0 the swing
+            # term is exactly 0.0 (0.0 * finite sin == 0.0) so mean_day == sun_hours
+            # EXACTLY -> byte-identical to SP5. sigma is NOT modulated.
+            mean_day = (getattr(self, 'sun_hours', SUN_HOURS_DEFAULT)
+                        + SUN_OSC_AMP * math.sin(2.0 * math.pi * day / SUN_OSC_PERIOD))
+            self.sun_effective = jitter(
+                mean=mean_day,
+                sd=SUN_JITTER_SD, lo=SUN_MIN, hi=SUN_MAX)   # jitter sd<=0 draws NO rng
+            # SP10 EMA OBSERVER (observer-only, ZERO RNG, pure arithmetic). Mean
+            # first, then sd referencing the JUST-updated mean (EMA of |deviation|
+            # ~ rolling sigma). Read by nobody existing.
+            self.sun_ema_mean = (SUN_EMA_ALPHA * self.sun_effective
+                                 + (1.0 - SUN_EMA_ALPHA)
+                                 * getattr(self, 'sun_ema_mean', SUN_HOURS_DEFAULT))
+            self.sun_ema_sd = (SUN_EMA_ALPHA * abs(self.sun_effective - self.sun_ema_mean)
+                               + (1.0 - SUN_EMA_ALPHA)
+                               * getattr(self, 'sun_ema_sd', 0.0))
+```
+
+**Byte-identity at `SUN_OSC_AMP == 0.0` (load-bearing — read carefully):**
+- `math.sin(2.0 * math.pi * day / SUN_OSC_PERIOD)` returns a finite value in
+  `[-1, 1]` for every finite `day` (never `nan`/`inf`, since the argument is finite
+  and `SUN_OSC_PERIOD > 0`). Therefore `SUN_OSC_AMP * sin(...)` at `AMP == 0.0` is
+  `0.0 * finite == 0.0` **exactly**.
+- `mean_day = sun_hours + 0.0`. For every finite `sun_hours` (int `12` or the float
+  `keeper_set_sun` writes via `np.clip`), `x + 0.0 == x` numerically, and
+  `jitter(mean=x, sd<=0)` returns `float(x)` — identical to SP5's `float(sun_hours)`
+  (`float(12) == float(12.0) == 12.0`). So `sun_effective` is byte-identical.
+- **Do NOT reorder** the expression to `SUN_OSC_AMP * sin(...) + sun_hours` or
+  factor it; keep `sun_hours + SUN_OSC_AMP * math.sin(...)` so the `+ 0.0` is the
+  final operation and exactness holds.
+- The EMA update calls no RNG (no `gauss`, no `random`), so it cannot move the
+  shared stream — `--canon` and the battery stay byte-identical at `AMP == 0.0`
+  regardless of `SUN_EMA_ALPHA` and `SUN_OSC_PERIOD`.
+- With `SUN_JITTER_SD == 0.0` AND `SUN_OSC_AMP == 0.0` the whole block is a no-op
+  versus SP5 today: `jitter` short-circuits (no draw) and the EMA is inert
+  arithmetic on constants.
+
+**Contract (SP10 daylight signal):**
+- **Require** — `_biome_tick` called once per `step()` (already true); `math`
+  imported (already true); `SUN_OSC_PERIOD > 0`.
+- **Guarantee** — at `SUN_OSC_AMP == 0.0`: `sun_effective` byte-identical to SP5
+  and zero extra RNG. At `SUN_OSC_AMP > 0`, `SUN_JITTER_SD == 0`:
+  `sun_effective(day) == sun_hours + SUN_OSC_AMP·sin(2π·day/SUN_OSC_PERIOD)`
+  exactly (jitter `sd<=0` returns `float(mean_day)` unclipped). The EMA fields are
+  updated once per biome-day by pure arithmetic and are read only by `_sun_z`.
+- **Maintain (ACYCLIC)** — `mean_day`, `sun_effective`, `sun_ema_mean`,
+  `sun_ema_sd`, and `z` are functions of `sun_hours` and `step_count` ONLY. They
+  NEVER read `water_level`, `water_target`, `drought`, or any weather/flood/heat
+  state. The existing one-way `sun → water` edge (`SUN_DRYING` in the equilibrium)
+  is preserved; NO `water → sun` edge is introduced. Daylight is provably
+  independent of water (SPA-16).
+- **Assert** — `SUN_OSC_AMP == 0.0 ⇒ mean_day == sun_hours` (float-equal) and
+  `sun_effective == sun_hours` at `SUN_JITTER_SD == 0`; `_sun_z()` finite always.
+
+### SP10.5 — Constants
+
+Place in the biome constants block beside `SUN_JITTER_SD` (`sandkings.py:224`,
+after it, within the `BIOME_TICK` group; `BIOME_TICK` is defined just above at
+`:223`, so `5 * BIOME_TICK` resolves):
+
+```python
+SUN_OSC_AMP = 0.0                 # SP10: daylight oscillator amplitude in hours (0 = identity; learnable)
+SUN_OSC_PERIOD = 5 * BIOME_TICK   # SP10: period of the daylight swing (steps; season-length pacing)
+SUN_EMA_ALPHA = 0.25              # SP10: smoothing for the rolling mean/sdev daylight observer
+```
+
+| Constant | Value | Provenance | Meaning |
+|---|---|---|---|
+| `SUN_OSC_AMP` | `0.0` | `[prov:B fit=weather-variance]` | amplitude of the per-day daylight mean-swing, in daylight-hours; **defaults `0.0` = identity** (swing term is exactly `0.0`); learnable — evolution/fitting dials it up so the sky oscillates seasonally. |
+| `SUN_OSC_PERIOD` | `5 * BIOME_TICK` (`100`) | `[prov:C feel=season-length]` | period of the daylight swing; a design pacing choice (a "season"), honest feel-tag — **no literature claim**. |
+| `SUN_EMA_ALPHA` | `0.25` | `[prov:A lit=EMA / exponential moving average; Bollinger-band z-score normalization]` | smoothing factor for the rolling mean/sdev observer; the on-line standardization is the standard EMA + Bollinger-style z-score pattern. |
+| `EPS` divisor guard | `EPS_POWER` (`1e-9`) | `[prov:— reuse]` | REUSES the existing `EPS_POWER = 1e-9` at `:365` for the `z` divide-guard; **no new EPS constant added.** |
+
+**Load-bearing identity constant:** `SUN_OSC_AMP == 0.0` is the single value that
+keeps the battery byte-identical (the swing term collapses to `0.0` and the EMA
+consumes zero RNG). Any positive `SUN_OSC_AMP` is an intentional dynamism change
+(and, combined with `SUN_JITTER_SD > 0`, shifts the shared RNG trajectory once a
+`jitter` draw is consumed), so enabling it requires re-running the invariant
+suites. Do NOT fabricate citations for `SUN_OSC_AMP` / `SUN_OSC_PERIOD` — `0.0` is
+chosen for identity and `5 * BIOME_TICK` is a feel-tagged pacing choice.
+
+> **Units note (for the tuner, non-blocking).** `day = step_count // BIOME_TICK` is
+> in **biome-days**, while `SUN_OSC_PERIOD = 5 * BIOME_TICK` is a **step count**;
+> the ratio `day / SUN_OSC_PERIOD` therefore gives a swing whose period is
+> `SUN_OSC_PERIOD` **biome-days**. The implementation and every acceptance clause
+> (SPA-13) use the SAME expression `sin(2π · day / SUN_OSC_PERIOD)`, so they agree
+> and the tests pass by construction; this note only flags that the effective
+> period is measured in days, not steps, for whoever later tunes the pacing. At the
+> `SUN_OSC_AMP == 0.0` default this is irrelevant (the term is `0.0`).
+
+**The evolve/fit seam (SP10.6, documented not implemented).** `SUN_OSC_AMP` is the
+natural learnable of a `DistParam`-adjacent oscillator holder (amplitude of a
+mean-swing), and `SUN_EMA_ALPHA` a fixed observer hyperparameter. A future pass can
+fold `(sun_hours, SUN_OSC_AMP, SUN_OSC_PERIOD)` into a per-sim oscillator param and
+let evolution fit the amplitude against a weather-variance / liveness objective —
+the same SP3 seam pattern. NOT implemented in this pass (module constants only).
+
+### SP10.7 — Acceptance (`tests/test_semipermeable.py`, EXTEND)
+
+Add `SUN_OSC_AMP`, `SUN_OSC_PERIOD`, `SUN_EMA_ALPHA`, `EPS_POWER` to the
+`from sandkings import (...)` line. Construct/seed sims exactly like the SP5 tests
+in this file: `random.seed(s); np.random.seed(s)` then
+`sim = SandKingsSimulation(width=48, height=36, depth=12, num_colonies=3)`.
+Monkeypatch module globals (`sandkings.SUN_OSC_AMP = ...`, etc.) and **restore the
+originals in a `finally`**. Drive day boundaries the way `test_distribution_shape`
+does (increment `sim.step_count` and call `sim._biome_tick()`), or set
+`sim.step_count` directly to boundary values (`1`, `BIOME_TICK`, `2*BIOME_TICK`, …)
+and call `_biome_tick()` to sample one day at a time.
+
+12. **SPA-12 — IDENTITY (gating; keeps the battery byte-identical).** With
+    `SUN_OSC_AMP == 0.0` and `SUN_JITTER_SD == 0.0`, over a run ≥ `3·BIOME_TICK`
+    steps: `sun_effective == sun_hours` on every day (byte-identical to SP5).
+    Under a `random.gauss` counting spy, the SP10 draw+EMA block adds **zero**
+    `gauss` draws (the EMA is pure arithmetic; `jitter` at `sd==0` short-circuits).
+    And `sun_ema_mean` converges to `sun_hours` (with `sun_hours == SUN_HOURS_DEFAULT`
+    it stays exactly `SUN_HOURS_DEFAULT` — EMA of a constant seeded at that constant).
+    Rote: seed, set `sandkings.SUN_OSC_AMP = 0.0`, `sandkings.SUN_JITTER_SD = 0.0`;
+    wrap `random.gauss` with a counter; step the boundaries; assert
+    `sim.sun_effective == sim.sun_hours` each day, `gauss_count == 0`, and
+    `abs(sim.sun_ema_mean - sim.sun_hours) < 1e-9`; restore in `finally`.
+13. **SPA-13 — OSCILLATOR (mean-only).** With `SUN_OSC_AMP = 3.0`,
+    `SUN_JITTER_SD = 0.0`, `SUN_OSC_PERIOD = 5 * BIOME_TICK` (default),
+    `sun_hours = 12`: sample one `sun_effective` per biome-day for `day` values
+    covering ≥ one full period (e.g. set `sim.step_count` to `1` then
+    `k*BIOME_TICK` for `k = 1 .. SUN_OSC_PERIOD`, call `_biome_tick()`, record
+    `(day, sim.sun_effective)` with `day = sim.step_count // BIOME_TICK`). Assert
+    for every sample `abs(sun_effective - (12 + 3.0*math.sin(2*math.pi*day/SUN_OSC_PERIOD))) < 1e-9`
+    (direct index check — the primary, no-run-length-dependent assertion). Assert
+    the peak-to-peak span `max(samples) - min(samples)` is `≈ 2*3.0 == 6.0`
+    (tolerance `±0.2`), confirming the swing amplitude, and that the sample nearest
+    `day == SUN_OSC_PERIOD/4` is near the crest `12 + 3.0`.
+14. **SPA-14 — EMA tracks a keeper step.** `SUN_OSC_AMP = 0.0`. Start
+    `sun_hours = 12`, `SUN_JITTER_SD = 0.0`; step to steady state (many days) so
+    `sun_ema_mean ≈ 12`. Then `sim.keeper_set_sun(18)` (or `sim.sun_hours = 18.0`)
+    and sample `sun_ema_mean` once per day for the following days. Assert the
+    sequence is **monotonically increasing**, each value `> 12` and `<= 18` (never
+    overshoots), and converges toward `18` (`abs(last - 18) < 0.5` after enough
+    days). Separately: run to steady state with `SUN_JITTER_SD = 0.0` (record
+    `sun_ema_sd ≈ 0`) versus `SUN_JITTER_SD = 2.0` (record `sun_ema_sd`) and assert
+    the positive-SD `sun_ema_sd` is strictly greater. Restore all globals in
+    `finally`.
+15. **SPA-15 — z / normalization.** `SUN_OSC_AMP = 0.0`, `SUN_JITTER_SD = 2.0`,
+    `sun_hours = 12`. Step many days; each day collect `sim._sun_z()`. Assert every
+    value is **finite** (`math.isfinite`), and the long-run **mean of z ≈ 0**
+    (tolerance `±0.3` over ≥ 200 days). Also assert `_sun_z()` is computable at init
+    without error and equals `0.0` there (`sun_effective == sun_ema_mean`).
+16. **SPA-16 — ACYCLIC (daylight ⊥ water).** `SUN_OSC_AMP = 3.0`,
+    `SUN_JITTER_SD = 0.0` (so `sun_effective` is a PURE function of `step_count`
+    and `sun_hours` — **no RNG is consumed by the daylight path**, sidestepping any
+    shared-stream coupling). Build two sims with the SAME seed but very different
+    starting water: `sim_a.water_level = 0.05; sim_a.water_target = 0.05` and
+    `sim_b.water_level = 0.95; sim_b.water_target = 0.95`. Step both the same number
+    of days, collecting the per-day `sun_effective` sequence from each. Assert the
+    two sequences are **byte-identical** — proving `sun_effective` does not depend on
+    `water_level`. (Rationale for `SUN_JITTER_SD = 0`: with a positive SD the two
+    runs' *water-driven* weather rolls would consume different counts of the shared
+    `random.random()` stream and desync the subsequent `jitter` draws — that is RNG
+    coupling, not a daylight→water read; setting `SD = 0` isolates the acyclic
+    computation-input claim the invariant actually makes.)
+17. **SPA-17 — CANON under dynamism.** `SUN_OSC_AMP = 3.0`, `SUN_JITTER_SD = 1.0`,
+    `SUN_OSC_PERIOD` default. Two runs, each preceded by the SAME
+    `random.seed(s); np.random.seed(s)`, sample one `sun_effective` per biome-day
+    over ≥ `10·BIOME_TICK` steps. Assert the two sequences are **identical** (the
+    oscillator is deterministic in `step_count`; the `jitter` draw rides the seeded
+    module stream). Restore globals in `finally`.
+
+---
+
 ## Status / Reconciliation
 
 - **Drafted 2026-07-11. Spec-first: implementation pending.** Introduces a
@@ -755,27 +1046,41 @@ def _capture_probe(enforcers, defenders, capture_chance, capture_temp,
   `_local_dominance`, truth table unchanged), the `_try_capture` mode switch, two
   constants (`CAPTURE_CENTER=0.5`, `CAPTURE_TEMP=0.0`), and acceptance clauses
   SPA-7…SPA-11 (extend `tests/test_semipermeable.py`).
+- **SP10 added 2026-07-11 (this revision).** Grows the SP5 daylight tracer into an
+  oscillator-driven, self-normalizing signal: a mean-only sinusoidal swing
+  (`SUN_OSC_AMP`, `SUN_OSC_PERIOD`) around the keeper setpoint, plus a pure EMA
+  observer (`sun_ema_mean`, `sun_ema_sd`, `SUN_EMA_ALPHA`) feeding a new normalized
+  read `_sun_z()` consumed by nobody existing. Adds two observer fields, three
+  constants, one read helper; REUSES `EPS_POWER` and the SP5 `BIOME_TICK` day
+  index. `SUN_OSC_AMP == 0.0` (default) is identity: the swing term is exactly
+  `0.0` and the EMA consumes zero RNG, so the battery + `--canon` stay
+  byte-identical. Keeps the graph ACYCLIC (one-way `sun → water` preserved; no
+  `water → sun` edge). Acceptance clauses SPA-12…SPA-17 (extend
+  `tests/test_semipermeable.py`).
 - **Reuses, does not duplicate:** the seeded module RNG streams, the `_clamp01`
-  module-helper convention (`:526`), and the `BIOME_TICK` cadence (`:222`) as the
-  day boundary. Adds `jitter`/`soft_gate`/`power_ratio`, `DistParam`/`GateParam`,
-  one `sun_effective` field, `SUN_JITTER_SD`/`CAPTURE_CENTER`/`CAPTURE_TEMP`
-  constants, one day-boundary draw, three reader redirections, one count-sibling
-  refactor, and one capture mode-switch.
-- **Default-neutral strategy:** `SUN_JITTER_SD == 0.0`, `temp <= 0`, and
-  `CAPTURE_TEMP == 0.0` make every effect the identity transform; `jitter`
-  consumes ZERO RNG at `sd == 0` and the capture mode-switch takes the exact
-  pre-SP9 branch, so the shared draw stream is unperturbed and the 41-suite
-  battery + the subjugation suite + `--canon` stay byte-identical. Dynamism
-  appears only when variance/softness is dialed in (evolution/fitting, future).
+  module-helper convention (`:526`), the `BIOME_TICK` cadence (`:222`) as the
+  day boundary, and (SP10) the `EPS_POWER` divisor guard (`:365`). Adds
+  `jitter`/`soft_gate`/`power_ratio`, `DistParam`/`GateParam`, one `sun_effective`
+  field (+ SP10's `sun_ema_mean`/`sun_ema_sd`), `SUN_JITTER_SD`/`CAPTURE_CENTER`/
+  `CAPTURE_TEMP`/`SUN_OSC_AMP`/`SUN_OSC_PERIOD`/`SUN_EMA_ALPHA` constants, one
+  day-boundary draw (now oscillator+EMA), three reader redirections, the `_sun_z`
+  read helper, one count-sibling refactor, and one capture mode-switch.
+- **Default-neutral strategy:** `SUN_JITTER_SD == 0.0`, `temp <= 0`,
+  `CAPTURE_TEMP == 0.0`, and `SUN_OSC_AMP == 0.0` make every effect the identity
+  transform; `jitter` consumes ZERO RNG at `sd == 0`, the capture mode-switch takes
+  the exact pre-SP9 branch, and the SP10 swing term is exactly `0.0` with a
+  pure-arithmetic (zero-RNG) EMA — so the shared draw stream is unperturbed and the
+  battery + the subjugation suite + `--canon` stay byte-identical. Dynamism appears
+  only when variance/softness/amplitude is dialed in (evolution/fitting, future).
 - **Next-tracer seam REALIZED:** SP4's `CAPTURE_CHANCE → soft_gate` binding is now
   implemented by SP9 (was: deferred, signature-validation only).
-- **Real anchors verified against `sandkings.py` (2026-07-11):** `_clamp01:526`,
-  sun setpoint init `:1459`, `step()` order (`_biome_tick:1645` before
-  `CROP_TICK:1668`), `keeper_set_sun:2665`, `_biome_growth_units:2676` (reads
-  `:2678/2682`), `_biome_tick:2687` (read `:2692`), biome constants `:222–230`,
-  capture constants `:324–334`, `_units_near:4575`, `_chebyshev:4571`,
-  `_subjugate_stance:4603`, `_local_dominance:4617`, `_try_capture:4640` (flat
-  gate `:4665`), test-seeding precedent `tests/test_weather.py:24–25`,
-  `test_subjugation.py` fixture pattern (module-constant override + `RandomSpy`).
-</content>
-</invoke>
+- **Real anchors verified against `sandkings.py` (2026-07-11):** `_clamp01:530`,
+  `jitter:535`, `soft_gate:552`, `power_ratio:569`, `DistParam:578`/`GateParam:589`,
+  `EPS_POWER:365`, biome constants `:218–232` (`SUN_HOURS_DEFAULT:221`,
+  `SUN_MIN/SUN_MAX:222`, `BIOME_TICK:223`, `SUN_JITTER_SD:224`, `SUN_DRYING:226`),
+  sun setpoint + `sun_effective` init `:1527–1528`, `keeper_set_sun:2734`,
+  `_biome_growth_units:2745` (reads `:2747/2751`), `_biome_tick:2756` (SP5 draw
+  `:2762–2765`, water-equilibrium read `:2767`), test-seeding precedent
+  `tests/test_semipermeable.py:23–28`. NOTE: the SP5/SP6/SP9 line anchors quoted
+  verbatim in those older blocks (`:1459`, `:2687`, `:4640`, …) predate later
+  drift; SP10's anchors above are the current truth.

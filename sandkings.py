@@ -222,6 +222,9 @@ SUN_HOURS_DEFAULT = 12       # daylight hours/day
 SUN_MIN, SUN_MAX = 4, 20     # panel sunlight range
 BIOME_TICK = 20              # emergent-weather cadence
 SUN_JITTER_SD = 0.0          # SP7: std-dev of per-day daylight draw (0 = identity; learnable)
+SUN_OSC_AMP = 0.0            # SP10: daylight oscillator amplitude in hours (0 = identity; learnable) [prov:B fit=weather-variance]
+SUN_OSC_PERIOD = 5 * BIOME_TICK  # SP10: period of the daylight swing (feel/pacing) [prov:C feel=season-length]
+SUN_EMA_ALPHA = 0.25         # SP10: smoothing for the rolling mean/sdev observer [prov:A lit=EMA / Bollinger z-score normalization]
 BIOME_EASE = 0.03            # water eases toward equilibrium per step
 SUN_DRYING = 0.5             # how far sun lowers the water equilibrium
 DRY_THRESHOLD = 0.35         # below this the biome is in drought
@@ -1526,6 +1529,8 @@ class SandKingsSimulation:
         self.water_target = WATER_LEVEL_DEFAULT  # the reservoir set point (panel)
         self.sun_hours = SUN_HOURS_DEFAULT      # BI1: daylight hours/day (panel)
         self.sun_effective = SUN_HOURS_DEFAULT   # SP5: the drawn sky for the current biome-day
+        self.sun_ema_mean = SUN_HOURS_DEFAULT   # SP10: rolling mean of realized daylight (observer)
+        self.sun_ema_sd = 0.0                   # SP10: rolling |deviation| ~ sigma (observer)
         self._storm_wind = (1, 0)              # per-storm prevailing direction
         
         # Initialize colonies with random count (3-5) and positions
@@ -2753,6 +2758,14 @@ class SandKingsSimulation:
             return 2  # lush
         return 1
 
+    def _sun_z(self) -> float:
+        """SP10: normalized daylight z = (sun_effective - rolling mean)/rolling sd.
+        Pure read exposed for future regime logic + display; consumed by nobody yet."""
+        se = getattr(self, 'sun_effective', getattr(self, 'sun_hours', SUN_HOURS_DEFAULT))
+        m = getattr(self, 'sun_ema_mean', SUN_HOURS_DEFAULT)
+        s = getattr(self, 'sun_ema_sd', 0.0)
+        return (se - m) / max(EPS_POWER, s)
+
     def _biome_tick(self):
         """BI3/BI4: the closed water cycle and the weather that emerges from it.
         Water eases toward an equilibrium set by the reservoir and the sun;
@@ -2760,9 +2773,17 @@ class SandKingsSimulation:
         # SP5: draw the EFFECTIVE daylight ONCE per biome-day so every reader in
         # this day sees the same sky. Identity at SUN_JITTER_SD==0 (no RNG draw).
         if self.step_count == 1 or self.step_count % BIOME_TICK == 0:
+            # SP10: oscillator swings the daily mean (mean-only); jitter draws the day's sky.
+            day = self.step_count // BIOME_TICK
+            _sun_mean = getattr(self, 'sun_hours', SUN_HOURS_DEFAULT) \
+                + SUN_OSC_AMP * math.sin(2.0 * math.pi * day / SUN_OSC_PERIOD)
             self.sun_effective = jitter(
-                mean=getattr(self, 'sun_hours', SUN_HOURS_DEFAULT),
-                sd=SUN_JITTER_SD, lo=SUN_MIN, hi=SUN_MAX)
+                mean=_sun_mean, sd=SUN_JITTER_SD, lo=SUN_MIN, hi=SUN_MAX)
+            # SP10: EMA observer (pure, no RNG) — mean first, then |dev| off the new mean.
+            self.sun_ema_mean = SUN_EMA_ALPHA * self.sun_effective \
+                + (1.0 - SUN_EMA_ALPHA) * getattr(self, 'sun_ema_mean', SUN_HOURS_DEFAULT)
+            self.sun_ema_sd = SUN_EMA_ALPHA * abs(self.sun_effective - self.sun_ema_mean) \
+                + (1.0 - SUN_EMA_ALPHA) * getattr(self, 'sun_ema_sd', 0.0)
         target = getattr(self, 'water_target', WATER_LEVEL_DEFAULT)
         sun = getattr(self, 'sun_effective', getattr(self, 'sun_hours', SUN_HOURS_DEFAULT))
         water = getattr(self, 'water_level', WATER_LEVEL_DEFAULT)
