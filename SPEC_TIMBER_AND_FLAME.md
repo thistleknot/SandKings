@@ -138,12 +138,13 @@ vs dear-and-durable is the round's economic sentence.
   | snake (0.06) | `S` olive | 80 | 18 | 1 | beneath (substrate) | units ≤ 25 | 5 | swims through SAND (the only burrowing fauna): `Something long moves beneath the sand...` |
   | rodent (0.12) | `n` grey | 12 | 2 | 3–4 | surface edge | nothing — SCAVENGES: eats CORPSE voxels (raids the bone/cannibal economy) | 1 | flees units at 2 moves/step |
   | anteater (0.04) | `A` rust | 150 | 25 | 1 | surface edge | units ≤ 30 | 8 | apex terror: `An anteater stalks the sands!` |
-  | hornets (0.05) | `z` violet | 8 | 4 | 6–10 | surface edge / aloft | units ≤ 30 — RELENTLESS (never flees) | 1 | SCOURGE (T48b): flies `HORNET_SPEED`=3/step through AIR; each sting sets `poisoned_until` (venom 1 HP/step for `HORNET_STING_DURATION`=20); the swarm spreads stings to FRESH targets (breadth, not focus). `A hornet scourge boils out of the dark...` |
+  | hornets (0.0, wrath) | `z` violet | 8 | 4 | 6–10 | keeper-released at edge / aloft | units ≤ 30 — RELENTLESS (never flees) | 1 | SCOURGE (T48b): flies `HORNET_SPEED`=3/step through AIR; each sting sets `poisoned_until` (venom 1 HP/step for `HORNET_STING_DURATION`=20); the swarm spreads stings to FRESH targets (breadth, not focus). `A hornet scourge boils out of the dark...` |
 
   Scale note (user): sand kings are scorpion-sized — scorpions are PEER
   rivals; rabbits are megafauna; anteaters are dinosaurs. Spider weight
   0.20, rabbit 0.18, squirrel 0.15, rodent 0.12, bird 0.15, scorpion
-  0.10, snake 0.06, anteater 0.04, hornets 0.05 (rare venom scourge).
+  0.10, snake 0.06, anteater 0.04. Hornets are weight 0.0 — a
+  keeper-wrath scourge, never in the random roll (released, not natural).
 
   `WEB = 16` voxel (not solid, not tunnelable, flammable): a unit whose
   step enters a WEB cell clears it but LOSES the action (snared). Events:
@@ -194,10 +195,12 @@ from every existing beast. Character, held fixed (do not re-open):
 
 `sandkings.py` (fauna block, ~L127-170):
 
-- `FAUNA['hornets'] = (0.05, 8, 4, (6, 10), 30, 1)`
-  — `(weight, hp, attack, pack, hunt_range, bounty)`. Weight 0.05 puts
-  it in the `random.choices` roll in `_spawn_incursion` (rare, like
-  snake/anteater). Per-species HP/atk/pack/bounty live ONLY here — no
+- `FAUNA['hornets'] = (0.0, 8, 4, (6, 10), 30, 1)`
+  — `(weight, hp, attack, pack, hunt_range, bounty)`. Weight 0.0 makes
+  hornets KEEPER-INTRODUCED ONLY (a wrath item) — never in the
+  `random.choices` roll of `_spawn_incursion`; the keeper unleashes the
+  scourge via `keeper_release('hornets')`. Place the row in the weight-0
+  block beside `cat`. Per-species HP/atk/pack/bounty live ONLY here — no
   separate constants for them.
 - `FAUNA_EVENTS['hornets'] = "A hornet scourge boils out of the dark - the air itself turns to venom"`
   — MANDATORY (a missing key KeyErrors on spawn). MUST NOT contain the
@@ -386,12 +389,10 @@ UnitType.*)` and append to `colony.units`, drive with
   which KeyErrors unless `FAUNA_EVENTS['hornets']` (and the FAUNA tuple)
   exist. This is the guard that makes the mandatory companion-table keys
   non-optional.
-- **Spawn distribution shift (flag):** adding weight 0.05 makes the
-  `_spawn_incursion` `random.choices` weights sum 1.00 → 1.05 (hornets
-  ≈ 4.76%; all others shrink proportionally). NO test asserts a
-  natural-spawn species distribution — only `'cat'`, which is
-  keeper-released. `test_timber.py:132` reassigns its beast to `'rabbit'`
-  before asserting, so it is unaffected.
+- **No spawn-distribution shift:** hornets are weight 0.0, so the
+  `_spawn_incursion` `random.choices` roll is UNCHANGED (the weighted
+  species still sum to 1.00). Hornets never arrive as a natural
+  incursion — only the keeper's wrath (`keeper_release`) brings them.
 - **play_kit.py `_SPECIES` (L347): OPTIONAL parity.** Add `'hornets'`
   so the bare REPL command `hornets` works; `release hornets` already
   works without it. Non-blocking.
@@ -464,10 +465,12 @@ Invariant: every fires key is a FLAMMABLE voxel (purge-first like crops)
   as fast as chopped) - rams rare in soak; acceptable scarcity, worth
   a future knob.
 
-- 2026-07-11 (T48b hornets, spec draft): added the venom-scourge sub-
-  requirement. FAUNA tuple `(0.05, 8, 4, (6,10), 30, 1)`; new constants
+- 2026-07-11 (T48b hornets): the venom-scourge sub-requirement,
+  IMPLEMENTED. FAUNA tuple `(0.0, 8, 4, (6,10), 30, 1)` — hornets are a
+  KEEPER-WRATH item (weight 0.0, never a random incursion; corrected from
+  an initial 0.05 draft per user: "hornet is a wrath item"). New constants
   HORNET_SPEED=3, HORNET_STING_DURATION=20; glyph `z`; KEEPER_WRATH gains
-  'hornets'. AI reuses the hunt_range>0 branch (no new branch);
-  _beast_move adds the 3-step case; _beast_combat adds fresh-target
-  selection + venom application, relentless (no fleeing). Awaiting Haiku
-  impl + Sonnet verification against HORNET-1..7.
+  'hornets'. AI reuses the hunt_range>0 branch (no new branch); _beast_move
+  adds the 3-step case; _beast_combat adds fresh-target selection + venom
+  application, relentless (no fleeing). tests/test_hornets.py HORNET-1..7
+  green; full battery 44/0.

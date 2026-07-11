@@ -135,7 +135,6 @@ FAUNA = {
     'scorpion': (0.10, 22, 6, (1, 2), 15, 2),
     'snake':    (0.06, 80, 18, (1, 1), 25, 5),
     'anteater': (0.04, 150, 25, (1, 1), 30, 8),
-    'hornets': (0.05, 8, 4, (6, 10), 30, 1),
     # weight 0 = keeper-introduced only (K2); never in random rolls
     'cricket':  (0.0, 8, 1, (2, 4), 0, 2),
     'ant':      (0.0, 6, 2, (4, 6), 0, 1),
@@ -143,6 +142,7 @@ FAUNA = {
     'fly':      (0.0, 3, 1, (4, 8), 0, 1),   # wingless flies: weak swarm prey
     'mouse':    (0.0, 20, 3, (1, 1), 0, 5),  # a mouse: bites back, good food
     'cat':      (0.0, 400, 60, (1, 1), 60, 12),
+    'hornets':  (0.0, 8, 4, (6, 10), 30, 1),  # T48b keeper-wrath scourge: released, never a random incursion
 }
 FAUNA_EVENTS = {
     'spider': "Spiders crawl up from the deep!",
