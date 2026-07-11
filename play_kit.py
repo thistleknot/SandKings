@@ -75,6 +75,9 @@ class Terrarium:
     def gift(self) -> Dict:
         return self._post("/api/keeper/gift")
 
+    def open_door(self, colony_id: int = 0) -> Dict:
+        return self._post("/api/keeper/opendoor", {"colony_id": int(colony_id)})
+
     def release(self, species: str) -> Dict:
         return self._post("/api/keeper/release", {"species": species})
 
@@ -372,6 +375,8 @@ def dispatch(t: Terrarium, line: str) -> str:
         t.temp(cmd)
     elif cmd in ("firecracker", "ignite", "fire"):
         t.ignite()
+    elif cmd in ("opendoor", "escape", "breakout"):
+        t.open_door(int(args[0]) if args else 0)
     elif cmd == "flies":
         t.release("fly")
     elif cmd in ("toothpick", "string", "lincoln_log", "copper_pipe", "tacks"):

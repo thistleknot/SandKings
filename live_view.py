@@ -18,7 +18,7 @@ import numpy as np
 import pygame
 
 from sandkings import (MAW_MAX_HEALTH, Colony, PheromoneType, SandKingsSimulation,
-                       UnitType, VoxelType, VoxelWorld)
+                       UnitType, VoxelType, VoxelWorld, TERMINAL_MASTERY, breakout_progress)
 
 
 class ViewMode(Enum):
@@ -377,6 +377,27 @@ def hp_bar(fraction: float, width: int = 8) -> str:
     return "[" + "=" * filled + "." * (width - filled) + "]"
 
 
+def _breakout_target(view) -> Optional[Colony]:
+    """BRK-C target rule: inspected unit/maw's colony, else the living
+    colony whose maw is nearest the cursor (covers 'under the cursor'
+    and the colony-0 degenerate). Never a beast (no colony_id)."""
+    insp = view.inspected                      # ('unit'|'maw'|'beast', obj)
+    if insp is not None and insp[0] in ('unit', 'maw'):
+        cid = getattr(insp[1], 'colony_id', None)
+        if cid is not None:
+            c = view.sim._colony_by_id(cid)
+            if c is not None and c.is_alive():
+                return c
+    living = [c for c in view.sim.colonies if c.is_alive()]
+    if not living:
+        return None
+    cx, cy = view.cursor
+    def _d2(c):
+        mx, my, _ = c.maw.position
+        return (mx - cx) ** 2 + (my - cy) ** 2
+    return min(living, key=_d2)
+
+
 def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
                       z_level: int, capturing: bool,
                       view_mode: ViewMode = ViewMode.TOPDOWN,
@@ -483,6 +504,18 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
         if hp_frac < 1.0:
             maw_line += f" {hp_bar(hp_frac)}"
         entries.append((maw_line, color))
+        # BRK-B: breakout-proximity gauge (reuses hp_bar; skipped once breached)
+        phase, frac, label = breakout_progress(colony)
+        if phase == "breached":
+            gauge = "  BREACHED"
+        elif phase == "nopi":
+            gauge = "  breakout: no pi"
+        elif phase == "unlocking":
+            gauge = f"  unlock:{hp_bar(frac)}"
+        else:  # mastering
+            uses = int(getattr(colony, 'terminal_uses', 0))
+            gauge = f"  breach:{hp_bar(frac)} {uses}/{TERMINAL_MASTERY}"
+        entries.append((gauge, color))
     events = list(getattr(sim, 'events', []))[-EVENT_LINES:]
     if events:
         entries.append(("", HUD_FG))
@@ -498,7 +531,7 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
                       "       w rain  j seeds",
                       "WRATH: 6spidr 7scorp 8snake 9drgt 0cat",
                       "       [ cold  ] heat  d deluge  u firecrckr",
-                      "       T speak",
+                      "       T speak  o open the door",
                       "NEUTRAL: n squirrel  b rabbit",
                       "PANEL: x/c water +/-  a/z sun +/-"):
         entries.append((help_line, (140, 140, 150)))
@@ -782,6 +815,8 @@ def build_legend_entries() -> List[Tuple[str, Tuple[int, int, int]]]:
     entries.append((" gold w = tribute envoy", (255, 200, 60)))
     entries.append((" violet = wild beast", BEAST_COLOR))
     entries.append(("", HUD_FG))
+    entries.append(("-- keeper verbs --", (150, 150, 160)))
+    entries.append((" o  open the door -> breach", (150, 150, 160)))
     entries.append(("L close   I inspect cursor", (140, 140, 150)))
     return entries
 
@@ -1317,6 +1352,12 @@ class LiveViewer:
                 with self.runner.lock:
                     self.sim.keeper_auto = False
                     self.sim.keeper_ignite(*self.cursor)
+            elif key == pygame.K_o:                     # BRK-C: keeper opens the door
+                target = _breakout_target(self)
+                if target is not None:
+                    with self.runner.lock:
+                        self.sim.keeper_auto = False
+                        self.sim.keeper_open_door(target)
             elif key == pygame.K_x:                     # PANEL: more water
                 with self.runner.lock:
                     self.sim.keeper_set_water(

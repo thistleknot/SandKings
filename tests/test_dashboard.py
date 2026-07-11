@@ -156,6 +156,48 @@ def test_no_dangerous_imports():
     assert not (banned & imported), f"banned imports: {banned & imported}"
 
 
+def test_build_state_exposes_breakout_telemetry():
+    """BRK-B2: build_state includes terminal_uses, breach_proximity, breach_phase."""
+    sim = make_sim()
+    colony = sim.colonies[0]
+    state = build_state(sim)
+    col_state = state["colonies"][0]
+
+    # Check presence and types
+    assert "terminal_uses" in col_state
+    assert "breach_proximity" in col_state
+    assert "breach_phase" in col_state
+
+    # Check types and ranges
+    assert isinstance(col_state["terminal_uses"], int)
+    assert isinstance(col_state["breach_proximity"], float)
+    assert isinstance(col_state["breach_phase"], str)
+
+    # Precondition: no pi controllers, so should be nopi phase
+    assert col_state["terminal_uses"] == 0
+    assert 0.0 <= col_state["breach_proximity"] <= 1.0
+    assert col_state["breach_phase"] in ("nopi", "unlocking", "mastering", "breached")
+
+
+def test_keeper_opendoor_endpoint_breaches():
+    """BRK-C3: POST /api/keeper/opendoor with colony_id breaches the colony."""
+    sim = make_sim()
+    client, _ = client_for(sim)
+
+    colony = sim.colonies[0]
+    assert not getattr(colony, 'breached', False)
+
+    # Call the endpoint
+    r = client.post("/api/keeper/opendoor", json={"colony_id": colony.colony_id})
+    assert r.status_code == 200
+
+    # Check the returned state shows the colony breached
+    state = r.json()
+    col_state = state["colonies"][0]
+    assert col_state["breached"] is True
+    assert col_state["breach_phase"] == "breached"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

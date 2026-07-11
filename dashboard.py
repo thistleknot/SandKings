@@ -80,6 +80,8 @@ def build_state(sim: SandKingsSimulation) -> Dict:
         utterance = ""
         if getattr(colony, 'breached', False) and colony.units:
             utterance = compose_utterance(colony.units[0], colony, sim)
+        from sandkings import breakout_progress
+        _bp_phase, _bp_frac, _bp_label = breakout_progress(colony)
         colonies.append({
             "id": int(colony.colony_id),
             "house": sim._house(colony) if hasattr(sim, '_house')
@@ -98,6 +100,9 @@ def build_state(sim: SandKingsSimulation) -> Dict:
             "worshipped": bool(getattr(colony, 'worshipped', False)),
             "breached": bool(getattr(colony, 'breached', False)),
             "enlightened": bool(getattr(colony, 'enlightened', False)),  # EN9
+            "terminal_uses": int(getattr(colony, 'terminal_uses', 0)),  # BRK-B
+            "breach_proximity": round(float(_bp_frac), 2),  # BRK-B: [0,1]
+            "breach_phase": str(_bp_phase),  # BRK-B
             "confidence": round(float(getattr(colony, 'confidence', 0.5)), 2),  # DP9
             "favoritism": round(float(getattr(colony, 'favoritism', 0.0)), 2),  # DP9
             "agitation": round(float(getattr(colony, 'agitation', 0.0)), 2),    # DP9
@@ -382,6 +387,9 @@ def create_app(runner: TerrariumRunner):
     class SpeakBody(BaseModel):
         colony_id: int
 
+    class OpenDoorBody(BaseModel):
+        colony_id: int
+
     class ConverseBody(BaseModel):
         colony_id: int
         text: str
@@ -467,6 +475,15 @@ def create_app(runner: TerrariumRunner):
         with runner.lock:
             _disarm_auto()
             runner.sim.keeper_gift()
+            return build_state(runner.sim)
+
+    @app.post("/api/keeper/opendoor")
+    def opendoor(body: OpenDoorBody):
+        with runner.lock:
+            _disarm_auto()
+            colony = runner.sim._colony_by_id(body.colony_id)
+            if colony is not None:
+                runner.sim.keeper_open_door(colony)
             return build_state(runner.sim)
 
     @app.post("/api/keeper/drought")
@@ -704,6 +721,8 @@ button.act.breach{border-color:var(--breach);color:var(--breach)}
     <button class="act" onclick="release('squirrel')">Squirrel</button>
     <button class="act" onclick="release('rabbit')">Rabbit</button>
     <button class="act" onclick="release('mouse')">Mouse</button></div>
+  <div class="grp"><span class="lab">Breakthrough</span>
+    <button class="act breach" onclick="openDoor()">Open the Door</button></div>
   <div class="grp"><span class="lab">Panel (behind the glass)</span>
     <button class="act" onclick="panel('water',-0.1)">Water −</button>
     <button class="act" onclick="panel('water',0.1)">Water +</button>
@@ -728,6 +747,7 @@ function temp(d){post('/api/keeper/temp',{dir:d});}
 function water(big){post('/api/keeper/water',{big});}
 function seed(){post('/api/keeper/seed',{});}
 function mat(kind){post('/api/keeper/material',{kind});}
+function openDoor(){if(selected==null){flash('select a house first');return;}post('/api/keeper/opendoor',{colony_id:selected});}
 function panel(which,delta){if(!state)return;
   const cur=which==='water'?state.water_target:state.sun_hours;
   post('/api/keeper/panel',{[which]:cur+delta});}

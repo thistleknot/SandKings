@@ -47,6 +47,7 @@ SALIENCE = [
     ("too strange", 8),
     ("SPEAKS", 10),
     ("no longer a wall", 10),
+    ("opens the door", 8),          # BRK-C: the keeper's mercy breach
     ("ascends", 9),                 # enlightenment ascension (economy arc)
     ("kneel to", 8),                # thralls convert on a birth-maw death
     ("in bondage", 7),              # a maw seizes a rival's spawn as a thrall

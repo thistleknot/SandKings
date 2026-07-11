@@ -18,6 +18,7 @@ contract). Governing decision records live under `docs/decisions/`.
 - **SPEC_KEEPER.md** (K1–K7) — the keeper: the hand that feeds, the gift ladder, the terminal.
 - **SPEC_FACES.md** (F1–F5) — "look to your faces": carved sentiment glyphs / nature moods.
 - **SPEC_AWARENESS.md** (AW1–AW6) — nature until the great other: keeper-directed feeling gates on `breached` (the `_escape` breakout).
+- **SPEC_BREAKOUT.md** (BRK-A/B/C) — making the breakout reachable, visible & grantable: opens VM actuator port 7 so organic breach is possible (root fix), a per-colony breakout-proximity gauge (`breakout_progress`), and the keeper `open_door` action (`_escape` by fiat) across all three clients.
 - **SPEC_DISPOSITION.md** (DP1–DP12) — keeper-treatment → disposition: signed `favoritism` + boldness `confidence` + short-term `agitation`; modulates aggression, nudges `keeper_sentiment`, biases the bargain (default-neutral at neutral values).
 - **SPEC_PSIONIC.md** (PS1–PS6) — the psionic maw & keeper-as-prey: the awakened reach back.
 

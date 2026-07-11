@@ -425,6 +425,36 @@ FAUNA_SPAWN_P = 0.3          # incursion chance per MARAUDER_INTERVAL roll...
 FAUNA_SPAWN_P_DARK = 0.6     # ...doubled in Dust/Chill (monsters own winter)
 
 
+def breakout_progress(colony) -> Tuple[str, float, str]:
+    """BRK-B: how close a colony is to breakout. Pure, no pygame.
+
+    Returns (phase, fraction, label):
+      phase in {"breached","mastering","unlocking","nopi"}
+      fraction in [0.0, 1.0]  (breach_proximity)
+      label: renderer-agnostic annotation (NO bar glyphs; the HUD adds
+             the hp_bar). Deterministic; no RNG.
+
+    Preconditions: colony may lack any of breached/controllers/
+      terminal_uses (all read via getattr with defaults) — a bare or
+      revived colony is valid input.
+    """
+    from machines import VM_FUEL
+    if getattr(colony, 'breached', False):
+        return ("breached", 1.0, "BREACHED")
+    controllers = getattr(colony, 'controllers', None) or []
+    pi_ticks = [c.operate_ticks for c in controllers
+                if getattr(c, 'fuel_cap', VM_FUEL) > VM_FUEL]
+    if not pi_ticks:
+        return ("nopi", 0.0, "no pi")
+    max_ticks = max(pi_ticks)
+    if max_ticks < TERMINAL_UNLOCK:
+        frac = max(0.0, min(1.0, max_ticks / TERMINAL_UNLOCK))
+        return ("unlocking", frac, "unlock")
+    uses = int(getattr(colony, 'terminal_uses', 0))
+    frac = max(0.0, min(1.0, uses / TERMINAL_MASTERY))
+    return ("mastering", frac, f"breach {uses}/{TERMINAL_MASTERY}")
+
+
 class VoxelType(Enum):
     AIR = 0
     SAND = 1           # Tunnelable, movable
@@ -2837,6 +2867,24 @@ class SandKingsSimulation:
         z = min(self.world.surface_z(x, y) + 1, self.world.depth - 1)
         self.gift = ((x, y, z), kind)
         self._log_event("A strange gift descends from above")
+
+    def keeper_open_door(self, colony: Colony):
+        """BRK-C/K10: the keeper's mercy - lift the glass for one house.
+        Mirrors every keeper verb: honors the PS5 bound-god gate first, so a
+        bound keeper's hand will not move. Then breaches via _escape (AW4
+        reveal + EN2 enlightenment). Idempotent on an already-breached colony.
+
+        Preconditions: colony is a living Colony (or None -> no-op).
+        Failure modes: bound keeper -> no-op + stayed line; already breached
+        -> no-op (no duplicate flavor line).
+        """
+        if self._hand_stayed():        # PS5: the bound god cannot act
+            return
+        if colony is None or getattr(colony, 'breached', False):
+            return
+        self._log_event(f"The keeper opens the door - House "
+                        f"{self._house_name(colony)} is invited to step through")
+        self._escape(colony)           # AW4 reveal + EN2 enlightenment; sets breached
 
     def converse(self, colony_id: int, text: str) -> Dict[str, object]:
         """DL3: the human speaks to a colony; the awakened answer in the
