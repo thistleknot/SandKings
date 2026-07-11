@@ -111,6 +111,11 @@ def build_state(sim: SandKingsSimulation) -> Dict:
                             if not getattr(colony, 'breached', False)
                             and hasattr(sim, '_nature_mood') else ""),
             "utterance": str(utterance),
+            "thralls_out": int(sum(1 for u in colony.units
+                                   if getattr(u, 'laboring_for', -1) >= 0)),  # units forced to labor
+            "thralls_in": int(sum(1 for other in sim.colonies
+                                  for u in other.units
+                                  if getattr(u, 'laboring_for', -1) == colony.colony_id)),  # units enslaved
         })
     saga = [text for _s, text, _sal in saga_rows(
         getattr(sim, 'chronicle', None) or [], min_salience=4, limit=14)]

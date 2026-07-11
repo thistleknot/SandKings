@@ -276,6 +276,22 @@ AUG_CACHE_STEP = 8           # cache_len added per augment level
 GRAIN_SCALE = 60.0           # forecast error normaliser (CU2)
 GRAIN_MINT = 5.0             # grains for a perfect forecast
 
+# Labor-Value & the Extractor's Surplus (SPEC_LABOR LV8): value-splitting spine
+W_BRUTE = 0.0                # brute-mode share returned to the laborer's birth colony
+W_FAIR = 0.5                 # neutral even-split anchor of w_bargain
+W_POWER_SENS = 0.25          # w_bargain sensitivity to (power_ratio - 1)
+W_DESPERATION_SENS = 0.25    # w_bargain sensitivity to extractor desperation
+W_CONTROL_SENS = 0.25        # w_bargain sensitivity to extractor scarce-factor control
+POWER_WEALTH_FOOD = 1.0      # composite_power weight on stored food
+POWER_MILITARY_UNIT = 15.0   # weight per living unit
+POWER_MAW_HEALTH = 0.2       # weight on maw health
+POWER_ORE_COPPER = 25.0      # weight per copper ore
+POWER_ORE_GOLD = 10.0        # weight per gold ore
+POWER_CURRENCY = 1.0         # weight on grains held
+POWER_WOOD = 1.0             # weight per wood unit
+POWER_TECH_NATIVE = 8.0      # weight per known NATIVE tech
+POWER_TECH_FOREIGN = 30.0    # weight per known FOREIGN (keeper-gift) tech
+
 # Metamorphosis (SPEC_METAMORPHOSIS MT1-MT4): the maw grows into a new breed
 MOLT_POP = 26                # population that triggers the stage-2 molt
 MOLT_FOOD = 420              # or this much hoarded food
@@ -362,6 +378,49 @@ def value_noise(shape: Tuple[int, ...], cells: int, rng: np.random.Generator,
     if tmax > tmin:
         total = (total - tmin) / (tmax - tmin)
     return total
+
+
+def composite_power(colony) -> float:
+    """Composite capability index: military + wealth + scarce technology.
+    Pure read of colony fields; getattr-guarded for pre-feature pickles.
+    Reused by M2 dominance (SJ2) and by w_bargain (LV3).
+    """
+    ore = getattr(colony, 'ore', {}) or {}
+    techs = getattr(colony, 'techs', set()) or set()
+    foreign = sum(1 for t in techs if t in TECH_FOREIGN)      # keeper gifts, scarce
+    native = len(techs) - foreign
+    return (POWER_WEALTH_FOOD * colony.maw.food_stored
+            + POWER_MILITARY_UNIT * len(colony.units)
+            + POWER_MAW_HEALTH * colony.maw.health
+            + POWER_ORE_COPPER * ore.get('copper', 0)
+            + POWER_ORE_GOLD * ore.get('gold', 0)
+            + POWER_CURRENCY * getattr(colony, 'currency', 0.0)
+            + POWER_WOOD * getattr(colony, 'wood', 0)
+            + POWER_TECH_NATIVE * native
+            + POWER_TECH_FOREIGN * foreign)
+
+
+def w_bargain(power_ratio: float = 1.0,
+              desperation: float = 0.0,
+              control: float = 0.0) -> float:
+    """The share `w` returned to the laborer's birth colony under NEGOTIATED
+    (non-brute) extraction. Pure; no side effects; deterministic.
+
+    power_ratio = composite_power(birth_colony) / composite_power(extractor)
+                  (> 1 => the laborer's house is the stronger, keeps more).
+    desperation = extractor's need in [0,1] (higher => concedes a bigger w).
+    control     = extractor's grip on a scarce factor in [0,1]
+                  (higher => extracts more, smaller w).
+
+    Returns w clamped to [0,1]. Neutral anchor: w_bargain() == W_FAIR (an even
+    split) — balanced power, no desperation, no scarce-factor control. Sticky w
+    with periodic renegotiation is M3's cadence; this fn only maps state -> w.
+    """
+    w = (W_FAIR
+         + W_POWER_SENS * (power_ratio - 1.0)
+         + W_DESPERATION_SENS * desperation
+         - W_CONTROL_SENS * control)
+    return max(0.0, min(1.0, w))
 
 
 class VoxelWorld:
@@ -745,7 +804,8 @@ class SandKing:
     spoken_to_step: int = -10**9  # last time the keeper addressed it (K12)
     chop_target: Optional[Tuple[int, int, int]] = None  # trunk being cut (T41)
     chop_progress: int = 0
-    
+    laboring_for: int = -1  # colony_id of the current extractor; -1 = free (born free)
+
     # Neural hive mind extension (soldier's personal layer)
     brain_layer: Optional[SoldierLayer] = None
     
@@ -1997,7 +2057,7 @@ class SandKingsSimulation:
             crown.append((x, y, cz))
             cz += 1
         self.world.voxels[base] = VoxelType.AIR.value
-        colony.wood = getattr(colony, 'wood', 0) + 1
+        self._credit_labor(unit, colony, 'wood', 1)
         ux, uy, _ = unit.position
         dx = int(np.sign(x - ux)) or random.choice([-1, 1])
         dy = int(np.sign(y - uy))
@@ -2010,7 +2070,7 @@ class SandKingsSimulation:
                 self.world.voxels[lx, ly, z] = VoxelType.WOOD.value
                 laid += 1
             else:
-                colony.wood += 1
+                self._credit_labor(unit, colony, 'wood', 1)
         self._milestone(colony, 'felled',
                         f"Colony {colony.colony_id} fells its first palm",
                         unit)
@@ -3690,6 +3750,85 @@ class SandKingsSimulation:
             self.learners[colony_id] = ColonyLearner()
         return self.learners[colony_id]
 
+    def _extract_share(self, kind: str, amount, w: float):
+        """Compute the extractor's share for a given kind and w value.
+
+        For continuous kinds (food, crop), returns (1-w)*amount as a float.
+        For discrete kinds (ore:*, salvage, wood), returns round((1-w)*amount)
+        to ensure exact conservation with remainder construction.
+        """
+        if kind in ('food', 'crop'):
+            return (1.0 - w) * amount
+        else:
+            return round((1.0 - w) * amount)
+
+    def _deposit(self, target: Colony, kind: str, amount):
+        """Deposit labor-value into a colony sink identified by kind.
+
+        Reproduces the exact writes that existed before LV2:
+        - ore:copper, ore:gold -> target.ore[color] += int(amount)
+        - salvage -> target.salvage += int(amount)
+        - food, crop -> target.maw.eat(amount)
+        - wood -> target.wood += int(amount)
+        """
+        if kind == 'ore:copper':
+            target.ore['copper'] = target.ore.get('copper', 0) + int(amount)
+        elif kind == 'ore:gold':
+            target.ore['gold'] = target.ore.get('gold', 0) + int(amount)
+        elif kind == 'salvage':
+            target.salvage = getattr(target, 'salvage', 0) + int(amount)
+        elif kind in ('food', 'crop'):
+            target.maw.eat(amount)
+        elif kind == 'wood':
+            target.wood = getattr(target, 'wood', 0) + int(amount)
+
+    def _credit_labor(self, unit: SandKing, colony: Colony, kind: str, amount) -> None:
+        """Deposit `amount` of labor-value produced by `unit`, split between the
+        extractor and the laborer's birth colony.
+
+        kind ∈ {'ore:copper','ore:gold','salvage','food','crop','wood'} selects the
+        sink. `colony` is the acting unit's own (birth) colony — under VIRTUAL labor
+        delivery there is no unit migration, so the acting unit's colony_id equals its
+        birth colony_id and equals `colony`.
+
+        Preconditions (Require):
+          - colony is unit's own colony (colony.colony_id == unit.colony_id).
+          - amount >= 0; for discrete kinds (ore:*, salvage, wood) amount is an int
+            item-count (always 1 at the live call sites); for continuous kinds
+            (food, crop) amount is a float payout.
+
+        Postconditions (Guarantee):
+          - extractor_share + birth_share == amount  EXACTLY (mint-free, loss-free;
+            birth_share is computed as amount - extractor_share, never rounded
+            independently).
+          - laboring_for < 0 (or a dead/absent extractor) => the ENTIRE amount lands
+            in `colony` via kind's sink, byte-identical to the pre-LV2 code path
+            (the default-neutral guarantee).
+
+        Failure modes: none raised; a stale laboring_for pointing at a dead colony is
+          self-healed to -1 and treated as free.
+        """
+        ext_id = getattr(unit, 'laboring_for', -1)
+        extractor = self._colony_by_id(ext_id) if ext_id >= 0 else None
+
+        # self-heal a dangling thrall pointer, then behave as free
+        if ext_id >= 0 and (extractor is None or not extractor.is_alive()):
+            unit.laboring_for = -1
+            ext_id = -1
+            extractor = None
+
+        if ext_id < 0:
+            # FREE PATH — byte-identical to today
+            self._deposit(colony, kind, amount)
+            return
+
+        # THRALL PATH — split by w (brute mode in M1/M2; M3 supplies a bargained w)
+        w = W_BRUTE                                 # 0.0 -> whole value to the extractor
+        extractor_share = self._extract_share(kind, amount, w)   # (1-w)*amount, kind-aware
+        birth_share = amount - extractor_share          # remainder: conserves exactly
+        self._deposit(extractor, kind, extractor_share)
+        self._deposit(colony, kind, birth_share)
+
     def _posture(self, colony: Colony) -> str:
         """The colony's current learned posture (FORAGE when unlearned)."""
         if not hasattr(self, 'learners') or colony.colony_id not in self.learners:
@@ -3879,9 +4018,9 @@ class SandKingsSimulation:
         x, y, z = unit.position
         if max(abs(mx - x), abs(my - y), abs(mz - z)) <= 2:
             if unit.carrying == 'salvage':
-                colony.salvage = getattr(colony, 'salvage', 0) + 1
+                self._credit_labor(unit, colony, 'salvage', 1)
             else:
-                colony.ore[unit.carrying] = colony.ore.get(unit.carrying, 0) + 1
+                self._credit_labor(unit, colony, 'ore:' + unit.carrying, 1)
             unit.carrying = None
             return True
         self._step_toward(unit, colony.maw.position, colony)
@@ -5080,7 +5219,7 @@ class SandKingsSimulation:
                 if voxel in (VoxelType.FOOD, VoxelType.CORPSE):
                     unit.move((nx, ny, nz))
                     self.world.set_voxel(nx, ny, nz, VoxelType.AIR)
-                    colony.maw.eat(HARVEST_YIELD)
+                    self._credit_labor(unit, colony, 'food', HARVEST_YIELD)
                     if voxel == VoxelType.CORPSE:  # T42: bones from the fallen
                         colony.bone = getattr(colony, 'bone', 0) + 1
                     elif (nx, ny, nz) in getattr(self, 'keeper_manna', ()):
@@ -5115,12 +5254,12 @@ class SandKingsSimulation:
                     payout *= 1 + FARM_YIELD_BONUS * self._prof(  # TE10
                         colony, 'farming')
                     if foreign and d.ally(colony.colony_id, owner):
-                        colony.maw.eat(payout * 0.6)  # co-op split (P10)
+                        self._credit_labor(unit, colony, 'crop', payout * 0.6)   # harvester's co-op share, thrall-redirectable
                         owner_colony = self._colony_by_id(owner)
                         if owner_colony is not None and owner_colony.is_alive():
-                            owner_colony.maw.eat(payout * 0.4)
+                            owner_colony.maw.eat(payout * 0.4)                   # owner's cut — UNCHANGED, not labor the harvester produced
                     else:
-                        colony.maw.eat(payout)
+                        self._credit_labor(unit, colony, 'crop', payout)
                     self._practice(colony, 'farming')  # TE7
                     self.world.voxels[nx, ny, nz] = VoxelType.TILLED.value
                     unit.forage_target = None
