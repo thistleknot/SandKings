@@ -333,6 +333,28 @@ GOODS_VOLUME_CAP = 5              # max goods units shipped per settlement inter
 NONVIABLE_LIMIT = 3               # consecutive non-viable settlements before contract closes (WG10)
 EPS_POWER = 1e-9                  # denominator guard for composite_power ratios (WG2/WG3)
 
+# The Bargain: Mode Selection by Net Extraction (SPEC_BARGAIN BG1-BG12)
+# Mode enum (BG1): string constants, pickle-trivial, log-readable
+BARGAIN_MODE_NONE       = 'none'         # no arrangement worth making (peace, no contract)
+BARGAIN_MODE_WAGE       = 'wage'         # peace: M3 opens contracts for this pair
+BARGAIN_MODE_SUBJUGATE  = 'subjugate'    # war: M2 captures for this pair
+BARGAIN_MODE_ANNIHILATE = 'annihilate'   # war: normal combat, value destroyed
+# Constants (BG8)
+BARGAIN_ENABLED = False               # master gate; False ⇒ byte-identical battery (BGA-1)
+BARGAIN_CAPTURE_CHANCE = 0.4          # live CAPTURE_CHANCE the --bargain switch sets
+BARGAIN_V_EST = 10.0                  # estimated labor-value per free unit per horizon
+BARGAIN_WAGE_RELIABILITY = 1.0        # fraction of wage output realised (peacetime)
+BARGAIN_BRUTE_RELIABILITY = 0.45      # fraction captured after defiance leak (must stay < (1-W_FAIR))
+BARGAIN_ENFORCE_COST = 2.0            # value spent guarding each thrall per horizon
+BARGAIN_WAR_LOSS = 30.0               # expected attrition to enter/prosecute war from peace
+BARGAIN_DESTROY_WEIGHT = 0.15         # fraction of rival's composite_power valued by annihilating
+BARGAIN_DOMINANCE_MIN = 1.1           # min composite_power ratio for brute capture feasibility
+BARGAIN_DOMINANCE_SCALE = 1.0         # how fast capturable pool grows with dominance past 1.0
+BARGAIN_TRUST_REF = 100.0             # negative-trust magnitude that saturates hatred to 1.0
+BARGAIN_GRUDGE_FEUD_W = 0.6           # weight of blood-feud presence in grudge score
+BARGAIN_GRUDGE_TRUST_W = 0.6          # weight of negative diplomatic trust in grudge score
+BARGAIN_GRUDGE_SENS = 1.2             # how hard grudge collapses the wage trust-factor
+
 # Metamorphosis (SPEC_METAMORPHOSIS MT1-MT4): the maw grows into a new breed
 MOLT_POP = 26                # population that triggers the stage-2 molt
 MOLT_FOOD = 420              # or this much hoarded food
@@ -1638,7 +1660,11 @@ class SandKingsSimulation:
                     pruned = colony.genome.brain.prune_weights(threshold=0.01)
                     if pruned > 0:
                         print(f"Colony {colony.colony_id}: Pruned {pruned} weights")
-        
+
+        # 4b. THE BARGAIN (SPEC_BARGAIN): choose per-pair enforcement mode from
+        #     net extraction BEFORE war entry / wages / capture read it
+        self._bargain_tick()
+
         # 5. Food consumption and starvation (DARWINIAN PRESSURE)
         for colony in self.colonies:
             if not colony.is_alive():
@@ -1756,6 +1782,9 @@ class SandKingsSimulation:
             if current_target is None:
                 if colony.maw.food_stored > enter_at:
                     target = self._select_war_target(colony)
+                    if (BARGAIN_ENABLED and target is not None
+                            and self._bargain_mode_ids(cid, target) == BARGAIN_MODE_WAGE):
+                        target = None    # bargain: a wage relation nets more than war
                     d.war_target[cid] = target
                     if target is not None:
                         self._log_event(f"Colony {cid} declares war"
@@ -3282,6 +3311,9 @@ class SandKingsSimulation:
                 for seller_cand, buyer_cand in [(seller, buyer), (buyer, seller)]:
                     if self._pair_at_war(seller_cand, buyer_cand):
                         continue    # peace only
+                    if (getattr(self, 'bargain_enabled', False)
+                            and self._bargain_mode(seller_cand, buyer_cand) != BARGAIN_MODE_WAGE):
+                        continue    # M4 routes only WAGE pairs into the market
                     # Try each factor kind
                     for kind in ['labor', 'license', 'goods']:
                         if kind == 'labor':
@@ -4128,6 +4160,111 @@ class SandKingsSimulation:
             self.diplomacy = Diplomacy()
         return self.diplomacy
 
+    # ========================================================================
+    # THE BARGAIN (SPEC_BARGAIN BG1-BG7): per-pair mode selection by net extraction
+    # ========================================================================
+
+    def _bargain_modes(self) -> dict:
+        """Per-step map {frozenset({a_id, b_id}): mode_str}. Transient: rebuilt each
+        _bargain_tick; getattr-guarded so a resumed/inert sim reads an empty map."""
+        if not hasattr(self, 'bargain_modes'):
+            self.bargain_modes = {}
+        return self.bargain_modes
+
+    def _bargain_mode(self, a: Colony, b: Colony) -> str:
+        """Mode selected for the unordered pair (a, b) THIS step; NONE if unset."""
+        return self._bargain_modes().get(frozenset((a.colony_id, b.colony_id)),
+                                         BARGAIN_MODE_NONE)
+
+    def _bargain_mode_ids(self, a_id: int, b_id: int) -> str:
+        """Mode by colony_id (used by the war-entry gate, which has ids not colonies)."""
+        return self._bargain_modes().get(frozenset((a_id, b_id)), BARGAIN_MODE_NONE)
+
+    def _bargain_ev_wage(self, extractor: Colony, birth: Colony) -> float:
+        """Net value `extractor` can pull from `birth`'s labor via M3 wage contracts.
+        Reliable (no defiance leak), scalable (all free units), no enforcement cost,
+        no war loss. Pure; no RNG."""
+        n_labor = self._factor_endowment(birth)['labor']        # free hireable units (M3)
+        w       = self._labor_w(birth, extractor)               # M3 price: seller=birth, buyer=extractor
+        trust_f = self._bargain_trust_factor(extractor, birth)  # grudge collapses willingness (BG3)
+        return (BARGAIN_WAGE_RELIABILITY
+                * n_labor * (1.0 - w) * BARGAIN_V_EST
+                * trust_f)
+
+    def _bargain_ev_brute(self, captor: Colony, victim: Colony) -> float:
+        """Net value via M2 forced capture. Whole value per thrall (w = W_BRUTE = 0),
+        but only BARGAIN_BRUTE_RELIABILITY survives defiance; minus per-thrall
+        enforcement; minus war attrition (0 if already at war — sunk). Pure; no RNG."""
+        dom = composite_power(captor) / max(EPS_POWER, composite_power(victim))
+        if dom < BARGAIN_DOMINANCE_MIN:
+            return 0.0                                          # cannot capture -> infeasible
+        n_cap  = self._bargain_capturable(captor, victim)       # dominance-bounded (BG2d)
+        gross  = n_cap * BARGAIN_V_EST * (1.0 - W_BRUTE)        # W_BRUTE = 0 -> whole value
+        leaked = gross * BARGAIN_BRUTE_RELIABILITY              # < 1: defiance/refusal/break-free
+        enforce  = BARGAIN_ENFORCE_COST * n_cap
+        war_loss = 0.0 if self._pair_at_war(captor, victim) else BARGAIN_WAR_LOSS
+        return leaked - enforce - war_loss
+
+    def _bargain_ev_destroy(self, aggressor: Colony, rival: Colony) -> float:
+        """Value of simply destroying `rival`'s power, scaled by grudge/threat.
+        Pure; no RNG."""
+        grudge   = self._bargain_grudge(aggressor, rival)       # 0..1 (BG3)
+        war_loss = 0.0 if self._pair_at_war(aggressor, rival) else BARGAIN_WAR_LOSS
+        return BARGAIN_DESTROY_WEIGHT * composite_power(rival) * grudge - war_loss
+
+    def _bargain_capturable(self, captor: Colony, victim: Colony) -> float:
+        """Free victim units the captor could realistically take, rising with
+        dominance. Same pool E_wage would hire, so the comparison is apples-to-apples."""
+        n_free = sum(1 for u in victim.units if getattr(u, 'laboring_for', -1) < 0)
+        dom    = composite_power(captor) / max(EPS_POWER, composite_power(victim))
+        return n_free * _clamp01((dom - 1.0) / BARGAIN_DOMINANCE_SCALE)
+
+    def _bargain_grudge(self, a: Colony, b: Colony) -> float:
+        """0..1 grudge/threat between the two houses. Pure; no RNG."""
+        d  = self._diplomacy()
+        ha = self._house_name(a)
+        hb = self._house_name(b)
+        grudges = self._house_grudges()
+        feud   = 1.0 if ((ha, hb) in grudges or (hb, ha) in grudges) else 0.0
+        hatred = max(0.0, -d.trust(a.colony_id, b.colony_id)) / BARGAIN_TRUST_REF
+        return _clamp01(BARGAIN_GRUDGE_FEUD_W * feud + BARGAIN_GRUDGE_TRUST_W * hatred)
+
+    def _bargain_trust_factor(self, a: Colony, b: Colony) -> float:
+        """Willingness to hold a VOLUNTARY wage relation: 1.0 with no grudge, ->0 as
+        grudge rises. Pure; no RNG."""
+        return _clamp01(1.0 - BARGAIN_GRUDGE_SENS * self._bargain_grudge(a, b))
+
+    def _bargain_pair_mode(self, a: Colony, b: Colony) -> str:
+        """Choose the enforcement mode for the unordered pair (a, b). Pure; no RNG."""
+        if composite_power(a) >= composite_power(b):
+            strong, weak = a, b
+        else:
+            strong, weak = b, a
+        e_wage    = self._bargain_ev_wage(strong, weak)
+        e_brute   = self._bargain_ev_brute(strong, weak)
+        e_destroy = self._bargain_ev_destroy(strong, weak)
+        best = max(e_wage, e_brute, e_destroy)
+        if best <= 0.0:
+            return BARGAIN_MODE_NONE                     # nothing worth doing -> plain peace
+        if e_wage >= e_brute and e_wage >= e_destroy:
+            return BARGAIN_MODE_WAGE
+        if e_brute >= e_destroy:
+            return BARGAIN_MODE_SUBJUGATE
+        return BARGAIN_MODE_ANNIHILATE
+
+    def _bargain_tick(self):
+        """Rebuild the per-pair mode map from net-extraction EVs, then let the existing
+        hooks read it (war entry BG6 in stage 5; wage open-sweep BG5b at 5c; capture
+        BG5a at stage 6). Consumes NO RNG. DEFAULT-NEUTRAL when disabled."""
+        if not BARGAIN_ENABLED:
+            return                                    # early-out: no map, no state, no RNG
+        modes = {}
+        living = [c for c in self.colonies if c.is_alive()]
+        for i, a in enumerate(living):
+            for b in living[i + 1:]:
+                modes[frozenset((a.colony_id, b.colony_id))] = self._bargain_pair_mode(a, b)
+        self.bargain_modes = modes                    # replaces last step's map wholesale
+
     def _colony_by_id(self, colony_id: int) -> Optional[Colony]:
         return next((c for c in self.colonies if c.colony_id == colony_id), None)
 
@@ -4181,6 +4318,8 @@ class SandKingsSimulation:
         Runtime stand-in (`--subjugation` flag → `sim.subjugation_enabled`): an
         at-war colony prefers to enslave — "this only happens in condition of war".
         """
+        if getattr(self, 'bargain_enabled', False):
+            return self._bargain_mode(captor_colony, victim_colony) == BARGAIN_MODE_SUBJUGATE
         if getattr(captor_colony, 'subjugation_stance', False):
             return True
         return bool(getattr(self, 'subjugation_enabled', False)
@@ -6462,6 +6601,11 @@ def main():
     parser.add_argument('--wages', action='store_true',
                         help='Enable the wage market: colonies hire labor, license tech, '
                              'and trade goods at negotiated prices (SPEC_WAGES)')
+    parser.add_argument('--bargain', action='store_true',
+                        help='Enable the full inter-colony bargain: each pair '
+                             'chooses annihilate / subjugate / wage by net '
+                             'extraction, driving capture and the wage market '
+                             '(SPEC_BARGAIN; supersedes --subjugation and --wages)')
     args = parser.parse_args()
     
     print("="*60)
@@ -6506,6 +6650,18 @@ def main():
         sim.wage_enabled = True
         print(f"[CHAIN] WAGES ENABLED - colonies trade labor, tech, and goods "
               f"at negotiated prices (SPEC_WAGES)")
+
+    # --bargain: turn on the full bargain arc (M4: per-pair mode selection by net
+    # extraction). Sets BARGAIN_ENABLED=True, enables WAGE_ENABLED and CAPTURE_CHANCE,
+    # so the operator enables one thing rather than three.
+    if getattr(args, 'bargain', False):
+        globals()['BARGAIN_ENABLED'] = True
+        globals()['WAGE_ENABLED']    = True
+        globals()['CAPTURE_CHANCE']  = BARGAIN_CAPTURE_CHANCE
+        sim.bargain_enabled = True
+        print("[CHAIN] BARGAIN ENABLED - each colony pair chooses annihilate/"
+              "subjugate/wage by net extraction; wages win when force merely leaks "
+              "(SPEC_BARGAIN)")
 
     # Enable neural mode if requested (fresh sims only - resumed sims keep
     # their evolved brains)

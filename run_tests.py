@@ -40,7 +40,7 @@ if ROOT not in sys.path:
 import sandkings  # torch imported exactly once here (via neural_hive)
 
 # Feature gates suites may flip; reset before each suite for isolation.
-_GATE_NAMES = ("CAPTURE_CHANCE", "WAGE_ENABLED")
+_GATE_NAMES = ("CAPTURE_CHANCE", "WAGE_ENABLED", "BARGAIN_ENABLED")
 _GATE_DEFAULTS = {n: getattr(sandkings, n) for n in _GATE_NAMES if hasattr(sandkings, n)}
 
 
