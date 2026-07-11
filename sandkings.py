@@ -2613,6 +2613,47 @@ class SandKingsSimulation:
             self._log_event(f"House {self._house_name(colony)}'s catapult hurls"
                             " a shot across the sands!")
 
+    def _plunder_techs(self, fallen: Colony):
+        """T3 conquest-steal: the aggressor at war with a fallen house seizes
+        its technology (currently only its ore spilled). Run BEFORE the slot's
+        treaties are cleared, so the war target is still known."""
+        fallen_techs = set(getattr(fallen, 'techs', set()))
+        diplomacy = getattr(self, 'diplomacy', None)
+        if not fallen_techs or diplomacy is None:
+            return
+        victor = None
+        for other in self.colonies:
+            if (other is not fallen and other.is_alive()
+                    and diplomacy.war_target.get(other.colony_id) == fallen.colony_id):
+                victor = other
+                break
+        if victor is None:
+            return
+        stolen = fallen_techs - set(getattr(victor, 'techs', set()))
+        for t in stolen:
+            self._grant_tech(victor, t)
+            victor.tech_xp[t] = max(victor.tech_xp.get(t, 0.0), TECH_LEARN_XP)
+        if stolen:
+            self._log_event(f"House {self._house_name(victor)} plunders the"
+                            f" secrets of fallen House {self._house_name(fallen)}")
+
+    def _barter_tech(self, a: Colony, b: Colony):
+        """T3 barter: a truce is sealed with a gift of knowledge - the tech-
+        richer house shares ONE technology the other lacks (a peace dividend)."""
+        atech = set(getattr(a, 'techs', set()))
+        btech = set(getattr(b, 'techs', set()))
+        giver, taker, share = (a, b, atech - btech) if len(atech) >= len(btech) \
+            else (b, a, btech - atech)
+        share = {t for t in share
+                 if TECH_REGISTRY.get(t, {}).get('kind') == 'native'}
+        if not share:
+            return
+        tech = sorted(share)[0]
+        self._grant_tech(taker, tech)
+        taker.tech_xp[tech] = max(taker.tech_xp.get(tech, 0.0), TECH_LEARN_XP)
+        self._log_event(f"House {self._house_name(giver)} shares {tech} with"
+                        f" House {self._house_name(taker)} to seal the peace")
+
     def _are_allied(self, a: int, b: int) -> bool:
         """Ally latch between two colonies (TE8 weighting)."""
         diplomacy = getattr(self, 'diplomacy', None)
@@ -4092,6 +4133,7 @@ class SandKingsSimulation:
         if d.war_target.get(b) == a:
             d.war_target[b] = None
         self._log_event(f"Colony {a} and Colony {b} strike a truce")
+        self._barter_tech(colony, other)  # T3: a peace sealed with knowledge
         for c, o in ((colony, b), (other, a)):
             monitor = self._monitor(c.colony_id)
             monitor.log_decision(self.step_count, f"Colony {c.colony_id}",
@@ -4793,6 +4835,7 @@ class SandKingsSimulation:
                             break
                 ore['copper'] = ore['gold'] = 0
 
+            self._plunder_techs(colony)  # T3: the victor seizes the tech
             self.world.ownership[self.world.ownership == colony.colony_id] = -1
             self.pheromones.trails[:, :, :, colony.colony_id, :] = 0.0
             # Political death (P12/P8): treaties and grudges die with the

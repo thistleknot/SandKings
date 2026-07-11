@@ -101,6 +101,19 @@ gunpowder over time; with masonry+gunpowder, catapult; a catapult at war lands a
 shot that damages the enemy maw + ignites at impact; a gunpowder soldier hits
 harder; boats/naval + terraforming follow in T2c2.
 
+## TE12 — Diffusion: barter & conquest (T3)
+Technology also moves BETWEEN living/dying houses (observation was TE8):
+- **Conquest-steal** (`_plunder_techs`, in `_check_maw_deaths` before treaties
+  clear): when a maw falls, the aggressor at war with it (its `war_target`)
+  SEIZES the fallen house's `techs` (previously only its ore spilled), at
+  `TECH_LEARN_XP` proficiency. "House X plunders the secrets of fallen House Y."
+- **Barter for peace** (`_barter_tech`, on a struck truce in `_propose_truce`):
+  the tech-richer house shares ONE native tech the other lacks — a peace sealed
+  with a gift of knowledge. "House X shares <tech> with House Y to seal the
+  peace."
+Acceptance (tests/test_tech_diffusion.py): a conqueror inherits a fallen enemy's
+tech; a truce transfers a tech from the richer to the poorer house.
+
 ## Status / Reconciliation
 - T1 (TE1-TE6) drafted+implemented 2026-07-10 (commit 14bde16). T2a (TE7-TE9)
   same session. T2b (bonuses/skills), T2c (gunpowder/siege/naval), T2d (crafting)
