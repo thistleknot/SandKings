@@ -223,3 +223,111 @@ def test_keeper_open_door_toggle_bound():
     sim.keeper_bound = False
     sim.keeper_open_door(colony)
     assert getattr(colony, 'breached', False) is True
+
+
+# ============================================================================
+# BRK-A1: address space opened (root fix) - port 7 now reachable
+# ============================================================================
+
+def test_brk_a1_actuator_names_has_terminal():
+    """BRK-A1(a): ACTUATOR_NAMES now has 8 entries with TERMINAL at index 7."""
+    from machines import ACTUATOR_NAMES
+    assert len(ACTUATOR_NAMES) == 8, f"expected 8 actuators, got {len(ACTUATOR_NAMES)}"
+    assert ACTUATOR_NAMES[7] == "TERMINAL", f"expected index 7 to be 'TERMINAL', got {ACTUATOR_NAMES[7]}"
+
+
+def test_brk_a1_vm_mask_reaches_7():
+    """BRK-A1(b): VM ACT opcode can emit port 7 (a % len(ACTUATOR_NAMES) == 7)."""
+    from machines import ACTUATOR_NAMES
+    # The modulo operation should allow 7 to remain 7
+    assert 7 % len(ACTUATOR_NAMES) == 7, "7 % 8 should equal 7"
+
+    # Verify that a Controller can emit port 7 through ACT
+    prog = [("ACT", 7, 0, 0)]  # ACT with a=7
+    c = Controller(0, prog)
+    ports_seen = []
+    c.tick(lambda p: 0, lambda p, v: ports_seen.append(p))
+    assert 7 in ports_seen, "VM should emit port 7 when ACT a=7"
+
+
+def test_brk_a1_tinkerer_reaches_7():
+    """BRK-A1(b): GP tinkerer can generate an ACT targeting port 7."""
+    from machines import GPTinkerer, ACTUATOR_NAMES
+    import random
+
+    rng = random.Random(0)
+    tinkerer = GPTinkerer()
+    seen_ports = set()
+
+    # Generate 500 random instructions, collect ACT ports
+    for _ in range(500):
+        instr = tinkerer._random_instr(rng, 6)
+        if instr[0] == "ACT":
+            seen_ports.add(instr[1])
+
+    # With 500 samples and 8 possible ports, we should see 7
+    assert 7 in seen_ports, f"tinkerer should generate ACT with port 7, saw {seen_ports}"
+
+
+def test_brk_a1_organic_reachability():
+    """BRK-A1(c): pi controller at TERMINAL_UNLOCK can reach port 7 and increment terminal_uses."""
+    sim = make_sim()
+    colony = sim.colonies[0]
+    colony.machine_arc = 'claimed'  # Enter the machine arc
+
+    # Create and attach a pi-gifted controller (fuel_cap > VM_FUEL)
+    ctrl = Controller(colony.colony_id, fuel=PI_FUEL, durability=PI_DURABILITY)
+    ctrl.operate_ticks = TERMINAL_UNLOCK  # Unlock the terminal
+    colony.controllers = [ctrl]
+
+    # Ensure terminal_uses starts at 0
+    colony.terminal_uses = 0
+
+    # Call _actuate with port 7, value 1 (the 'ls /world/food' command)
+    sim._actuate(colony, 7, 1)
+
+    # Verify terminal_uses incremented (the port 7 path reached _terminal_command)
+    assert getattr(colony, 'terminal_uses', 0) > 0, \
+        "pi-gifted colony at TERMINAL_UNLOCK should have terminal_uses > 0 after port 7 actuate"
+
+
+# ============================================================================
+# BRK-A2: pi gate still holds (organic breakout requires pi)
+# ============================================================================
+
+def test_brk_a2_non_pi_controller_port_7_gated():
+    """BRK-A2: non-pi controller (fuel_cap == VM_FUEL) cannot use port 7 even if operate_ticks >= TERMINAL_UNLOCK."""
+    sim = make_sim()
+    colony = sim.colonies[1]
+    colony.machine_arc = 'claimed'
+
+    # Create a NON-pi controller (fuel_cap defaults to VM_FUEL)
+    ctrl = Controller(colony.colony_id)  # NO fuel arg -> fuel_cap == VM_FUEL
+    ctrl.operate_ticks = TERMINAL_UNLOCK  # Unlocked ticks, but NOT pi
+    colony.controllers = [ctrl]
+
+    # Ensure terminal_uses starts at 0
+    colony.terminal_uses = 0
+
+    # Call _actuate with port 7, value 1
+    sim._actuate(colony, 7, 1)
+
+    # Verify terminal_uses did NOT increment (pi gate held)
+    assert getattr(colony, 'terminal_uses', 0) == 0, \
+        "non-pi controller should not increment terminal_uses, even at port 7"
+
+
+def test_brk_a2_no_controller_port_7_gated():
+    """BRK-A2: colony with no controllers cannot use port 7."""
+    sim = make_sim()
+    colony = sim.colonies[2]
+    colony.machine_arc = 'claimed'
+    colony.controllers = []  # No controllers at all
+    colony.terminal_uses = 0
+
+    # Call _actuate with port 7
+    sim._actuate(colony, 7, 1)
+
+    # Verify terminal_uses stays 0
+    assert getattr(colony, 'terminal_uses', 0) == 0, \
+        "colony with no controllers should not increment terminal_uses at port 7"

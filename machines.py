@@ -50,7 +50,7 @@ SENSOR_NAMES = ("FOOD", "POP", "SEASON", "ENEMY", "CROPS", "STORM",
 # Base feats 0-3; GEO cartridge 4-5 (terraform); BIO cartridge 6 (T39/T40).
 # Cartridge actuators build only after reverse-engineering (the research).
 ACTUATOR_NAMES = ("GATE", "VALVE", "ALARM", "BEACON",
-                  "EXCAVATE", "DEPOSIT", "RAD")
+                  "EXCAVATE", "DEPOSIT", "RAD", "TERMINAL")
 CARTRIDGE_KINDS = {"EXCAVATE": "GEO", "DEPOSIT": "GEO", "RAD": "BIO"}
 OPS = ("NOP", "LET", "MOV", "ADD", "SUB", "MUL", "DIV", "SENSE", "ACT",
        "IFC", "JMP")
