@@ -103,6 +103,8 @@ def build_state(sim: SandKingsSimulation) -> Dict:
             # AW1: aware of the "great other" only post-breakout; before that a
             # nature mood, not a keeper sentiment
             "techs": sorted(getattr(colony, 'techs', set())),  # TE5
+            "tech_xp": {t: round(float(x), 2)  # TE9 proficiency
+                        for t, x in getattr(colony, 'tech_xp', {}).items()},
             "aware": bool(getattr(colony, 'breached', False)),
             "nature_mood": (sim._nature_mood(colony)
                             if not getattr(colony, 'breached', False)
@@ -717,7 +719,7 @@ function render(){
         ? `<span>toward you <b style="color:${sentColor(col.sentiment)}">${sentWord(col.sentiment,col.attitude)}</b></span>`
         : `<span>feels <b>${col.nature_mood||'—'}</b> <i style="opacity:.6">(unexplained forces)</i></span>`)+`</div>`+
       (col.alive?`<div class="mood">${col.mood}</div>`:'');
-    if(col.techs&&col.techs.length)inner+=`<div class="mood">tech: ${col.techs.join(', ')}</div>`;
+    if(col.techs&&col.techs.length)inner+=`<div class="mood">tech: ${col.techs.map(t=>col.tech_xp&&col.tech_xp[t]!=null?`${t} ${Math.round(col.tech_xp[t]*100)}%`:t).join(', ')}</div>`;
     if(col.breached&&col.utterance)inner+=`<div class="says">says: "${col.utterance}"</div>`;
     if(selected===col.id&&col.breached&&col.alive){
       inner+=`<div class="speak"><input id="say${col.id}" placeholder="say something to House ${col.house}..." onkeydown="if(event.key==='Enter')converse(${col.id},'say${col.id}')">`+

@@ -260,6 +260,14 @@ TECH_REGISTRY = {
     'plow':       {'kind': 'native', 'desc': 'breaking the soil'},
     'masonry':    {'kind': 'native', 'desc': 'raised stone'},
 }
+# T2a acquisition (SPEC_TECH TE7-TE9): practice + observe + grains -> proficiency
+TECH_TICK = 20               # cadence of the observe/grains pass
+TECH_PRACTICE_XP = 0.02      # proficiency gained per practiced action
+TECH_LEARN_XP = 0.3          # xp at which a tech becomes KNOWN
+TECH_OBSERVE_RANGE = 8       # Chebyshev maw-distance to learn by watching
+TECH_OBSERVE_XP = 0.03       # xp gained per observe tick (× relationship)
+TECH_GRAIN_COST = 8.0        # grains spent to buy research (the currency sink)
+TECH_GRAIN_XP = 0.15         # xp bought per grain spend
 TERMINAL_UNLOCK = 40         # pi operate-ticks before the terminal (K10)
 TERMINAL_MASTERY = 16        # successful commands before the breach
 SPOKEN_MEMORY = 50           # steps the `speak` anchor stays lit (K12)
@@ -898,10 +906,14 @@ class Colony:
                 if self.at_war and getattr(self, 'wood', 0) >= 1:
                     self.wood -= 1
                     unit.torch = True
-                    # TE4: fielding a torch IS the fire technology
+                    # TE4/TE7: fielding a torch IS the fire technology
                     if not hasattr(self, 'techs'):
                         self.techs = set()
                     self.techs.add('fire')
+                    if not hasattr(self, 'tech_xp'):
+                        self.tech_xp = {}
+                    self.tech_xp['fire'] = min(1.0, max(
+                        self.tech_xp.get('fire', 0.0), 0.3) + 0.05)
             self.units.append(unit)
     
     def remove_unit(self, unit: SandKing):
@@ -1455,6 +1467,10 @@ class SandKingsSimulation:
         # 3c-h. THE HAND'S WATER (SPEC_HYDRO_HAND HH2): irrigation / deluge
         self._keeper_water_tick()
 
+        # 3c-t. TECHNOLOGY (SPEC_TECH TE8/TE9): observe neighbors, buy research
+        if self.step_count % TECH_TICK == 0 and self.step_count:
+            self._tech_tick()
+
         # 3d. CROP GROWTH (T19/T20)
         if self.step_count % CROP_TICK == 0:
             self._grow_crops()
@@ -1998,6 +2014,7 @@ class SandKingsSimulation:
             self.world.voxels[best] = VoxelType.WOOD_WALL.value
             self.world.ownership[best] = colony.colony_id
             self._rot()[best] = self.step_count + WALL_ROT
+            self._practice(colony, 'masonry')  # TE7: raising walls
             self._milestone(colony, 'palisade',
                             f"Colony {colony.colony_id} raises palisades"
                             " around its maw", unit)
@@ -2419,6 +2436,62 @@ class SandKingsSimulation:
         kind = TECH_REGISTRY.get(tech, {}).get('kind', 'native')
         if kind == 'native':
             self._log_event(f"House {self._house_name(colony)} learns {tech}")
+
+    def _practice(self, colony: Colony, tech: str,
+                  amount: float = TECH_PRACTICE_XP):
+        """TE7: learning by doing - raise proficiency; learn at the threshold."""
+        if not hasattr(colony, 'tech_xp'):
+            colony.tech_xp = {}
+        xp = min(1.0, colony.tech_xp.get(tech, 0.0) + amount)
+        colony.tech_xp[tech] = xp
+        if xp >= TECH_LEARN_XP and tech not in getattr(colony, 'techs', set()):
+            self._grant_tech(colony, tech)
+
+    def _tech_tick(self):
+        """TE8/TE9: observe a neighbor's works, and spend grains on research."""
+        alive = [c for c in self.colonies if c.is_alive()]
+        for colony in alive:
+            # TE8 observe: learn a native tech a nearby house knows and you lack
+            mx, my, _ = colony.maw.position
+            best = None  # (weight, tech)
+            for other in alive:
+                if other is colony:
+                    continue
+                ox, oy, _ = other.maw.position
+                if max(abs(mx - ox), abs(my - oy)) > TECH_OBSERVE_RANGE:
+                    continue
+                from politics import hostile as _hostile
+                if _hostile(self, colony.colony_id, other.colony_id):
+                    weight = 0.25
+                elif self._are_allied(colony.colony_id, other.colony_id):
+                    weight = 1.0
+                else:
+                    weight = 0.5
+                for tech in getattr(other, 'techs', ()):  # only native diffuses
+                    if (TECH_REGISTRY.get(tech, {}).get('kind') == 'native'
+                            and colony.tech_xp.get(tech, 0.0) < TECH_LEARN_XP
+                            and (best is None or weight > best[0])):
+                        best = (weight, tech)
+            if best is not None:
+                self._practice(colony, best[1], TECH_OBSERVE_XP * best[0])
+            # TE9 grains: buy research for a tech you are partway to (the sink)
+            if getattr(colony, 'currency', 0.0) >= TECH_GRAIN_COST:
+                partial = [t for t, xp in colony.tech_xp.items()
+                           if 0.0 < xp < TECH_LEARN_XP
+                           and TECH_REGISTRY.get(t, {}).get('kind') == 'native']
+                if partial:
+                    tech = partial[0]
+                    colony.currency -= TECH_GRAIN_COST
+                    self._practice(colony, tech, TECH_GRAIN_XP)
+                    self._log_event(f"House {self._house_name(colony)} pours"
+                                    f" grains into {tech}")
+
+    def _are_allied(self, a: int, b: int) -> bool:
+        """Ally latch between two colonies (TE8 weighting)."""
+        diplomacy = getattr(self, 'diplomacy', None)
+        if diplomacy is None:
+            return False
+        return bool(diplomacy.allied.get(frozenset((a, b)), False))
 
     def _claim_gift(self, colony: Colony, kind: str, unit: SandKing):
         """K9/TE3: revelation by artifact - the foreign ladder advances the arc
@@ -3560,6 +3633,7 @@ class SandKingsSimulation:
                     colony.maw.food_stored -= SEED_COST
                     self.world.voxels[nx, ny, nz] = VoxelType.CROP.value
                     self._crops()[(nx, ny, nz)] = 0
+                    self._practice(colony, 'plow')  # TE7: breaking the soil
                     self._milestone(colony, 'sowed',
                                     f"Colony {colony.colony_id} sows its first field",
                                     unit)
@@ -3571,6 +3645,7 @@ class SandKingsSimulation:
                 if max(abs(sx - x), abs(sy - y), abs(sz - z)) <= 1:
                     self.world.voxels[site] = VoxelType.TILLED.value
                     self.world.ownership[site] = colony.colony_id
+                    self._practice(colony, 'plow')  # TE7: breaking the soil
                     return True
                 return self._step_toward(unit, site, colony)
         return False
@@ -3616,6 +3691,7 @@ class SandKingsSimulation:
             unit.carrying = kind
             unit.mine_target = None
             unit.mine_progress = 0
+            self._practice(colony, 'metallurgy')  # TE7: ore-working
             if kind not in colony.ore_struck:
                 colony.ore_struck.add(kind)
                 self._log_event(f"Colony {colony.colony_id} strikes {kind}!")
@@ -4812,6 +4888,7 @@ class SandKingsSimulation:
                             owner_colony.maw.eat(payout * 0.4)
                     else:
                         colony.maw.eat(payout)
+                    self._practice(colony, 'farming')  # TE7
                     self.world.voxels[nx, ny, nz] = VoxelType.TILLED.value
                     unit.forage_target = None
                     self._milestone(colony, 'harvested',
