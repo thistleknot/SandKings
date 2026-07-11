@@ -309,6 +309,30 @@ STRIKE_CHANCE = 0.1           # probability a defiant thrall strikes its guard b
 # stand-in for the M4 bargain layer, which will drive stance properly.
 SUBJUGATION_LIVE_CHANCE = 0.4  # capture probability when --subjugation is on
 
+# Wages & the Factor Market (SPEC_WAGES WG1-WG12): peace-tier extraction via labor, tech, and goods
+WAGE_ENABLED = False              # master gate; False => _labor_market_tick early-returns, byte-identical (WG12)
+RENEGOTIATE_INTERVAL = 200        # ticks between sticky w/fee renegotiations (WG9/F1)
+SETTLEMENT_INTERVAL = 50          # ticks between grain settlements + goods shipments (WG8)
+COMPLEMENTARITY_THRESHOLD = 0.30  # min (surplus-deficit)/(sum) on a factor axis to open a contract (WG2/WG4)
+W_CONTRACT_MIN = 0.05             # floor/ceiling clamp on labor w (keeps it voluntary and >0, thrall-distinct) (WG3a)
+LICENSE_FEE_BASE = 2.0            # base grain rent per licensed foreign gift per settlement interval (WG3b)
+LICENSE_TECH_MULT = {
+    'abacus': 1.05,
+    'watch': 1.10,
+    'calculator': 1.20,
+    'pi': 1.40
+}                                 # per-gift labor-yield multiplier granted to the renter (WG6)
+WAGE_GRAIN_RATE = 0.5             # fraction of marginal-value price paid as labor grain rent (WG3b)
+WAGE_POWER_SHARE_BASE = 0.5       # baseline split of trade surplus (even) (WG3b)
+WAGE_POWER_SHARE_SENS = 0.25      # how much relative power tilts the surplus split (WG3b)
+MV_BASE = 10.0                    # marginal-value numerator (MV = MV_BASE/(1+endowment)) (WG2)
+DESPERATION_LABOR_REF = 8.0       # buyer free-unit count that saturates labor-desperation to 0 (WG3a)
+CONTROL_TECH_REF = 2.0            # buyer foreign-gift count that saturates scarce-factor control to 1 (WG3a)
+LABOR_MAX_UNITS = 4               # max seller units bound per labor contract (WG5)
+GOODS_VOLUME_CAP = 5              # max goods units shipped per settlement interval (WG3b)
+NONVIABLE_LIMIT = 3               # consecutive non-viable settlements before contract closes (WG10)
+EPS_POWER = 1e-9                  # denominator guard for composite_power ratios (WG2/WG3)
+
 # Metamorphosis (SPEC_METAMORPHOSIS MT1-MT4): the maw grows into a new breed
 MOLT_POP = 26                # population that triggers the stage-2 molt
 MOLT_FOOD = 420              # or this much hoarded food
@@ -438,6 +462,11 @@ def w_bargain(power_ratio: float = 1.0,
          + W_DESPERATION_SENS * desperation
          - W_CONTROL_SENS * control)
     return max(0.0, min(1.0, w))
+
+
+def _clamp01(x: float) -> float:
+    """Clamp x to [0, 1]. Pure helper for WG2/WG3 (WG12)."""
+    return max(0.0, min(1.0, x))
 
 
 class VoxelWorld:
@@ -822,6 +851,7 @@ class SandKing:
     chop_target: Optional[Tuple[int, int, int]] = None  # trunk being cut (T41)
     chop_progress: int = 0
     laboring_for: int = -1  # colony_id of the current extractor; -1 = free (born free)
+    wage_ratio: float = 0.0  # laborer's BIRTH-colony output share under a live labor contract; 0.0 = none (== W_BRUTE, a forced thrall or free) (WG1a)
 
     # Neural hive mind extension (soldier's personal layer)
     brain_layer: Optional[SoldierLayer] = None
@@ -1798,6 +1828,9 @@ class SandKingsSimulation:
         # 5b. DIPLOMACY (SPEC_POLITICS): a truce signed this step prevents
         # this step's bloodshed
         self._resolve_diplomacy()
+
+        # 5c. WAGES (SPEC_WAGES): factor market — renegotiate, settle, open, suspend/close
+        self._labor_market_tick()
 
         # 6. Combat resolution
         self._resolve_conflicts()
@@ -2996,6 +3029,343 @@ class SandKingsSimulation:
             self.house_grains = {}
         return self.house_grains
 
+    # ---- Wage Market (SPEC_WAGES WG1-WG10): labor, tech licenses, and goods contracts ----
+
+    def _wage_contracts(self) -> list:
+        """Contract store: lazy per-sim list of plain dicts (WG1b). Mirrors _house_grains pattern."""
+        if not hasattr(self, 'wage_contracts'):
+            self.wage_contracts = []
+        return self.wage_contracts
+
+    def _goods_axis(self, factor: str) -> str:
+        """Map goods sink names to endowment axes (WG2/WG4 bug fix).
+        Ore goods ('ore:copper'/'ore:gold') both map to 'ore' endowment axis.
+        Food and wood map to themselves. Labor and tech already use 'labor' and 'tech'."""
+        return 'ore' if factor.startswith('ore:') else factor
+
+    def _factor_endowment(self, colony) -> dict:
+        """Scarce-factor vector. Pure read; getattr-guarded (WG2)."""
+        free = sum(1 for u in colony.units if getattr(u, 'laboring_for', -1) < 0)
+        ore = getattr(colony, 'ore', {}) or {}
+        techs = getattr(colony, 'techs', set()) or set()
+        return {
+            'labor': float(free),
+            'food': float(colony.maw.food_stored),
+            'ore': float(ore.get('copper', 0) + ore.get('gold', 0)),
+            'wood': float(getattr(colony, 'wood', 0)),
+            'tech': float(sum(1 for t in techs if t in TECH_FOREIGN)),
+        }
+
+    def _complementarity(self, seller, buyer, factor_axis: str) -> float:
+        """> 0 => seller SURPLUS, buyer DEFICIT in `factor_axis` (a trade opportunity) (WG2)."""
+        es = self._factor_endowment(seller)[factor_axis]
+        eb = self._factor_endowment(buyer)[factor_axis]
+        denom = es + eb
+        return 0.0 if denom <= 0.0 else (es - eb) / denom
+
+    def _marginal_value(self, colony, factor_axis: str) -> float:
+        """Grain value of ONE unit of `factor_axis` to `colony`: scarce => worth more (WG2)."""
+        endow = self._factor_endowment(colony)[factor_axis]
+        return MV_BASE / (1.0 + endow)
+
+    def _labor_w(self, seller, buyer) -> float:
+        """Labor share `w` (seller's retained output share). Reuses M1's w_bargain (WG3a)."""
+        pr = composite_power(seller) / max(EPS_POWER, composite_power(buyer))  # birth/extractor
+        endow_b = self._factor_endowment(buyer)
+        desperation = _clamp01(1.0 - endow_b['labor'] / DESPERATION_LABOR_REF)  # buyer's labor hunger
+        control = _clamp01(endow_b['tech'] / CONTROL_TECH_REF)                 # buyer's scarce-factor grip
+        w = w_bargain(pr, desperation, control)
+        return max(W_CONTRACT_MIN, min(1.0 - W_CONTRACT_MIN, w))   # voluntary & thrall-distinct
+
+    def _factor_price(self, seller, buyer, factor_axis: str) -> float:
+        """Grain fee (buyer -> seller per settlement interval) (WG3b)."""
+        mv_s = self._marginal_value(seller, factor_axis)   # seller's reservation (low: abundant)
+        mv_b = self._marginal_value(buyer, factor_axis)    # buyer's willingness (high: scarce)
+        pr = composite_power(seller) / max(EPS_POWER, composite_power(buyer))
+        share = _clamp01(WAGE_POWER_SHARE_BASE + WAGE_POWER_SHARE_SENS * (pr - 1.0))
+        return mv_s + share * (mv_b - mv_s)     # seller reservation .. buyer willingness
+
+    def _has_contract(self, buyer_id, seller_id, kind, factor) -> bool:
+        """De-dup check: True if a live contract of this kind/factor already exists for this ordered pair (WG4)."""
+        for c in self._wage_contracts():
+            if (c['alive'] and c['kind'] == kind and c['factor'] == factor and
+                c['buyer_id'] == buyer_id and c['seller_id'] == seller_id):
+                return True
+        return False
+
+    def _seller_has(self, seller, axis_kind: str, volume: int) -> bool:
+        """True if seller holds >= volume of the good (WG7)."""
+        if axis_kind == 'food':
+            return seller.maw.food_stored >= volume
+        elif axis_kind.startswith('ore:'):
+            ore = getattr(seller, 'ore', {}) or {}
+            metal = axis_kind.split(':')[1]
+            return ore.get(metal, 0) >= volume
+        elif axis_kind == 'wood':
+            return getattr(seller, 'wood', 0) >= volume
+        return False
+
+    def _debit(self, target, kind: str, amount):
+        """Inverse of _deposit: reduce target's sink by amount, guarded non-negative (WG7)."""
+        if kind == 'ore:copper':
+            ore = getattr(target, 'ore', {}) or {}
+            ore['copper'] = max(0, ore.get('copper', 0) - int(amount))
+        elif kind == 'ore:gold':
+            ore = getattr(target, 'ore', {}) or {}
+            ore['gold'] = max(0, ore.get('gold', 0) - int(amount))
+        elif kind == 'salvage':
+            target.salvage = max(0, getattr(target, 'salvage', 0) - int(amount))
+        elif kind in ('food', 'crop'):
+            target.maw.food_stored = max(0.0, target.maw.food_stored - amount)
+        elif kind == 'wood':
+            target.wood = max(0, getattr(target, 'wood', 0) - int(amount))
+
+    def _bind_labor(self, contract, seller, buyer):
+        """Select up to LABOR_MAX_UNITS FREE seller units and bind them (WG5)."""
+        picked = []
+        for u in seller.units:
+            if len(picked) >= LABOR_MAX_UNITS:
+                break
+            if getattr(u, 'laboring_for', -1) < 0:            # only free units
+                u.laboring_for = buyer.colony_id              # virtual: NO migration (F3)
+                u.wage_ratio = contract['w']                # > 0 => voluntary (WG11b)
+                picked.append(u.unit_id)  # use stable unit_id from SandKing
+        return picked
+
+    def _effective_foreign_techs(self, colony) -> set:
+        """Own foreign gifts UNION gifts licensed-IN. Read-only; colony.techs untouched (WG6)."""
+        own = {t for t in getattr(colony, 'techs', set()) if t in TECH_FOREIGN}
+        if not WAGE_ENABLED:
+            return own                                   # default-neutral: no view expansion
+        licensed = {c['factor'] for c in self._wage_contracts()
+                    if c['kind'] == 'license' and c['buyer_id'] == colony.colony_id
+                    and c['alive'] and not c['suspended']}
+        return own | licensed
+
+    def _license_yield_mult(self, colony) -> float:
+        """Productivity multiplier from LICENSED-IN foreign gifts only. 1.0 for owners and when disabled (WG6)."""
+        if not WAGE_ENABLED:
+            return 1.0
+        own = {t for t in getattr(colony, 'techs', set()) if t in TECH_FOREIGN}
+        rented = self._effective_foreign_techs(colony) - own    # licensed-in only
+        mult = 1.0
+        for t in rented:
+            mult *= LICENSE_TECH_MULT.get(t, 1.0)
+        return mult
+
+    def _ship_goods(self, contract, seller, buyer):
+        """Move `volume` units of `factor` from seller to buyer (WG7)."""
+        axis_kind = contract['factor']
+        v = contract['volume']
+        if not self._seller_has(seller, axis_kind, v):   # seller solvent in the good
+            return False                                 # non-viable this interval (WG10)
+        self._debit(seller, axis_kind, v)                # mirror of _deposit; never below 0
+        self._deposit(buyer, axis_kind, v)               # reuse M1 _deposit
+        return True
+
+    def _settle(self, contract):
+        """Grain transfer, escrow/prepay, non-negativity (WG8)."""
+        buyer = self._colony_by_id(contract['buyer_id'])
+        seller = self._colony_by_id(contract['seller_id'])
+        if buyer is None or seller is None or not buyer.is_alive() or not seller.is_alive():
+            contract['alive'] = False
+            return          # dead party -> close (WG10)
+        # 1. PAY OUT the escrow the buyer prepaid last interval (grains: transfer, no mint)
+        pay = contract['escrow']
+        contract['escrow'] = 0.0
+        seller.currency = getattr(seller, 'currency', 0.0) + pay
+        self._house_grains()[self._house_name(seller)] = \
+            self._house_grains().get(self._house_name(seller), 0.0) + pay   # mirror CU1 ledger
+        # 2. deliver this interval's goods (WG7) if a goods contract
+        delivered = True
+        if contract['kind'] == 'goods':
+            delivered = self._ship_goods(contract, seller, buyer)
+        # 3. PREPAY next interval (liquidity gate; non-negativity via refuse-if-poor)
+        fee = contract['fee']
+        if getattr(buyer, 'currency', 0.0) >= fee and delivered:
+            buyer.currency -= fee
+            contract['escrow'] = fee
+            contract['nonviable'] = 0
+        else:
+            contract['nonviable'] = contract['nonviable'] + 1   # WG10 close counter
+
+    def _wage_settle_all(self):
+        """Settle all live non-suspended contracts (WG8). Called every SETTLEMENT_INTERVAL steps."""
+        for contract in self._wage_contracts():
+            if contract['alive'] and not contract['suspended']:
+                self._settle(contract)
+
+    def _wage_renegotiate(self):
+        """Renegotiate sticky w/fee for live non-suspended contracts (WG9)."""
+        for contract in self._wage_contracts():
+            if not contract['alive'] or contract['suspended']:
+                continue
+            seller = self._colony_by_id(contract['seller_id'])
+            buyer = self._colony_by_id(contract['buyer_id'])
+            if seller is None or buyer is None:
+                continue
+            # Recompute fee from current endowments/power
+            if contract['kind'] == 'labor':
+                fee = WAGE_GRAIN_RATE * self._factor_price(seller, buyer, 'labor') * contract['volume']
+            elif contract['kind'] == 'license':
+                fee = LICENSE_FEE_BASE * self._factor_price(seller, buyer, 'tech') / MV_BASE
+            else:  # goods
+                fee = self._factor_price(seller, buyer, contract['factor']) * contract['volume']
+            contract['fee'] = max(0.0, fee)
+            # Re-stamp labor unit wages
+            if contract['kind'] == 'labor':
+                neww = self._labor_w(seller, buyer)
+                contract['w'] = neww
+                for unit_id in contract['unit_ids']:
+                    for u in seller.units:
+                        if u.unit_id == unit_id and getattr(u, 'laboring_for', -1) == buyer.colony_id:
+                            u.wage_ratio = neww
+            contract['last_reneg'] = self.step_count
+
+    def _pair_at_war(self, a, b) -> bool:
+        """True if a and b are at war (WG10)."""
+        d = self._diplomacy()
+        return (d.war_target.get(a.colony_id) == b.colony_id
+                or d.war_target.get(b.colony_id) == a.colony_id)
+
+    def _revert_labor(self, contract):
+        """Free every bound laborer WITHOUT any subjugation/defiance ever applying (WG10)."""
+        seller = self._colony_by_id(contract['seller_id'])
+        if seller is None:
+            return
+        for unit_id in contract['unit_ids']:
+            for u in seller.units:
+                if u.unit_id == unit_id and getattr(u, 'laboring_for', -1) == contract['buyer_id']:
+                    u.laboring_for = -1        # back to free; production reverts via _credit_labor free path
+                    u.wage_ratio = 0.0         # no residual share
+        contract['unit_ids'] = []
+
+    def _wage_suspend_close(self):
+        """Suspend contracts on war, close on dead party or persistent non-viability (WG10)."""
+        for contract in self._wage_contracts():
+            if not contract['alive']:
+                continue
+            buyer = self._colony_by_id(contract['buyer_id'])
+            seller = self._colony_by_id(contract['seller_id'])
+            if buyer is None or seller is None or not buyer.is_alive() or not seller.is_alive():
+                # Dead party -> close
+                self._revert_labor(contract)
+                if buyer is not None and buyer.is_alive():
+                    buyer.currency = getattr(buyer, 'currency', 0.0) + contract['escrow']
+                contract['escrow'] = 0.0
+                contract['alive'] = False
+                continue
+            # Check for war entry
+            if self._pair_at_war(buyer, seller) and not contract['suspended']:
+                contract['suspended'] = True
+                self._revert_labor(contract)
+                buyer.currency = getattr(buyer, 'currency', 0.0) + contract['escrow']
+                contract['escrow'] = 0.0
+                continue
+            # Check for peace return and resume (handled by _wage_open_sweep)
+            # Check for persistent non-viability
+            if contract['nonviable'] >= NONVIABLE_LIMIT:
+                self._revert_labor(contract)
+                if buyer is not None and buyer.is_alive():
+                    buyer.currency = getattr(buyer, 'currency', 0.0) + contract['escrow']
+                contract['escrow'] = 0.0
+                contract['alive'] = False
+
+    def _wage_open_sweep(self):
+        """Deterministic OPEN sweep: for each unordered PEACE pair and each factor axis, at most one new contract per tick (WG4)."""
+        if not WAGE_ENABLED:
+            return  # never reached; tick already gated, but include for clarity
+        # Enumerate all unordered pairs of colonies
+        for i, seller in enumerate(self.colonies):
+            for buyer in self.colonies[i+1:]:
+                # Try both directions (seller-buyer and buyer-seller)
+                for seller_cand, buyer_cand in [(seller, buyer), (buyer, seller)]:
+                    if self._pair_at_war(seller_cand, buyer_cand):
+                        continue    # peace only
+                    # Try each factor kind
+                    for kind in ['labor', 'license', 'goods']:
+                        if kind == 'labor':
+                            factor_axes = ['labor']
+                        elif kind == 'license':
+                            factor_axes = [t for t in getattr(seller_cand, 'techs', set()) if t in TECH_FOREIGN]
+                        else:  # goods
+                            factor_axes = ['food', 'ore:copper', 'ore:gold', 'wood']
+                        for factor_axis in factor_axes:
+                            if self._has_contract(buyer_cand.colony_id, seller_cand.colony_id, kind, factor_axis):
+                                continue   # de-dup (WG1 Guarantee)
+                            # Endowment axis per kind: labor->'labor'; license->'tech'
+                            # (factor_axis is a gift NAME); goods map ore:* -> 'ore'
+                            if kind == 'license':
+                                endow_axis = 'tech'
+                            elif kind == 'goods':
+                                endow_axis = self._goods_axis(factor_axis)
+                            else:  # labor
+                                endow_axis = factor_axis
+                            comp = self._complementarity(seller_cand, buyer_cand, endow_axis)
+                            if comp < COMPLEMENTARITY_THRESHOLD:
+                                continue    # no trade opportunity
+                            # License seller must HOLD the tech
+                            if kind == 'license' and factor_axis not in getattr(seller_cand, 'techs', set()):
+                                continue
+                            # Compute fee per kind
+                            if kind == 'labor':
+                                w = self._labor_w(seller_cand, buyer_cand)
+                                unit_ids = self._bind_labor(
+                                    {'w': w, 'unit_ids': []},
+                                    seller_cand, buyer_cand
+                                )
+                                volume = len(unit_ids)
+                                fee = WAGE_GRAIN_RATE * self._factor_price(seller_cand, buyer_cand, 'labor') * volume if volume > 0 else 0
+                            elif kind == 'license':
+                                volume = 1
+                                w = 0.0
+                                unit_ids = []
+                                fee = LICENSE_FEE_BASE * self._factor_price(seller_cand, buyer_cand, 'tech') / MV_BASE
+                            else:  # goods
+                                surplus_units = self._factor_endowment(seller_cand)[endow_axis]
+                                volume = min(GOODS_VOLUME_CAP, int(surplus_units))
+                                if volume <= 0:
+                                    continue  # no surplus
+                                w = 0.0
+                                unit_ids = []
+                                fee = self._factor_price(seller_cand, buyer_cand, endow_axis) * volume
+                            # LIQUIDITY: cash-poor cannot hire (F2)
+                            if getattr(buyer_cand, 'currency', 0.0) < fee:
+                                continue   # cannot afford
+                            # PREPAY escrow one interval up front (non-negativity, WG8)
+                            buyer_cand.currency -= fee
+                            contract = {
+                                'kind': kind,
+                                'buyer_id': buyer_cand.colony_id,
+                                'seller_id': seller_cand.colony_id,
+                                'factor': factor_axis,
+                                'w': w,
+                                'volume': volume,
+                                'fee': fee,
+                                'escrow': fee,
+                                'unit_ids': unit_ids,
+                                'opened_step': self.step_count,
+                                'last_reneg': self.step_count,
+                                'nonviable': 0,
+                                'suspended': False,
+                                'alive': True,
+                            }
+                            self._wage_contracts().append(contract)
+                            self._log_event(f"House {self._house_name(seller_cand)} contracts {kind} to House {self._house_name(buyer_cand)}")
+
+    def _labor_market_tick(self):
+        """Main wage market tick: renegotiate, settle, open, suspend/close (WG11a)."""
+        if not WAGE_ENABLED:
+            return                         # DEFAULT-NEUTRAL: no RNG, no state — byte-identical
+        # order per coupling #7: renegotiate -> settle -> open -> suspend/close -> sweep
+        if self.step_count % RENEGOTIATE_INTERVAL == 0:
+            self._wage_renegotiate()   # WG9
+        if self.step_count % SETTLEMENT_INTERVAL == 0:
+            self._wage_settle_all()    # WG8
+        self._wage_open_sweep()                                                     # WG4
+        self._wage_suspend_close()                                                  # WG10
+        self.wage_contracts = [c for c in self._wage_contracts() if c['alive']]     # sweep
+
     def _score_forecasts(self):
         """CU3: the Bittensor loop - validate each due forecast against the
         ground truth and mint grains for useful (accurate) work."""
@@ -3930,6 +4300,7 @@ class SandKingsSimulation:
         Failure modes: none raised; a stale laboring_for pointing at a dead colony is
           self-healed to -1 and treated as free.
         """
+        amount = amount * self._license_yield_mult(colony)  # WG5-M1: scale by licensed-in yield multiplier
         ext_id = getattr(unit, 'laboring_for', -1)
         extractor = self._colony_by_id(ext_id) if ext_id >= 0 else None
 
@@ -3945,7 +4316,7 @@ class SandKingsSimulation:
             return
 
         # THRALL PATH — split by w (brute mode in M1/M2; M3 supplies a bargained w)
-        w = W_BRUTE                                 # 0.0 -> whole value to the extractor
+        w = getattr(unit, 'wage_ratio', W_BRUTE)  # WG5-M1: A: wage laborer splits at its contract w
         extractor_share = self._extract_share(kind, amount, w)   # (1-w)*amount, kind-aware
         birth_share = amount - extractor_share          # remainder: conserves exactly
         self._deposit(extractor, kind, extractor_share)
@@ -4805,8 +5176,10 @@ class SandKingsSimulation:
         - Assert: every unit touched has laboring_for >= 0 (a thrall).
         """
         # Collect all thralls (units with laboring_for >= 0)
+        # WG11b: skip voluntary wage laborers (wage_ratio > 0)
         thralls = [u for c in self.colonies for u in c.units
-                   if getattr(u, 'laboring_for', -1) >= 0]
+                   if getattr(u, 'laboring_for', -1) >= 0
+                   and getattr(u, 'wage_ratio', W_BRUTE) <= 0.0]
         if not thralls:
             return  # DEFAULT-NEUTRAL: no thralls => no work, no RNG
 
@@ -6086,6 +6459,9 @@ def main():
     parser.add_argument('--subjugation', action='store_true',
                         help='Enable the subjugation economy: at-war colonies '
                              'capture broken enemies as thralls (SPEC_SUBJUGATION)')
+    parser.add_argument('--wages', action='store_true',
+                        help='Enable the wage market: colonies hire labor, license tech, '
+                             'and trade goods at negotiated prices (SPEC_WAGES)')
     args = parser.parse_args()
     
     print("="*60)
@@ -6121,6 +6497,15 @@ def main():
         sim.subjugation_enabled = True
         print(f"[CHAIN] SUBJUGATION ENABLED - at-war colonies capture thralls "
               f"(CAPTURE_CHANCE={SUBJUGATION_LIVE_CHANCE})")
+
+    # --wages: turn the wage market ON for this run only. The module default
+    # WAGE_ENABLED stays False (regression battery byte-identical); here we bump
+    # the live global so colonies negotiate labor, tech licenses, and goods.
+    if getattr(args, 'wages', False):
+        globals()['WAGE_ENABLED'] = True
+        sim.wage_enabled = True
+        print(f"[CHAIN] WAGES ENABLED - colonies trade labor, tech, and goods "
+              f"at negotiated prices (SPEC_WAGES)")
 
     # Enable neural mode if requested (fresh sims only - resumed sims keep
     # their evolved brains)
