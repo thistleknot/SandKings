@@ -629,6 +629,9 @@ def build_inspect_entries(sim: SandKingsSimulation,
         stage_name = {1: "insectoid", 2: "new breed", 3: "SHADE"}.get(stage, "")
         entries.append((f"  posture {posture}   stage: {stage_name}"
                         + (f"   mem+{aug}" if aug else ""), (170, 200, 140)))
+        techs = sorted(getattr(obj, 'techs', set()))  # TE5
+        if techs:
+            entries.append((f"  tech: {', '.join(techs)}", (170, 200, 200)))
         g = obj.genome
         entries.append((f"  agg {g.aggression:.2f} pat "
                         f"{getattr(g, 'patience', 0.5):.2f} loy "

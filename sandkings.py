@@ -243,7 +243,23 @@ SENTIMENT_DRIFT = 0.02      # drift toward neutral 0.5 when the keeper is absent
 KEEPER_CAT_STEP = 3200       # the cat gets in (auto script, K8)
 KEEPER_GRIEF = 1200          # drought length after the cat is slain
 KEEPER_GIFT_INTERVAL = 1600  # steps between ladder gifts (K9)
-GIFT_LADDER = ('watch', 'calculator', 'pi')
+GIFT_LADDER = ('abacus', 'watch', 'calculator', 'pi')  # foreign tech (TE3)
+
+# Technology & Civilization (SPEC_TECH TE2): foreign gifts + native techs.
+# Adding a row is the only step to introduce a technology.
+TECH_FOREIGN = ('abacus', 'watch', 'calculator', 'pi')
+TECH_NATIVE = ('fire', 'farming', 'metallurgy', 'plow', 'masonry')
+TECH_REGISTRY = {
+    'abacus':     {'kind': 'foreign', 'desc': 'counting and quantity'},
+    'watch':      {'kind': 'foreign', 'desc': 'time and periodicity'},
+    'calculator': {'kind': 'foreign', 'desc': 'computation (a bounded machine)'},
+    'pi':         {'kind': 'foreign', 'desc': 'the god-brain: terminal and escape'},
+    'fire':       {'kind': 'native', 'desc': 'flame and the torch'},
+    'farming':    {'kind': 'native', 'desc': 'the tended field'},
+    'metallurgy': {'kind': 'native', 'desc': 'ore into weapons and picks'},
+    'plow':       {'kind': 'native', 'desc': 'breaking the soil'},
+    'masonry':    {'kind': 'native', 'desc': 'raised stone'},
+}
 TERMINAL_UNLOCK = 40         # pi operate-ticks before the terminal (K10)
 TERMINAL_MASTERY = 16        # successful commands before the breach
 SPOKEN_MEMORY = 50           # steps the `speak` anchor stays lit (K12)
@@ -853,6 +869,8 @@ class Colony:
         self._sentiment_wrath = False  # has the carved sentiment turned hateful
         self.stage = 1                 # metamorphosis stage 1/2/3 (MT1)
         self.revelation = False        # has met the "great other" post-breakout (AW4)
+        self.techs = set()             # technologies this house knows (TE1)
+        self.tech_xp = {}              # per-tech proficiency 0..1 (DF skill, TE1)
         
     def spawn_unit(self, unit_type: UnitType, step: int = 0):
         """Spawn new unit from Maw; copper armors, timber arms (T25/T44).
@@ -880,6 +898,10 @@ class Colony:
                 if self.at_war and getattr(self, 'wood', 0) >= 1:
                     self.wood -= 1
                     unit.torch = True
+                    # TE4: fielding a torch IS the fire technology
+                    if not hasattr(self, 'techs'):
+                        self.techs = set()
+                    self.techs.add('fire')
             self.units.append(unit)
     
     def remove_unit(self, unit: SandKing):
@@ -1499,6 +1521,11 @@ class SandKingsSimulation:
                                   ('revelation', False)):  # AW4
                 if not hasattr(colony, attr):
                     setattr(colony, attr, default)
+            # TE1: mutable tech state (per-colony fresh objects, not shared)
+            if not hasattr(colony, 'techs'):
+                colony.techs = set()
+            if not hasattr(colony, 'tech_xp'):
+                colony.tech_xp = {}
 
             # Organic rot (T42): timber and bone decay; metal is forever
             if self.step_count % ROT_INTERVAL == 0:
@@ -2382,11 +2409,28 @@ class SandKingsSimulation:
         return any(self.keeper_attitude(c) == wanted
                    for c in self.colonies if c.is_alive())
 
+    def _grant_tech(self, colony: Colony, tech: str):
+        """TE3: mark a technology known to a house (idempotent; logs once)."""
+        if not hasattr(colony, 'techs'):
+            colony.techs = set()
+        if tech in colony.techs:
+            return
+        colony.techs.add(tech)
+        kind = TECH_REGISTRY.get(tech, {}).get('kind', 'native')
+        if kind == 'native':
+            self._log_event(f"House {self._house_name(colony)} learns {tech}")
+
     def _claim_gift(self, colony: Colony, kind: str, unit: SandKing):
-        """K9: revelation by artifact - the ladder advances the arc."""
+        """K9/TE3: revelation by artifact - the foreign ladder advances the arc
+        and grants the technology (abacus/watch/calculator/pi)."""
         from machines import Controller, PI_DURABILITY, PI_FUEL
         house = self._house_name(colony)
-        if kind == 'watch':
+        self._grant_tech(colony, kind)  # TE3: the gift IS the tech
+        if kind == 'abacus':
+            if getattr(colony, 'machine_arc', 'none') == 'none':
+                colony.machine_arc = 'known'
+            self._log_event(f"House {house} slides the abacus beads - and counts")
+        elif kind == 'watch':
             if getattr(colony, 'machine_arc', 'none') == 'none':
                 colony.machine_arc = 'known'
             self._log_event(f"House {house} puzzles over the ticking gift")
@@ -4202,6 +4246,10 @@ class SandKingsSimulation:
                                   ('controllers', None), ('devices', None)):
                 if not hasattr(colony, attr):
                     setattr(colony, attr, default if default is not None else [])
+            if not hasattr(colony, 'techs'):
+                colony.techs = set()          # TE1
+            if not hasattr(colony, 'tech_xp'):
+                colony.tech_xp = {}
 
             # discovery ladder (T29): any unit near the wreck AABB
             if colony.machine_arc == 'none':
@@ -4656,6 +4704,11 @@ class SandKingsSimulation:
             colony.keeper_sentiment = max(getattr(pa, 'keeper_sentiment', 0.5),
                                           getattr(pb, 'keeper_sentiment', 0.5))
             colony.revelation = colony.breached
+            # TE5: the bloodline's technology survives (union of both parents)
+            colony.techs = set(getattr(pa, 'techs', set())) | set(
+                getattr(pb, 'techs', set()))
+            colony.tech_xp = {**getattr(pa, 'tech_xp', {}),
+                              **getattr(pb, 'tech_xp', {})}
         elif survivors:
             colony.house = self._house_name(parent)
             colony.generation = getattr(parent, 'generation', 1) + 1
@@ -4666,6 +4719,8 @@ class SandKingsSimulation:
             colony.stage = getattr(parent, 'stage', 1)  # MT1
             colony.keeper_sentiment = getattr(parent, 'keeper_sentiment', 0.5)
             colony.revelation = colony.breached  # AW4: born knowing, if aware
+            colony.techs = set(getattr(parent, 'techs', set()))  # TE5
+            colony.tech_xp = dict(getattr(parent, 'tech_xp', {}))
         colony.founded_step = self.step_count
         self.colonies[index] = colony
         self._kin_epoch = getattr(self, '_kin_epoch', 0) + 1  # kin map stale

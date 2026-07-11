@@ -101,7 +101,7 @@ def test_keeper_drought_gift_cat():
     client.post("/api/keeper/drought", json={"on": True})
     assert sim.drought and sim.dole_factor() == 0.0
     client.post("/api/keeper/gift")
-    assert sim.gifts_given == ["watch"]
+    assert sim.gifts_given == ["abacus"]  # TE3: abacus is the first rung
     client.post("/api/keeper/cat")
     assert any(b.species == "cat" for b in sim.fauna)
 

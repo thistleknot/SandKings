@@ -124,13 +124,13 @@ def test_gift_ladder_advances_the_arc():
     from machines import PI_FUEL, VM_FUEL
     assert len(colony.controllers) == 2
     assert colony.controllers[-1].fuel_cap == PI_FUEL > VM_FUEL
-    # default ladder order with no kind given
+    # default ladder order with no kind given (TE3: abacus first)
     sim2 = make_sim()
     sim2.keeper_gift()
-    assert sim2.gifts_given == ['watch']
+    assert sim2.gifts_given == ['abacus']
     sim2.gift = None
     sim2.keeper_gift()
-    assert sim2.gifts_given == ['watch', 'calculator']
+    assert sim2.gifts_given == ['abacus', 'watch']
 
 
 def test_terminal_commands_and_the_breach_fires_once():

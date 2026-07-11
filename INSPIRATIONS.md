@@ -124,6 +124,30 @@ This is the lineage, mapped to the specs and mechanics each one shaped.
   flood that drowns you leaves the silt that feeds you, and dams and
   runoff channels are how a civilization answers (SPEC_WEATHER W1).
 
+## Civilization & the Tech Tree
+
+- **Sid Meier's Civilization**: technology as a tree. Two classes here —
+  FOREIGN tech the keeper gifts (abacus → watch → calculator → raspberry pi,
+  a "10,000-year sprint," Aristotle handed a calculator; the pi is the escape
+  key), and NATIVE tech the maws earn (fire, farming, metallurgy, plow,
+  masonry). Tech confers real capability: metallurgy → weapons + picks,
+  farming → yield. (SPEC_TECH.)
+- **Dwarf Fortress skills**: per-house proficiency; a spawn's role bonus scales
+  with the house's skill. The maw is the mastermind (a private psionic mind,
+  blind to other maws' minds); the spawn are OnePageRules-style skirmish
+  underlings whose stats scale with the house's tech (see `1pageskirmish.py`,
+  Hellas). Because a maw can't READ a rival's mind, tech spreads only by
+  OBSERVING the underlings' works, BARTERING for it, or taking it by CONQUEST.
+- **The kid with a terrarium of warrior ants**: the keeper is a child playing
+  god. Gift raw MATERIALS (a toothpick) and watch them learn to craft spikes,
+  spears, arrows. Drop in food and prey (wingless flies, a mouse). And — the
+  thing every kid actually does — **start a fire / light a firecracker**: fire
+  as a SimCity-style DISASTER the keeper unleashes (arena/wrath), not just a
+  season's dry-lightning. Providence: giveth and taketh so they learn to be
+  resourceful — agile, improvise, adapt, overcome.
+- **The Bittensor economy gets a sink**: grains, minted for accurate forecasts,
+  are finally SPENT — to research native technology.
+
 ## The Standing Directive
 
 "Dazzle me, but keep it ASCII" (the glyph views) — later joined by
