@@ -82,6 +82,25 @@ hooks, DEFAULT-NEUTRAL at 0 (every prior behaviour unchanged at proficiency 0):
 Acceptance (tests/test_tech_bonus.py): each bonus measurably helps at proficiency
 1 and is exactly neutral at 0; the spear bonus reverses cleanly on expiry.
 
+## TE11 — The upper tree: gunpowder & the catapult (T2c)
+A real tech TREE with prerequisites, ceiling ~Cortés-era gunpowder. A native
+tech with a `prereq` in `TECH_REGISTRY` is RESEARCHED, not practised: in
+`_tech_tick`, a colony that KNOWS all of a tech's prereqs accrues
+`TECH_RESEARCH_XP` toward it (you can't practise gunpowder — it emerges from
+fire + metal).
+- **gunpowder** (prereq metallurgy + fire): FIREPOWER — a gunpowder soldier's
+  spawn attack gains `GUNPOWDER_ATTACK × prof` (a firearm).
+- **catapult** (prereq masonry + gunpowder): the SIEGE ENGINE. `_catapult_tick`
+  (every `CATAPULT_RELOAD` steps) — a house with the catapult tech and a war
+  target within `CATAPULT_RANGE` HURLS a shot: `CATAPULT_DAMAGE × (0.5+0.5·prof)`
+  to the enemy maw, a `CATAPULT_SPLASH` blast that fells units under it, and
+  fire where it lands. "House X's catapult hurls a shot across the sands!"
+  (salience 7, orange tint). The visible shot across the board.
+Acceptance (tests/test_tech_siege.py): a colony with fire+metallurgy researches
+gunpowder over time; with masonry+gunpowder, catapult; a catapult at war lands a
+shot that damages the enemy maw + ignites at impact; a gunpowder soldier hits
+harder; boats/naval + terraforming follow in T2c2.
+
 ## Status / Reconciliation
 - T1 (TE1-TE6) drafted+implemented 2026-07-10 (commit 14bde16). T2a (TE7-TE9)
   same session. T2b (bonuses/skills), T2c (gunpowder/siege/naval), T2d (crafting)

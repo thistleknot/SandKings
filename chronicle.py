@@ -43,6 +43,7 @@ SALIENCE = [
     ("Wildfire", 6),
     ("puts", 6),           # "...to the torch!"
     ("ram smashes", 6),
+    ("catapult hurls", 7),
     ("too strange", 8),
     ("SPEAKS", 10),
     ("no longer a wall", 10),

@@ -254,7 +254,8 @@ GIFT_LADDER = ('abacus', 'watch', 'calculator', 'pi')  # foreign tech (TE3)
 # Technology & Civilization (SPEC_TECH TE2): foreign gifts + native techs.
 # Adding a row is the only step to introduce a technology.
 TECH_FOREIGN = ('abacus', 'watch', 'calculator', 'pi')
-TECH_NATIVE = ('fire', 'farming', 'metallurgy', 'plow', 'masonry')
+TECH_NATIVE = ('fire', 'farming', 'metallurgy', 'plow', 'masonry',
+               'gunpowder', 'catapult')
 TECH_REGISTRY = {
     'abacus':     {'kind': 'foreign', 'desc': 'counting and quantity'},
     'watch':      {'kind': 'foreign', 'desc': 'time and periodicity'},
@@ -265,6 +266,11 @@ TECH_REGISTRY = {
     'metallurgy': {'kind': 'native', 'desc': 'ore into weapons and picks'},
     'plow':       {'kind': 'native', 'desc': 'breaking the soil'},
     'masonry':    {'kind': 'native', 'desc': 'raised stone'},
+    # T2c upper tree (prereqs are RESEARCHED once both are known - TE11)
+    'gunpowder':  {'kind': 'native', 'desc': 'fire and metal: firepower',
+                   'prereq': ('metallurgy', 'fire')},
+    'catapult':   {'kind': 'native', 'desc': 'the engine that hurls shot',
+                   'prereq': ('masonry', 'gunpowder')},
 }
 # T2a acquisition (SPEC_TECH TE7-TE9): practice + observe + grains -> proficiency
 TECH_TICK = 20               # cadence of the observe/grains pass
@@ -282,6 +288,14 @@ METAL_WEAPON_BONUS = 0.6     # metallurgy: spear/weapon attack scaling
 METAL_PICK_BONUS = 0.5       # metallurgy: mining speed (picks)
 PLOW_COST_BONUS = 0.4        # plow: cheaper seed / faster sowing
 MASON_WALL_BONUS = 1.0       # masonry: wall durability
+
+# T2c upper tree (SPEC_TECH TE11): gunpowder, the catapult, the shot across the board
+TECH_RESEARCH_XP = 0.015     # xp/tick toward a tech whose prereqs are known
+CATAPULT_RELOAD = 40         # steps between siege shots
+CATAPULT_RANGE = 40          # how far a catapult can lob (whole-board)
+CATAPULT_DAMAGE = 14         # maw damage per shot at mastery
+CATAPULT_SPLASH = 2          # Chebyshev radius of the impact blast
+GUNPOWDER_ATTACK = 6         # firearm punch added to a gunpowder soldier at spawn
 TERMINAL_UNLOCK = 40         # pi operate-ticks before the terminal (K10)
 TERMINAL_MASTERY = 16        # successful commands before the breach
 SPOKEN_MEMORY = 50           # steps the `speak` anchor stays lit (K12)
@@ -922,6 +936,10 @@ class Colony:
                     unit.attack += bonus
                     unit.spear_bonus = bonus
                     unit.weapon_expires = step + SPEAR_LIFE
+                # TE11: gunpowder gives the soldier firepower (a firearm)
+                gprof = getattr(self, 'tech_xp', {}).get('gunpowder', 0.0)
+                if gprof:
+                    unit.attack += int(round(GUNPOWDER_ATTACK * gprof))
                 # T45: wartime soldiers may carry a torch (thrown once)
                 if self.at_war and getattr(self, 'wood', 0) >= 1:
                     self.wood -= 1
@@ -1490,6 +1508,9 @@ class SandKingsSimulation:
         # 3c-t. TECHNOLOGY (SPEC_TECH TE8/TE9): observe neighbors, buy research
         if self.step_count % TECH_TICK == 0 and self.step_count:
             self._tech_tick()
+
+        # 3c-s. SIEGE (SPEC_TECH TE11): catapults hurl shot across the board
+        self._catapult_tick()
 
         # 3d. CROP GROWTH (T19/T20)
         if self.step_count % CROP_TICK == 0:
@@ -2537,10 +2558,60 @@ class SandKingsSimulation:
                     self._practice(colony, tech, TECH_GRAIN_XP)
                     self._log_event(f"House {self._house_name(colony)} pours"
                                     f" grains into {tech}")
+            # TE11 research: a tech whose PREREQS are all known develops on its
+            # own (you can't practice gunpowder - it emerges from fire + metal)
+            for t, spec in TECH_REGISTRY.items():
+                prereq = spec.get('prereq')
+                if (prereq and t not in colony.techs
+                        and all(p in getattr(colony, 'techs', ()) for p in prereq)):
+                    self._practice(colony, t, TECH_RESEARCH_XP)
 
     def _prof(self, colony: Colony, tech: str) -> float:
         """TE10: a colony's proficiency in a tech (0..1; 0 if unknown)."""
         return getattr(colony, 'tech_xp', {}).get(tech, 0.0)
+
+    def _catapult_tick(self):
+        """TE11: a house with the catapult tech and a war target HURLS a shot
+        across the board - maw damage on impact, a splash blast, and fire where
+        it lands. The visible siege ('seeing things shot across the board')."""
+        if self.step_count % CATAPULT_RELOAD or not self.step_count:
+            return
+        diplomacy = getattr(self, 'diplomacy', None)
+        if diplomacy is None:
+            return
+        w, h, d = self.world.dimensions
+        for colony in self.colonies:
+            if (not colony.is_alive()
+                    or 'catapult' not in getattr(colony, 'techs', ())):
+                continue
+            target_id = diplomacy.war_target.get(colony.colony_id)
+            target = self._colony_by_id(target_id) if target_id is not None else None
+            if target is None or not target.is_alive():
+                continue
+            mx, my, _ = colony.maw.position
+            tx, ty, _ = target.maw.position
+            if max(abs(tx - mx), abs(ty - my)) > CATAPULT_RANGE:
+                continue
+            dmg = int(round(CATAPULT_DAMAGE * (0.5 + 0.5 * self._prof(
+                colony, 'catapult'))))
+            target.maw.take_damage(dmg)
+            s = CATAPULT_SPLASH
+            for other in self.colonies:  # the blast catches whoever is under it
+                for unit in other.units[:]:
+                    ux, uy, _ = unit.position
+                    if (max(abs(ux - tx), abs(uy - ty)) <= s
+                            and unit.take_damage(FIRE_DAMAGE, 0.0)):
+                        other.remove_unit(unit)
+                        self.world.set_voxel(*unit.position, VoxelType.CORPSE)
+            for dx in range(-s, s + 1):  # fire where the shot lands
+                for dy in range(-s, s + 1):
+                    px = int(np.clip(tx + dx, 1, w - 2))
+                    py = int(np.clip(ty + dy, 1, h - 2))
+                    z = self.world.surface_z(px, py)
+                    if 0 <= z < d and self.world.voxels[px, py, z] in FLAMMABLE_VOXELS:
+                        self._ignite((px, py, z))
+            self._log_event(f"House {self._house_name(colony)}'s catapult hurls"
+                            " a shot across the sands!")
 
     def _are_allied(self, a: int, b: int) -> bool:
         """Ally latch between two colonies (TE8 weighting)."""

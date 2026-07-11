@@ -156,6 +156,7 @@ EVENT_TINTS = (            # substring -> HUD color (spec R19/R24)
     ("rain waters the sands", (110, 170, 240)),
     ("scatters seeds", (150, 200, 150)),
     ("lights a firecracker", (255, 120, 40)),    # arena firecracker disaster
+    ("catapult hurls", (255, 160, 60)),          # TE11 siege
     ("SPEAKS", (255, 255, 255)),
     ("fall as noise", (150, 150, 160)),
     ("augments its mind", (150, 180, 255)),
