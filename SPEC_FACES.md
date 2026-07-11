@@ -69,6 +69,11 @@ carved glyph is one of the face set on the maw ring and purges when the
 sand is disturbed; the first wrath transition fires the warning once;
 state pickles; EnhancedSandKingsSimulation stays inert (no _keeper_tick).
 
+> Cross-ref (inbound): the carved face still mirrors `keeper_sentiment` unchanged;
+> the DISPOSITION layer's signed `favoritism` only *nudges* `keeper_sentiment`
+> post-breach (no parallel face/mood system), so the devout→wary→hateful band
+> reflects favoritism for free. See `SPEC_DISPOSITION.md` (DP6/DP11).
+
 ## Status / Reconciliation
 - Drafted + implemented 2026-07-09. The carving is SENTIMENT, not a literal
   face (per user: the sandkings have no image of the keeper) - a readable
@@ -79,3 +84,4 @@ state pickles; EnhancedSandKingsSimulation stays inert (no _keeper_tick).
   Verified in-container: all 20 suites green incl. tests/test_faces.py (7).
   Also completed the Docker test-dep set (tqdm, matplotlib, httpx, pygame)
   so the FULL suite runs inside the image on the container's python.
+</content>

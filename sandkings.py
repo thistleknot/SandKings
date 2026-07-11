@@ -251,6 +251,33 @@ KEEPER_GRIEF = 1200          # drought length after the cat is slain
 KEEPER_GIFT_INTERVAL = 1600  # steps between ladder gifts (K9)
 GIFT_LADDER = ('abacus', 'watch', 'calculator', 'pi')  # foreign tech (TE3)
 
+# Disposition Arc constants (SPEC_DISPOSITION DP1-DP12): keeper treatment →
+# confidence (material boldness), favoritism (treatment ledger), agitation (startle).
+# Load-bearing invariant: every effect is identity at neutral defaults
+# (confidence=0.5, favoritism=0.0, agitation=0.0).
+CONF_RATE = 0.02            # inertia: fraction of (target − confidence) per tick
+CONF_W_SURPLUS = 0.25       # weight of food surplus on confidence target
+CONF_W_POP = 0.15           # weight of population surplus on confidence target
+CONF_W_WIN = 0.15           # weight of a recent war victory on confidence target
+CONF_W_FAV = 0.25           # weight of (signed) favoritism on confidence target
+CONF_W_STARVE = 0.35        # penalty when starving (food < 2·BOOTSTRAP_FLOOR)
+CONF_W_THREAT = 0.15        # penalty when at war or under acute weather
+CONF_RICH_FOOD = WAR_CHEST   # food above which surplus registers (400)
+CONF_POP_REF = 20            # population above which pop-surplus registers
+CONF_WIN_WINDOW = 400        # steps a victory counts as "recent"
+CONF_AGG_K = 0.8             # confidence→aggression gain: f(conf)=1+K·(conf−0.5)
+AGIT_HOSTILITY = 0.3         # additive hostility term per unit agitation
+AGIT_FREEZE = 0.5            # max mill probability at agitation 1.0 (DP4)
+AGIT_SPIKE = 0.5             # agitation added per startling wrath verb (DP3)
+AGIT_RETAIN = 0.7            # agitation multiplicative retention per tick (fast decay)
+FAV_RETAIN = 0.995           # favoritism multiplicative retention per tick (slow decay)
+FAV_MANNA = 0.15             # favoritism gained when the nearest colony is manna-fed
+FAV_GIFT = 0.25              # favoritism gained by the colony that claims a gift
+FAV_DROUGHT = 0.10           # favoritism lost (magnitude) per drought switch-on
+FAV_WRATH = 0.20             # favoritism lost (magnitude) per wrath verb
+BARGAIN_CONF_K = 0.5         # boldness gain on force EVs: 1+K·(conf−0.5)
+CONF_FAV_BAND = 0.3          # (Fork #B, deferred) |favoritism| threshold for _nature_mood tilt
+
 # Technology & Civilization data (SPEC_TECH TE1-TE13) lives in tech.py — the
 # registry, acquisition/capability/siege constants, and the materials->crafting
 # tables. Re-exported here so `from sandkings import TECH_REGISTRY` (etc.) still
@@ -1014,6 +1041,10 @@ class Colony:
         self.currency = 0.0            # grains earned this maw's life (CU1)
         self.keeper_sentiment = 0.5    # devotion to the keeper 0..1 (F1)
         self._sentiment_wrath = False  # has the carved sentiment turned hateful
+        self.confidence = 0.5          # boldness meter 0..1; 0.5 = neutral (DP1)
+        self.favoritism = 0.0          # treatment ledger [-1, 1]; 0 = neutral (DP1)
+        self.agitation = 0.0           # startle spike [0, 1]; 0 = calm (DP1)
+        self.last_victory_step = -10**9  # step of last war victory (DP1)
         self.stage = 1                 # metamorphosis stage 1/2/3 (MT1)
         self.revelation = False        # has met the "great other" post-breakout (AW4)
         self.techs = set()             # technologies this house knows (TE1)
@@ -1671,6 +1702,10 @@ class SandKingsSimulation:
                     if pruned > 0:
                         print(f"Colony {colony.colony_id}: Pruned {pruned} weights")
 
+        # 4a. THE DISPOSITION (SPEC_DISPOSITION DP2): update confidence from
+        #     material condition; decay favoritism/agitation. Pure, no RNG.
+        self._disposition_tick()
+
         # 4b. THE BARGAIN (SPEC_BARGAIN): choose per-pair enforcement mode from
         #     net extraction BEFORE war entry / wages / capture read it
         self._bargain_tick()
@@ -1700,7 +1735,11 @@ class SandKingsSimulation:
                                   ('keeper_sentiment', 0.5),  # F1
                                   ('_sentiment_wrath', False),
                                   ('stage', 1),  # MT1
-                                  ('revelation', False)):  # AW4
+                                  ('revelation', False),  # AW4
+                                  ('confidence', 0.5),  # DP1
+                                  ('favoritism', 0.0),  # DP1
+                                  ('agitation', 0.0),  # DP1
+                                  ('last_victory_step', -10**9)):  # DP1
                 if not hasattr(colony, attr):
                     setattr(colony, attr, default)
             # TE1: mutable tech state (per-colony fresh objects, not shared)
@@ -2237,6 +2276,11 @@ class SandKingsSimulation:
             s += SENTIMENT_RECOVER
         else:
             s += SENTIMENT_DRIFT * (1 if s < 0.5 else -1)
+        # NOTE: favoritism does NOT nudge keeper_sentiment. The faces arc
+        # (SPEC_FACES) already moves sentiment from the same feed/drought
+        # treatment, so a DP6 favoritism term would double-count and desync the
+        # faces calibration. Favoritism's role is to drive confidence (DP2), which
+        # a favoured colony already shows on its face via the normal sentiment path.
         colony.keeper_sentiment = float(np.clip(s, 0.0, 1.0))
         # the BAND tracks the (gradual) favor scalar so souring is VISIBLE
         # devout -> wary -> hateful over time; wrath/drought only accelerate
@@ -2293,6 +2337,97 @@ class SandKingsSimulation:
                         " beyond the glass - and knows the hand that fed"
                         " and starved it")
 
+    # DISPOSITION ARC (SPEC_DISPOSITION DP1-DP12): keeper treatment → confidence,
+    # favoritism, agitation. Identity at neutral defaults.
+
+    def _disposition_grace(self, colony: Colony, dfav: float):
+        """DP3: kind treatment raises favoritism. Clamped. No RNG."""
+        if colony is None or not colony.is_alive():
+            return
+        colony.favoritism = float(np.clip(
+            getattr(colony, 'favoritism', 0.0) + dfav, -1.0, 1.0))
+
+    def _disposition_wrath(self, colony: Colony, dfav: float, dagit: float):
+        """DP3/DP4: cruel/startling treatment lowers favoritism and spikes agitation.
+        dfav is subtracted (pass the positive magnitude). Clamped. No RNG."""
+        if colony is None or not colony.is_alive():
+            return
+        colony.favoritism = float(np.clip(
+            getattr(colony, 'favoritism', 0.0) - dfav, -1.0, 1.0))
+        colony.agitation = float(np.clip(
+            getattr(colony, 'agitation', 0.0) + dagit, 0.0, 1.0))
+
+    def _disposition_nearest(self, x: int, y: int) -> Optional[Colony]:
+        """DP3: nearest LIVING colony to (x,y) by maw manhattan distance; None if none."""
+        best, best_d = None, float('inf')
+        for c in self.colonies:
+            if not c.is_alive():
+                continue
+            mx, my, _ = c.maw.position
+            d = abs(mx - x) + abs(my - y)
+            if d < best_d:
+                best_d, best = d, c
+        return best
+
+    def _disposition_confidence_target(self, colony: Colony) -> float:
+        """DP2: pure target for the boldness meter from material condition. 0.5 for an
+        ordinary colony (every term 0); >0.5 thriving, <0.5 distressed. No RNG."""
+        step = self.step_count
+        food = colony.maw.food_stored
+        n = len(colony.units)
+        fav = getattr(colony, 'favoritism', 0.0)
+        # prosperity signals — zero in ordinary condition, saturate at extremes
+        surplus_frac = _clamp01((food - CONF_RICH_FOOD) / CONF_RICH_FOOD)
+        pop_frac = _clamp01((n - CONF_POP_REF) / CONF_POP_REF)
+        won_recent = 1.0 if (step - getattr(colony, 'last_victory_step', -10**9)
+                             < CONF_WIN_WINDOW) else 0.0
+        # distress signals — zero in ordinary condition
+        starving = 1.0 if food < 2 * BOOTSTRAP_FLOOR else 0.0
+        acute = any(getattr(self, a, 0) > step for a in (
+            'cold_until', 'arena_cold_until', 'arena_heat_until',
+            'flood_until', 'hail_until', 'storm_until'))
+        threatened = 1.0 if (getattr(colony, 'at_war', False) or acute) else 0.0
+        target = (0.5
+                  + CONF_W_SURPLUS * surplus_frac
+                  + CONF_W_POP * pop_frac
+                  + CONF_W_WIN * won_recent
+                  + CONF_W_FAV * fav
+                  - CONF_W_STARVE * starving
+                  - CONF_W_THREAT * threatened)
+        return float(np.clip(target, 0.0, 1.0))
+
+    def _disposition_tick(self):
+        """DP2: move each living colony's confidence toward its material target
+        with inertia; decay favoritism (medium) and agitation (fast) toward neutral.
+        Pure — consumes NO RNG, always-on (no breached gate)."""
+        for colony in self.colonies:
+            if not colony.is_alive():
+                continue
+            c = getattr(colony, 'confidence', 0.5)
+            tgt = self._disposition_confidence_target(colony)
+            colony.confidence = float(np.clip(c + CONF_RATE * (tgt - c), 0.0, 1.0))
+            # favoritism decays toward 0 (multiplicative — never overshoots)
+            colony.favoritism = float(np.clip(
+                getattr(colony, 'favoritism', 0.0) * FAV_RETAIN, -1.0, 1.0))
+            # agitation decays fast toward 0
+            colony.agitation = float(np.clip(
+                getattr(colony, 'agitation', 0.0) * AGIT_RETAIN, 0.0, 1.0))
+
+    def _aggression_eff(self, colony: Colony) -> float:
+        """DP5: effective aggression = base * f(confidence) + hostility(agitation).
+        f(0.5) == 1.0 and hostility(0) == 0.0, so this equals genome.aggression
+        EXACTLY at neutral. Pure; no RNG. May exceed 1.0 (a bold colony 'grown dominant')."""
+        base = getattr(colony.genome, 'aggression', 0.5)
+        conf = getattr(colony, 'confidence', 0.5)
+        ag = getattr(colony, 'agitation', 0.0)
+        return base * (1.0 + CONF_AGG_K * (conf - 0.5)) + AGIT_HOSTILITY * ag
+
+    def _disposition_boldness(self, colony: Colony) -> float:
+        """DP7: force-EV multiplier from the extractor's boldness. 1.0 at
+        confidence 0.5; >1 bold (force nets more), <1 meek (wage preferred). Pure."""
+        conf = getattr(colony, 'confidence', 0.5)
+        return 1.0 + BARGAIN_CONF_K * (conf - 0.5)
+
     def keeper_attitude(self, colony: Colony) -> str:
         """K3: derived, never stored. none | reverent | wrathful."""
         if getattr(self, 'drought', False) and getattr(colony, 'worshipped',
@@ -2321,6 +2456,8 @@ class SandKingsSimulation:
                 if placed >= KEEPER_DROP_FOOD:
                     break
         self._log_event("The keeper's hand scatters bounty")
+        # DP3: grace to the nearest colony
+        self._disposition_grace(self._disposition_nearest(x, y), FAV_MANNA)
 
     def keeper_release(self, species: str):
         """K1: introduce a garage creature - above the one-incursion rule."""
@@ -2344,9 +2481,16 @@ class SandKingsSimulation:
             self._fauna().append(Beast(species, (x, y, z), hp, atk, hunt,
                                        bounty, spawned_at=self.step_count))
         self._log_event(FAUNA_EVENTS[species])
+        # DP3: wrath/startle for threat species (not food species)
+        if species in ('scorpion', 'spider', 'rodent'):
+            for c in self.colonies:
+                self._disposition_wrath(c, FAV_WRATH, AGIT_SPIKE)
 
     def keeper_release_cat(self):
         self.keeper_release('cat')
+        # DP3: wrath/startle for cat threat
+        for c in self.colonies:
+            self._disposition_wrath(c, FAV_WRATH, AGIT_SPIKE)
 
     def keeper_drought(self, on: bool):
         """K1: withhold the dole. The garden learns what the god is."""
@@ -2358,6 +2502,9 @@ class SandKingsSimulation:
             self._log_event("The keeper withholds the dole - drought!")
             # the carvings curdle on their own as sentiment sours (F3);
             # no instant twist here anymore - the souring is gradual.
+            # DP3: wrath (no startle) to all colonies on drought switch-on
+            for c in self.colonies:
+                self._disposition_wrath(c, FAV_DROUGHT, 0.0)
         elif was and not on:
             self._log_event("The rains of the keeper return")
 
@@ -2373,6 +2520,9 @@ class SandKingsSimulation:
         elif direction == 'cold':
             self.arena_cold_until = until
             self._log_event("The keeper turns the air to a biting cold")
+        # DP3: wrath/startle to all colonies for temperature extremes
+        for c in self.colonies:
+            self._disposition_wrath(c, FAV_WRATH, AGIT_SPIKE)
 
     def keeper_ignite(self, x: int, y: int):
         """Arena/SimCity disaster: light a firecracker - a bang and a flash that
@@ -2401,6 +2551,13 @@ class SandKingsSimulation:
                     colony.remove_unit(unit)
                     self.world.set_voxel(*unit.position, VoxelType.CORPSE)
         self._log_event("The keeper lights a firecracker - a bang and a flash!")
+        # DP3: wrath/startle to colonies with units in blast radius
+        for colony in self.colonies:
+            for unit in colony.units:
+                ux, uy, _ = unit.position
+                if abs(ux - x) <= r and abs(uy - y) <= r:
+                    self._disposition_wrath(colony, FAV_WRATH, AGIT_SPIKE)
+                    break
 
     def keeper_material(self, kind: str, x: int, y: int):
         """TE13: drop a raw MATERIAL. Tacks scatter as loose caltrops; every
@@ -2845,6 +3002,8 @@ class SandKingsSimulation:
                 break
         if victor is None:
             return
+        # DP2: record the victory step for confidence target calculation
+        victor.last_victory_step = self.step_count
         stolen = fallen_techs - set(getattr(victor, 'techs', set()))
         for t in stolen:
             self._grant_tech(victor, t)
@@ -2909,6 +3068,8 @@ class SandKingsSimulation:
             if getattr(colony, 'machine_arc', 'none') in ('none', 'known'):
                 colony.machine_arc = 'claimed'
             self._log_event(f"House {house} awakens the god-brain")
+        # DP3: grace to the colony that claimed the gift
+        self._disposition_grace(colony, FAV_GIFT)
         self._monitor(colony.colony_id).log_decision(
             self.step_count, self._unit_label(unit),
             f"claimed the {kind}", getattr(unit, 'thought', None))
@@ -4254,14 +4415,15 @@ class SandKingsSimulation:
         leaked = gross * BARGAIN_BRUTE_RELIABILITY              # < 1: defiance/refusal/break-free
         enforce  = BARGAIN_ENFORCE_COST * n_cap
         war_loss = 0.0 if self._pair_at_war(captor, victim) else BARGAIN_WAR_LOSS
-        return leaked - enforce - war_loss
+        return (leaked - enforce - war_loss) * self._disposition_boldness(captor)
 
     def _bargain_ev_destroy(self, aggressor: Colony, rival: Colony) -> float:
         """Value of simply destroying `rival`'s power, scaled by grudge/threat.
         Pure; no RNG."""
         grudge   = self._bargain_grudge(aggressor, rival)       # 0..1 (BG3)
         war_loss = 0.0 if self._pair_at_war(aggressor, rival) else BARGAIN_WAR_LOSS
-        return BARGAIN_DESTROY_WEIGHT * composite_power(rival) * grudge - war_loss
+        return (BARGAIN_DESTROY_WEIGHT * composite_power(rival) * grudge - war_loss) \
+               * self._disposition_boldness(aggressor)
 
     def _bargain_capturable(self, captor: Colony, victim: Colony) -> float:
         """Free victim units the captor could realistically take, rising with
@@ -5967,6 +6129,12 @@ class SandKingsSimulation:
                               **getattr(pb, 'tech_xp', {})}
             colony.crafted = set(getattr(pa, 'crafted', set())) | set(
                 getattr(pb, 'crafted', set()))
+            # DP8: confidence inherits (temperament); favoritism/agitation/victory reset
+            colony.confidence = max(getattr(pa, 'confidence', 0.5),
+                                    getattr(pb, 'confidence', 0.5))
+            colony.favoritism = 0.0
+            colony.agitation = 0.0
+            colony.last_victory_step = -10**9
         elif survivors:
             self._house_name(parent)       # ensure the parent's base dynasty is founded
             colony.house = parent.house    # inherit the BASE (kin/grudge identity), NOT
@@ -5984,6 +6152,11 @@ class SandKingsSimulation:
             colony.techs = set(getattr(parent, 'techs', set()))  # TE5
             colony.tech_xp = dict(getattr(parent, 'tech_xp', {}))
             colony.crafted = set(getattr(parent, 'crafted', set()))  # TE13
+            # DP8: confidence inherits (temperament); favoritism/agitation/victory reset
+            colony.confidence = getattr(parent, 'confidence', 0.5)
+            colony.favoritism = 0.0
+            colony.agitation = 0.0
+            colony.last_victory_step = -10**9
         colony.founded_step = self.step_count
         self.colonies[index] = colony
         self._kin_epoch = getattr(self, '_kin_epoch', 0) + 1  # kin map stale
@@ -6012,6 +6185,12 @@ class SandKingsSimulation:
     def _execute_unit_ai(self, unit: SandKing, colony: Colony):
         """Simple AI for unit behavior - NEURAL or RULE-BASED"""
         x, y, z = unit.position
+
+        # DP4: a startled (agitated) colony's mobiles disperse / hesitate.
+        # Guarded so agitation==0 draws NO RNG (byte-identical at neutral).
+        ag = getattr(colony, 'agitation', 0.0)
+        if ag > 0.0 and random.random() < AGIT_FREEZE * ag:
+            return   # this unit mills this step (slower); resumes next step
 
         # HIVE MONITOR (SPEC_HIVE_MONITOR M7): non-neural units cache
         # instincts on a 3-step stagger; neural soldiers are observed with
@@ -6301,7 +6480,7 @@ class SandKingsSimulation:
                                 "threw a torch", getattr(unit, 'thought', None))
                             return
                 # T21: raze an adjacent enemy field (consumes the action)
-                if colony.at_war or random.random() < colony.genome.aggression * 0.1:
+                if colony.at_war or random.random() < self._aggression_eff(colony) * 0.1:
                     for nx, ny, nz in self.world.get_neighbors_3d(unit.position, radius=1):
                         v = self.world.voxels[nx, ny, nz]
                         owner = int(self.world.ownership[nx, ny, nz])
@@ -6349,7 +6528,7 @@ class SandKingsSimulation:
                         unit.move(new_pos)
                 # If healthy and enemy within range, ATTACK
                 elif closest_enemy and min_dist < colony.genome.foraging_range:
-                    if random.random() < colony.genome.aggression:
+                    if random.random() < self._aggression_eff(colony):
                         # Move toward enemy
                         dx = np.sign(closest_enemy.position[0] - x)
                         dy = np.sign(closest_enemy.position[1] - y)
@@ -6379,7 +6558,7 @@ class SandKingsSimulation:
                         if dist < maw_dist:
                             maw_dist, closest_maw = dist, enemy_colony.maw
 
-                    if closest_maw is not None and random.random() < colony.genome.aggression:
+                    if closest_maw is not None and random.random() < self._aggression_eff(colony):
                         if not self._step_toward(unit, closest_maw.position, colony):
                             pass  # boxed in this step; siege pressure resumes next step
                     # FORTIFY posture: guard the maw and fields (T26)

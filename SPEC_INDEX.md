@@ -17,6 +17,7 @@ contract). Governing decision records live under `docs/decisions/`.
 - **SPEC_KEEPER.md** (K1–K7) — the keeper: the hand that feeds, the gift ladder, the terminal.
 - **SPEC_FACES.md** (F1–F5) — "look to your faces": carved sentiment glyphs / nature moods.
 - **SPEC_AWARENESS.md** (AW1–AW6) — nature until the great other: keeper-directed feeling gates on `breached` (the `_escape` breakout).
+- **SPEC_DISPOSITION.md** (DP1–DP12) — keeper-treatment → disposition: signed `favoritism` + boldness `confidence` + short-term `agitation`; modulates aggression, nudges `keeper_sentiment`, biases the bargain (default-neutral at neutral values).
 - **SPEC_PSIONIC.md** (PS1–PS6) — the psionic maw & keeper-as-prey: the awakened reach back.
 
 ## Mind, growth & sentience
@@ -56,3 +57,4 @@ Governing scope record: `docs/decisions/2026-07-09-intercolony-relations-spectru
 - **SPEC_LIVE_VIEW.md** — the live terrarium viewer (`live_view.py`): render, HUD, EVENT_TINTS, manager screen.
 - **SPEC_PLAY_KIT.md** (PK1–PK6) — a headless client to drive & test the terrarium.
 - **SPEC_SANDBOX.md** (SB1–SB5) — the sandking sandbox (the escaped-maw play space beyond the glass).
+</content>

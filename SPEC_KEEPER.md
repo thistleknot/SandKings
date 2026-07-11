@@ -217,6 +217,13 @@ Soak: 4 harsh years, keeper_auto on, one manna drop scripted early:
 worship, the cat, wrath, and at least one gift all observed in the
 chronicle; liveness holds.
 
+> Cross-ref (inbound): the keeper verbs (`keeper_drop_food`/`keeper_gift`/
+> `keeper_drought`/`keeper_release_cat`/`keeper_temperature`/`keeper_ignite`) now
+> also feed the DISPOSITION layer — a per-colony signed `favoritism` + boldness
+> `confidence` + short-term `agitation` that modulate effective aggression, nudge
+> `keeper_sentiment` post-breach, and bias the bargain. See `SPEC_DISPOSITION.md`
+> (DP3 verb hooks, DP5/DP6/DP7).
+
 ## Status / Reconciliation
 - Drafted + implemented 2026-07-09 (same session). Deltas:
   - Anchors: M14 added `self`/`god`/`beyond`/`speak` (35 -> 39 seeds,
@@ -245,3 +252,4 @@ real networking, and real internet access for the agents are OUT OF
 SCOPE by design; adding them would be a security regression, not a
 feature. A human-facing dashboard, if built, publishes state
 READ-ONLY and the sim remains a pure function of its own state.
+</content>

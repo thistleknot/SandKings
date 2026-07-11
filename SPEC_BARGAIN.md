@@ -53,6 +53,12 @@ inert. M4 adds **no new pickled unit field** — it reuses M1/M2/M3 state.
 > `TerrariumSimulation`. All method anchors below are on that class unless a
 > `politics.py` / `sandkings_evolution.py` path is given.
 
+> Cross-ref (inbound): the DISPOSITION layer biases M4's mode choice — a bold
+> colony's `confidence` multiplies the FORCE EVs (`E_brute`/`E_destroy`) via
+> `_disposition_boldness`, tilting toward SUBJUGATE/ANNIHILATE, while a meek one
+> tilts toward WAGE. The factor is `1.0` at `confidence 0.5` (identity), so BGA-1
+> and BGA-4 hold with fresh colonies. See `SPEC_DISPOSITION.md` (DP7).
+
 ---
 
 ## Per-pair mode state (BG1)
@@ -657,3 +663,9 @@ from trade to force or force to annihilation toward a rival. All gated by
   (SPEC_HIVE_MONITOR M15) and the mechanism behind the `commerce` lesson (SPEC_CODEX
   CX7). The event strings still need matching `chronicle.py` SALIENCE substrings and
   `live_view.py` EVENT_TINTS entries in code, plus prior-map change tracking.
+- 2026-07-11 — Disposition-arc alignment: added the inbound cross-ref (top) noting
+  `SPEC_DISPOSITION` DP7 multiplies the FORCE EVs (`E_brute`/`E_destroy`) by the
+  extractor's `_disposition_boldness(confidence)` — identity at `confidence 0.5`, so
+  BGA-1/BGA-4 hold with fresh colonies; a bold colony tilts toward force, a meek one
+  toward wage.
+</content>
