@@ -12,12 +12,11 @@ This round replaces the K4 abstract-symbol carvings with the canonical
 face, driven by a slow-souring favor scalar.
 
 ## F1 — Face favor (the slow-souring scalar)
-> **AW amendment (SPEC_AWARENESS):** the keeper-directed sentiment layer here
-> runs ONLY once a colony is `breached` (aware of the "great other"). A
-> pre-breach colony carves a NATURE mood (`NATURE_SYMBOLS` ☀/☁/☈ from
-> `_nature_mood`) instead, and `keeper_sentiment` is frozen at neutral until the
-> breakout revelation seeds it from prior treatment. `_update_sentiment` is
-> called only for breached colonies.
+The keeper-directed sentiment layer runs ONLY once a colony is `breached` — aware
+of the "great other" through the true breakout (see SPEC_AWARENESS). A pre-breach
+colony carves a NATURE mood instead (`NATURE_SYMBOLS` ☀/☁/☈ from `_nature_mood`),
+and its `keeper_sentiment` is frozen at neutral until the breakout revelation
+seeds it from prior treatment; `_update_sentiment` runs for breached colonies only.
 
 Each colony carries `face_favor` in [0,1] (default 0.5; getattr-guarded,
 pickled). On each CARVE_INTERVAL tick it drifts:

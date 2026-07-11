@@ -15,12 +15,11 @@ the horror is that a Shade-stage maw no longer needs its god (and Round D
 lets it turn).
 
 ## MT1 — The three stages
-> **AW amendment (SPEC_AWARENESS):** metamorphosis is now PHYSICAL ONLY.
-> `stage >= 2` no longer implies `breached`/awareness — the molt is just a
-> bigger body. The ONE true breakout past the glass is `_escape` (reached by
-> terminal mastery); it sets `breached` and grants keeper-awareness. So a maw
-> can be a stage-2 "new breed" (or even stage-3-bodied) and still feel only
-> nature until it escapes. `_set_stage` no longer touches `breached`.
+Metamorphosis is PHYSICAL ONLY: `stage >= 2` does NOT imply `breached`/awareness —
+the molt is just a bigger body. The one true breakout past the glass is `_escape`
+(terminal mastery, see SPEC_AWARENESS), which sets `breached` and grants
+keeper-awareness; `_set_stage` never touches `breached`. So a maw can be a stage-2
+"new breed" and still feel only nature until it escapes.
 
 `colony.stage` in {1,2,3} (default 1; getattr-guarded, pickled):
 - **1 insectoid** — the default sandkings.
