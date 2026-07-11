@@ -292,6 +292,23 @@ POWER_WOOD = 1.0             # weight per wood unit
 POWER_TECH_NATIVE = 8.0      # weight per known NATIVE tech
 POWER_TECH_FOREIGN = 30.0    # weight per known FOREIGN (keeper-gift) tech
 
+# Subjugation: Capture, Coercion & Conversion (SPEC_SUBJUGATION SJ8)
+CAPTURE_CHANCE = 0.0          # probability a dominant captor takes a broken enemy alive
+CAPTURE_HEALTH = 3            # health a captured thrall is revived to
+GUARD_RADIUS = 6              # Chebyshev range within which a captor soldier keeps a thrall docile
+DEFIANCE_RISE = 0.05          # defiance gained per tick while unguarded
+DEFIANCE_CALM = 0.10          # defiance shed per tick while guarded
+DEFIANCE_MAW_ACCEL = 1.0      # multiplier on defiance rise at the birth maw
+DEFIANCE_ACTIVE = 0.5         # defiance at which coercion, refusal, and strikes begin
+DEFIANCE_THRESHOLD = 1.0      # defiance at which the thrall breaks free
+COERCION_DAMAGE = 2           # threat-of-harm damage a captor soldier deals a defiant thrall per tick
+STRIKE_CHANCE = 0.1           # probability a defiant thrall strikes its guard back
+# Runtime enable (the `--subjugation` flag): the default CAPTURE_CHANCE stays 0.0
+# so the regression battery is byte-identical; the live launcher bumps the module
+# global to this and turns on the war-driven stance below. This is a temporary
+# stand-in for the M4 bargain layer, which will drive stance properly.
+SUBJUGATION_LIVE_CHANCE = 0.4  # capture probability when --subjugation is on
+
 # Metamorphosis (SPEC_METAMORPHOSIS MT1-MT4): the maw grows into a new breed
 MOLT_POP = 26                # population that triggers the stage-2 molt
 MOLT_FOOD = 420              # or this much hoarded food
@@ -1784,6 +1801,9 @@ class SandKingsSimulation:
 
         # 6. Combat resolution
         self._resolve_conflicts()
+
+        # 6b. SUBJUGATION (SPEC_SUBJUGATION): defiance, coercion, break-free
+        self._subjugation_tick()
 
         # 7. Maw migration, regen, colony collapse, and new arrivals (SPEC T4-T6, T15)
         self._migrate_threatened_maws()
@@ -3750,6 +3770,108 @@ class SandKingsSimulation:
             self.learners[colony_id] = ColonyLearner()
         return self.learners[colony_id]
 
+    # ---- Subjugation helpers (SPEC_SUBJUGATION SJ1-SJ7) ----
+
+    def _chebyshev(self, a: Tuple[int, int, int], b: Tuple[int, int, int]) -> int:
+        """Chebyshev distance: max(|a[i] - b[i]|) for all dimensions."""
+        return max(abs(a[0] - b[0]), abs(a[1] - b[1]), abs(a[2] - b[2]))
+
+    def _units_near(self, position: Tuple[int, int, int], radius: int = 1) -> List[SandKing]:
+        """Return all units within Chebyshev radius of position."""
+        result = []
+        for colony in self.colonies:
+            for unit in colony.units:
+                if self._chebyshev(unit.position, position) <= radius:
+                    result.append(unit)
+        return result
+
+    def _nearest_unit(self, units: List[SandKing], position: Tuple[int, int, int],
+                      kind: 'UnitType' = None) -> Optional[SandKing]:
+        """Return nearest unit of a given kind (by Chebyshev distance), or None if none exist."""
+        candidates = [u for u in units
+                      if kind is None or u.unit_type == kind]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda u: self._chebyshev(u.position, position))
+
+    def _birth_maw_proximity(self, unit: SandKing, birth: Optional[Colony]) -> float:
+        """Return proximity to birth maw: 1.0 at the maw, decaying by Chebyshev distance/GUARD_RADIUS.
+
+        Returns 0.0 if birth is dead/absent (no maw to call to).
+        """
+        if birth is None or not birth.is_alive():
+            return 0.0
+        dist = self._chebyshev(unit.position, birth.maw.position)
+        return max(0.0, 1.0 - dist / GUARD_RADIUS)
+
+    def _subjugate_stance(self, captor_colony: Colony, victim_colony: Colony) -> bool:
+        """Return True if the captor will take slaves instead of killing.
+
+        Default False (M4 bargain layer will set `subjugation_stance` per pair).
+        Runtime stand-in (`--subjugation` flag → `sim.subjugation_enabled`): an
+        at-war colony prefers to enslave — "this only happens in condition of war".
+        """
+        if getattr(captor_colony, 'subjugation_stance', False):
+            return True
+        return bool(getattr(self, 'subjugation_enabled', False)
+                    and getattr(captor_colony, 'at_war', False))
+
+    def _local_dominance(self, captor_colony: Colony, captor_unit: SandKing,
+                        victim: SandKing, victim_colony: Colony) -> bool:
+        """Check local dominance: at least one captor enforcer (soldier) adjacent to victim
+        and zero free (unextraced) defenders of victim's birth house adjacent.
+
+        Require: victim and captor_unit have valid positions.
+        Guarantee: True only when enforcers >= 1 and defenders == 0 within Chebyshev radius 1.
+        Maintain: pure read, no mutation, no RNG.
+        """
+        vx, vy, vz = victim.position
+        enforcers = 0      # captor soldiers within radius 1 of victim
+        defenders = 0      # victim's birth free units within radius 1 (rescuers)
+        for other in self._units_near(victim.position, radius=1):
+            if other is victim:
+                continue
+            if (other.colony_id == captor_colony.colony_id
+                    and other.unit_type == UnitType.SOLDIER):
+                enforcers += 1
+            elif (other.colony_id == victim_colony.colony_id
+                    and getattr(other, 'laboring_for', -1) < 0):  # free birth-house unit
+                defenders += 1
+        return enforcers >= 1 and defenders == 0
+
+    def _try_capture(self, captor_colony: Colony, captor_unit: SandKing,
+                    victim: SandKing, victim_colony: Colony) -> bool:
+        """Attempt to capture `victim` (already at <=0 health from take_damage) instead of
+        killing it. Returns True iff captured (caller then SKIPS removal, corpse, and kill
+        telemetry).
+
+        Require: victim.take_damage just returned True (victim would die this step).
+        Guarantee: on True, victim.laboring_for == captor_colony.colony_id,
+          victim.health == CAPTURE_HEALTH (> 0), victim stays in victim_colony.units
+          (birth colony_id unchanged); corpse voxel and kill bookkeeping are NOT run.
+          On False, ZERO RNG consumed unless a capture was genuinely possible.
+        Maintain: no unit migration; colony_id unchanged on capture; RNG stream
+          untouched whenever CAPTURE_CHANCE <= 0.
+        Assert: after capture, victim.health > 0 and victim not in units_to_remove.
+        """
+        # (1) HARD GATE — no RNG, default-neutral
+        if CAPTURE_CHANCE <= 0.0:
+            return False
+        # (2) stance gate (default False) — no RNG
+        if not self._subjugate_stance(captor_colony, victim_colony):
+            return False
+        # (3) SJ2 dominance — no RNG
+        if not self._local_dominance(captor_colony, captor_unit, victim, victim_colony):
+            return False
+        # (4) RNG reached ONLY past 1–3
+        if random.random() >= CAPTURE_CHANCE:
+            return False
+        # CAPTURE
+        victim.laboring_for = captor_colony.colony_id
+        victim.health = CAPTURE_HEALTH
+        victim.defiance = 0.0
+        return True
+
     def _extract_share(self, kind: str, amount, w: float):
         """Compute the extractor's share for a given kind and w value.
 
@@ -4672,6 +4794,82 @@ class SandKingsSimulation:
                 if rad[pos[0], pos[1]] > RAD_HOT:
                     self._ignite(pos)  # T45: hot zones set fields alight
 
+    def _subjugation_tick(self):
+        """SJ3-SJ5: Defiance evolution, coercion/refusal, and break-free for captured thralls.
+
+        Contract:
+        - Require: called once per step, after _resolve_conflicts.
+        - Guarantee: no RNG and no state change when no thralls exist; otherwise
+          evolves defiance, coerces, and frees per SJ3–SJ5.
+        - Maintain: colony_id written only by SJ6 (conversion), never by the tick.
+        - Assert: every unit touched has laboring_for >= 0 (a thrall).
+        """
+        # Collect all thralls (units with laboring_for >= 0)
+        thralls = [u for c in self.colonies for u in c.units
+                   if getattr(u, 'laboring_for', -1) >= 0]
+        if not thralls:
+            return  # DEFAULT-NEUTRAL: no thralls => no work, no RNG
+
+        # Track units coerced/struck to death this tick (removed after loop)
+        dead = []  # (unit, home_colony) pairs
+
+        for unit in thralls:
+            # SJ3: Per-unit defiance (rise unguarded, calm guarded)
+            captor = self._colony_by_id(unit.laboring_for)
+            guarded = captor is not None and captor.is_alive() and any(
+                u.unit_type == UnitType.SOLDIER
+                and self._chebyshev(u.position, unit.position) <= GUARD_RADIUS
+                for u in captor.units)
+
+            if guarded:
+                unit.defiance = max(0.0, getattr(unit, 'defiance', 0.0) - DEFIANCE_CALM)
+            else:
+                birth = self._colony_by_id(unit.colony_id)
+                prox = self._birth_maw_proximity(unit, birth)
+                rise = DEFIANCE_RISE * (1.0 + DEFIANCE_MAW_ACCEL * prox)
+                unit.defiance = min(1.0, getattr(unit, 'defiance', 0.0) + rise)
+
+            # SJ4: Coercion & refusal (threat of harm + produce nothing + strike back)
+            if getattr(unit, 'defiance', 0.0) >= DEFIANCE_ACTIVE:
+                if captor is not None:
+                    enforcer = self._nearest_unit(captor.units, unit.position,
+                                                  kind=UnitType.SOLDIER)
+                    if enforcer is not None:
+                        # Threat of harm (coercion damage)
+                        birth = self._colony_by_id(unit.colony_id)
+                        resilience = birth.genome.resilience if birth else 0.0
+                        unit.take_damage(COERCION_DAMAGE, resilience)
+                        # Coerced to death -> queue for removal (SJ4)
+                        if unit.health <= 0:
+                            dead.append((unit, birth))
+                            continue  # Skip refusal/strike/break-free (dead unit)
+                        # Strike back at low rate (SJ4)
+                        if random.random() < STRIKE_CHANCE:
+                            captor_resilience = captor.genome.resilience
+                            enforcer.take_damage(unit.attack, captor_resilience)
+                            # Struck to death -> queue for removal (SJ4)
+                            if enforcer.health <= 0:
+                                dead.append((enforcer, captor))
+                # Refusal: clear work targets
+                unit.forage_target = None
+                unit.mine_target = getattr(unit, 'mine_target', None) and None
+
+            # SJ5: Break free (at defiance threshold)
+            if getattr(unit, 'defiance', 0.0) >= DEFIANCE_THRESHOLD:
+                unit.laboring_for = -1  # Free again
+                unit.defiance = 0.0
+                birth = self._colony_by_id(unit.colony_id)
+                if birth is not None and birth.is_alive():
+                    unit.forage_target = birth.maw.position  # Flee toward birth maw
+                captor_house = self._house_name(captor) if captor else "unknown"
+                self._log_event(f"A thrall of House {captor_house} breaks free and flees home")
+
+        # Process coerced/struck-to-death units: remove and corpse (SJ4)
+        for u, home in dead:
+            if home is not None and u in home.units:
+                home.units.remove(u)
+                self.world.set_voxel(*u.position, VoxelType.CORPSE)
+
     def _machine_tick(self):
         """Phase 3f: discovery ladder, decay, VM execution, tinkering."""
         from machines import (CONTROLLER_DECAY, DECAY_AMBIENT_INTERVAL,
@@ -4999,6 +5197,33 @@ class SandKingsSimulation:
         for colony in self.colonies:
             if colony.maw.alive or colony.colony_id in self.pending_respawns:
                 continue
+
+            # SJ6a: Convert this dead birth house's OWN thralls to their captors
+            for unit in list(colony.units):
+                ext_id = getattr(unit, 'laboring_for', -1)
+                if ext_id < 0:
+                    continue  # a free birth unit: today's death (corpse) below
+                captor = self._colony_by_id(ext_id)
+                if captor is not None and captor.is_alive():  # captor-alive edge -> convert
+                    unit.colony_id = ext_id  # psionic link severed: permanent conversion
+                    unit.laboring_for = -1
+                    unit.defiance = 0.0
+                    colony.units.remove(unit)  # leave the dying house
+                    captor.units.append(unit)  # join the captor
+                    # Bump kin-map so hostile() re-reads the reassigned unit's side
+                    self._kin_epoch = getattr(self, '_kin_epoch', 0) + 1
+                # else captor also dead/absent: fall through, unit stays -> today's death
+
+            # SJ6b: Free any thralls this dead house was holding as captor
+            for other in self.colonies:
+                if other is colony:
+                    continue
+                for unit in other.units:
+                    if getattr(unit, 'laboring_for', -1) == colony.colony_id:
+                        unit.laboring_for = -1  # extractor gone -> freed
+                        unit.defiance = 0.0
+
+            # Then the EXISTING corpse loop: corpse whatever units REMAIN in colony.units
             for unit in colony.units:
                 self.world.set_voxel(*unit.position, VoxelType.CORPSE)
             colony.units.clear()
@@ -5604,6 +5829,10 @@ class SandKingsSimulation:
                             if (getattr(enemy, 'gift_to', -1) == colony.colony_id):
                                 continue  # inbound envoys are sacrosanct (P3)
                             if enemy.position == (nx, ny, nz):
+                                # SJ7b: THRALL HOSTILITY - captor does not kill its own labor
+                                if (getattr(enemy, 'laboring_for', -1) == colony.colony_id
+                                        or getattr(unit, 'laboring_for', -1) == enemy_colony.colony_id):
+                                    continue
                                 # NEURAL MATING: Soldiers exchange genetic material during combat!
                                 if (NEURAL_AVAILABLE and
                                     unit.unit_type == UnitType.SOLDIER and
@@ -5624,44 +5853,48 @@ class SandKingsSimulation:
                                 if unit.brain_layer is not None:
                                     unit.brain_layer.damage_dealt += unit.attack
                                 if unit.take_damage(enemy.attack, colony.genome.resilience):
-                                    if colony.colony_id not in units_to_remove:
-                                        units_to_remove[colony.colony_id] = []
-                                    units_to_remove[colony.colony_id].append(unit)
+                                    # SJ1: Try to capture instead of kill
+                                    if not self._try_capture(enemy_colony, enemy, unit, colony):
+                                        if colony.colony_id not in units_to_remove:
+                                            units_to_remove[colony.colony_id] = []
+                                        units_to_remove[colony.colony_id].append(unit)
 
-                                    # Track kill for neural performance
-                                    if enemy.brain_layer is not None:
-                                        enemy.brain_layer.kills += 1
-                                    # grievance: victim colony -> killer (P1)
-                                    self._diplomacy().rel(
-                                        colony.colony_id,
-                                        enemy_colony.colony_id).adjust(-4.0)
-                                    # HIVE MONITOR: outcomes carry thoughts (M4)
-                                    self._monitor(enemy_colony.colony_id).log_decision(
-                                        self.step_count, self._unit_label(enemy),
-                                        "slew an enemy", getattr(enemy, 'thought', None))
-                                    self._monitor(colony.colony_id).log_decision(
-                                        self.step_count, self._unit_label(unit),
-                                        "fell in battle", getattr(unit, 'thought', None))
+                                        # Track kill for neural performance
+                                        if enemy.brain_layer is not None:
+                                            enemy.brain_layer.kills += 1
+                                        # grievance: victim colony -> killer (P1)
+                                        self._diplomacy().rel(
+                                            colony.colony_id,
+                                            enemy_colony.colony_id).adjust(-4.0)
+                                        # HIVE MONITOR: outcomes carry thoughts (M4)
+                                        self._monitor(enemy_colony.colony_id).log_decision(
+                                            self.step_count, self._unit_label(enemy),
+                                            "slew an enemy", getattr(enemy, 'thought', None))
+                                        self._monitor(colony.colony_id).log_decision(
+                                            self.step_count, self._unit_label(unit),
+                                            "fell in battle", getattr(unit, 'thought', None))
 
                                 if enemy.take_damage(unit.attack, enemy_colony.genome.resilience):
-                                    if enemy_colony.colony_id not in units_to_remove:
-                                        units_to_remove[enemy_colony.colony_id] = []
-                                    units_to_remove[enemy_colony.colony_id].append(enemy)
+                                    # SJ1: Try to capture instead of kill
+                                    if not self._try_capture(colony, unit, enemy, enemy_colony):
+                                        if enemy_colony.colony_id not in units_to_remove:
+                                            units_to_remove[enemy_colony.colony_id] = []
+                                        units_to_remove[enemy_colony.colony_id].append(enemy)
 
-                                    # Track kill for neural performance
-                                    if unit.brain_layer is not None:
-                                        unit.brain_layer.kills += 1
-                                    # grievance: victim colony -> killer (P1)
-                                    self._diplomacy().rel(
-                                        enemy_colony.colony_id,
-                                        colony.colony_id).adjust(-4.0)
-                                    # HIVE MONITOR: outcomes carry thoughts (M4)
-                                    self._monitor(colony.colony_id).log_decision(
-                                        self.step_count, self._unit_label(unit),
-                                        "slew an enemy", getattr(unit, 'thought', None))
-                                    self._monitor(enemy_colony.colony_id).log_decision(
-                                        self.step_count, self._unit_label(enemy),
-                                        "fell in battle", getattr(enemy, 'thought', None))
+                                        # Track kill for neural performance
+                                        if unit.brain_layer is not None:
+                                            unit.brain_layer.kills += 1
+                                        # grievance: victim colony -> killer (P1)
+                                        self._diplomacy().rel(
+                                            enemy_colony.colony_id,
+                                            colony.colony_id).adjust(-4.0)
+                                        # HIVE MONITOR: outcomes carry thoughts (M4)
+                                        self._monitor(colony.colony_id).log_decision(
+                                            self.step_count, self._unit_label(unit),
+                                            "slew an enemy", getattr(unit, 'thought', None))
+                                        self._monitor(enemy_colony.colony_id).log_decision(
+                                            self.step_count, self._unit_label(enemy),
+                                            "fell in battle", getattr(enemy, 'thought', None))
         
         # MAW SIEGE: units adjacent to an enemy Maw damage it (SPEC T4)
         self._apply_maw_siege_damage()
@@ -5850,6 +6083,9 @@ def main():
                         help='Live mode web console port (default 8010)')
     parser.add_argument('--save-every', type=int, default=600,
                         help='Autosave cadence in steps when --persist is set')
+    parser.add_argument('--subjugation', action='store_true',
+                        help='Enable the subjugation economy: at-war colonies '
+                             'capture broken enemies as thralls (SPEC_SUBJUGATION)')
     args = parser.parse_args()
     
     print("="*60)
@@ -5876,6 +6112,15 @@ def main():
                                  depth=args.depth, num_colonies=args.num_colonies,
                                  canon=getattr(args, 'canon', False))
     sim.harsh = args.harsh  # T17 ramp control (applies to resumed sims too)
+
+    # --subjugation: turn the capture economy ON for this run only. The module
+    # default CAPTURE_CHANCE stays 0.0 (regression battery byte-identical); here
+    # we bump the live global and flag the sim so at-war colonies take thralls.
+    if getattr(args, 'subjugation', False):
+        globals()['CAPTURE_CHANCE'] = SUBJUGATION_LIVE_CHANCE
+        sim.subjugation_enabled = True
+        print(f"[CHAIN] SUBJUGATION ENABLED - at-war colonies capture thralls "
+              f"(CAPTURE_CHANCE={SUBJUGATION_LIVE_CHANCE})")
 
     # Enable neural mode if requested (fresh sims only - resumed sims keep
     # their evolved brains)
