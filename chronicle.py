@@ -47,6 +47,15 @@ SALIENCE = [
     ("too strange", 8),
     ("SPEAKS", 10),
     ("no longer a wall", 10),
+    ("ascends", 9),                 # enlightenment ascension (economy arc)
+    ("kneel to", 8),                # thralls convert on a birth-maw death
+    ("in bondage", 7),              # a maw seizes a rival's spawn as a thrall
+    ("marches to annihilate", 7),   # bargain mode -> annihilate
+    ("turns the whip", 6),          # bargain mode -> subjugate
+    ("breaks free", 6),             # a thrall breaks free and flees home
+    ("turns to trade", 5),          # bargain mode -> wage/trade
+    ("foresees", 5),                # (pre-existing gap: had a tint, no salience)
+    ("contracts", 4),               # a house opens a labor/goods/license contract
     ("turns on its god", 10),
     ("Shade stage", 10),
     ("split open", 9),

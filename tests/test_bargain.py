@@ -328,6 +328,11 @@ class TestBargainPersistenceInertness(unittest.TestCase):
 
             # Mock the EV helpers to always return WAGE for simplicity
             sim._bargain_pair_mode = MagicMock(return_value=BARGAIN_MODE_WAGE)
+            # The mode-SHIFT event log needs _house_name + composite_power on a
+            # transition; stub them (these light mocks lack a real maw).
+            sim._house_name = MagicMock(return_value='H')
+            _saved_cp = sandkings.composite_power
+            sandkings.composite_power = MagicMock(return_value=100.0)
 
             # First tick: populate the map
             sim._bargain_tick()
@@ -361,6 +366,7 @@ class TestBargainPersistenceInertness(unittest.TestCase):
 
         finally:
             sandkings.BARGAIN_ENABLED = old_bargain
+            sandkings.composite_power = _saved_cp
 
 
 class TestBargainTuningInvariant(unittest.TestCase):

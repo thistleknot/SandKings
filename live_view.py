@@ -145,6 +145,14 @@ EVENT_TINTS = (            # substring -> HUD color (spec R19/R24)
     ("god-brain", (150, 180, 255)),
     ("probing the glass", (150, 180, 255)),
     ("no longer a wall", (255, 255, 255)),
+    ("ascends", (255, 255, 255)),          # enlightenment ascension (economy arc)
+    ("in bondage", (200, 80, 220)),        # a maw enslaves a rival's spawn
+    ("kneel to", (200, 80, 220)),          # thralls convert to their captor
+    ("turns the whip", (200, 80, 220)),    # bargain -> subjugate
+    ("marches to annihilate", (255, 85, 85)),  # bargain -> annihilate
+    ("turns to trade", (230, 200, 90)),    # bargain -> wage/trade (mercantile gold)
+    ("contracts", (230, 200, 90)),         # a labor/goods/license contract opens
+    ("breaks free", (150, 200, 150)),      # a thrall wins its freedom
     ("split open", (150, 180, 255)),
     ("Shade stage", (255, 255, 255)),
     ("turns on its god", (230, 60, 200)),

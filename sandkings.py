@@ -4304,11 +4304,23 @@ class SandKingsSimulation:
         BG5a at stage 6). Consumes NO RNG. DEFAULT-NEUTRAL when disabled."""
         if not BARGAIN_ENABLED:
             return                                    # early-out: no map, no state, no RNG
+        old = self._bargain_modes()                   # prior tick's map (change detection)
         modes = {}
+        _shift_verb = {BARGAIN_MODE_WAGE: "turns to trade with",
+                       BARGAIN_MODE_SUBJUGATE: "turns the whip on",
+                       BARGAIN_MODE_ANNIHILATE: "marches to annihilate"}
         living = [c for c in self.colonies if c.is_alive()]
         for i, a in enumerate(living):
             for b in living[i + 1:]:
-                modes[frozenset((a.colony_id, b.colony_id))] = self._bargain_pair_mode(a, b)
+                key = frozenset((a.colony_id, b.colony_id))
+                m = self._bargain_pair_mode(a, b)
+                modes[key] = m
+                # M4 mode SHIFT: log only a genuine transition into an active mode
+                if m != old.get(key, BARGAIN_MODE_NONE) and m in _shift_verb:
+                    strong, weak = ((a, b) if composite_power(a) >= composite_power(b)
+                                    else (b, a))
+                    self._log_event(f"House {self._house_name(strong)} {_shift_verb[m]} "
+                                    f"House {self._house_name(weak)}")
         self.bargain_modes = modes                    # replaces last step's map wholesale
 
     def _colony_by_id(self, colony_id: int) -> Optional[Colony]:
@@ -4425,6 +4437,9 @@ class SandKingsSimulation:
         victim.laboring_for = captor_colony.colony_id
         victim.health = CAPTURE_HEALTH
         victim.defiance = 0.0
+        self._log_event(f"House {self._house_name(captor_colony)} seizes a "
+                        f"{victim.unit_type.name.lower()} of House "
+                        f"{self._house_name(victim_colony)} in bondage")   # M2 capture
         return True
 
     def _extract_share(self, kind: str, amount, w: float):
@@ -5757,6 +5772,7 @@ class SandKingsSimulation:
                 continue
 
             # SJ6a: Convert this dead birth house's OWN thralls to their captors
+            _converted_to = {}   # captor_id -> count, for a once-per-house event
             for unit in list(colony.units):
                 ext_id = getattr(unit, 'laboring_for', -1)
                 if ext_id < 0:
@@ -5768,9 +5784,16 @@ class SandKingsSimulation:
                     unit.defiance = 0.0
                     colony.units.remove(unit)  # leave the dying house
                     captor.units.append(unit)  # join the captor
+                    _converted_to[ext_id] = _converted_to.get(ext_id, 0) + 1
                     # Bump kin-map so hostile() re-reads the reassigned unit's side
                     self._kin_epoch = getattr(self, '_kin_epoch', 0) + 1
                 # else captor also dead/absent: fall through, unit stays -> today's death
+            for cap_id in _converted_to:  # M2 conversion: log once per inheriting house
+                cap = self._colony_by_id(cap_id)
+                if cap is not None:
+                    self._log_event(f"The thralls of fallen House "
+                                    f"{self._house_name(colony)} kneel to House "
+                                    f"{self._house_name(cap)}")
 
             # SJ6b: Free any thralls this dead house was holding as captor
             for other in self.colonies:
