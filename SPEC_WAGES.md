@@ -720,9 +720,31 @@ off surfaced values; surfacing consumes no RNG and mutates no sim state.
   back to whole items. WGA-6 tests on `food`. A fractional-carry ledger for discrete
   goods is out of scope (matches M1's discrete-split note).
 
+## WG13 — Liquidity floor (post-playtest reconciliation)
+
+A 3000-step enabled playtest revealed the market never transacted: grains mint only
+from forecast accuracy (`_score_forecasts`), and colonies forecast their own food
+too poorly to earn any, so `currency` stayed 0 and the WG4 liquidity gate always
+failed. WG13 adds a bootstrap floor: each `SETTLEMENT_INTERVAL`, inside
+`_labor_market_tick` (so it is reached ONLY when `WAGE_ENABLED` — default-neutral
+preserved), any living colony with `currency < ECON_GRAIN_FLOOR (60.0)` is topped up
+to that floor. This seeds initial liquidity (and respawned colonies); trade then
+recirculates grains by transfer, diverging balances by comparative advantage. NOTE:
+this is a bootstrap, not a real grain economy — tying grain income to
+production/population is a deferred CU-scope improvement (see docs/GOD_REVIEW_economy).
+
+Two implementation bugs the same playtest surfaced were also fixed (code now matches
+this spec's intent): (1) WG4/WG5 labor binding now happens ONLY after the liquidity
+gate commits the contract (`_select_free_labor` selects without mutating;
+`_bind_selected_labor` binds post-commit) — the prior code bound during fee
+computation and leaked orphaned bound units on a liquidity skip. (2) WG9
+`_wage_renegotiate` now routes a goods contract's factor through `_goods_axis`
+(ore:* → 'ore') before `_factor_price`, matching WG4's mapping (it previously passed
+the raw sink name and raised KeyError once goods contracts could open).
+
 ## Status / Reconciliation
 
-- **Drafted 2026-07-10.** Spec-first: implementation pending. Kept as ONE file (the
+- **Drafted 2026-07-10; implemented + playtest-hardened same day.** Kept as ONE file (the
   WG-market / WG-settlement seam is marked but the halves are not independently
   implementable — settlement needs the market's store/endowments/pricing).
 - **Cross-module changes M1/M2 implementers must respect:**

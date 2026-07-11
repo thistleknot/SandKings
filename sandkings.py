@@ -332,6 +332,11 @@ LABOR_MAX_UNITS = 4               # max seller units bound per labor contract (W
 GOODS_VOLUME_CAP = 5              # max goods units shipped per settlement interval (WG3b)
 NONVIABLE_LIMIT = 3               # consecutive non-viable settlements before contract closes (WG10)
 EPS_POWER = 1e-9                  # denominator guard for composite_power ratios (WG2/WG3)
+ECON_GRAIN_FLOOR = 60.0           # WG13 liquidity floor: min grains a living colony is topped up
+                                  # to each settlement interval when the market is ON. Grains
+                                  # otherwise mint only from (weak) forecast accuracy, so without a
+                                  # floor the market has no money to transact. Gated by WAGE_ENABLED
+                                  # (only reached inside _labor_market_tick), so default-neutral.
 
 # The Bargain: Mode Selection by Net Extraction (SPEC_BARGAIN BG1-BG12)
 # Mode enum (BG1): string constants, pickle-trivial, log-readable
@@ -3149,17 +3154,27 @@ class SandKingsSimulation:
         elif kind == 'wood':
             target.wood = max(0, getattr(target, 'wood', 0) - int(amount))
 
-    def _bind_labor(self, contract, seller, buyer):
-        """Select up to LABOR_MAX_UNITS FREE seller units and bind them (WG5)."""
+    def _select_free_labor(self, seller):
+        """Select up to LABOR_MAX_UNITS free seller unit_ids WITHOUT binding them.
+        Fix A: selection is pure so an open-sweep that fails the liquidity gate does
+        not leak bound units. Binding happens only after the contract commits
+        (_bind_selected_labor)."""
         picked = []
         for u in seller.units:
             if len(picked) >= LABOR_MAX_UNITS:
                 break
             if getattr(u, 'laboring_for', -1) < 0:            # only free units
-                u.laboring_for = buyer.colony_id              # virtual: NO migration (F3)
-                u.wage_ratio = contract['w']                # > 0 => voluntary (WG11b)
-                picked.append(u.unit_id)  # use stable unit_id from SandKing
+                picked.append(u.unit_id)
         return picked
+
+    def _bind_selected_labor(self, unit_ids, seller, buyer, w):
+        """Bind already-selected free units to a COMMITTED labor contract (WG5).
+        Virtual: no migration (F3); wage_ratio > 0 marks voluntary labor (WG11b)."""
+        ids = set(unit_ids)
+        for u in seller.units:
+            if u.unit_id in ids and getattr(u, 'laboring_for', -1) < 0:
+                u.laboring_for = buyer.colony_id
+                u.wage_ratio = w
 
     def _effective_foreign_techs(self, colony) -> set:
         """Own foreign gifts UNION gifts licensed-IN. Read-only; colony.techs untouched (WG6)."""
@@ -3239,7 +3254,8 @@ class SandKingsSimulation:
             elif contract['kind'] == 'license':
                 fee = LICENSE_FEE_BASE * self._factor_price(seller, buyer, 'tech') / MV_BASE
             else:  # goods
-                fee = self._factor_price(seller, buyer, contract['factor']) * contract['volume']
+                fee = self._factor_price(seller, buyer,
+                                         self._goods_axis(contract['factor'])) * contract['volume']
             contract['fee'] = max(0.0, fee)
             # Re-stamp labor unit wages
             if contract['kind'] == 'labor':
@@ -3342,10 +3358,7 @@ class SandKingsSimulation:
                             # Compute fee per kind
                             if kind == 'labor':
                                 w = self._labor_w(seller_cand, buyer_cand)
-                                unit_ids = self._bind_labor(
-                                    {'w': w, 'unit_ids': []},
-                                    seller_cand, buyer_cand
-                                )
+                                unit_ids = self._select_free_labor(seller_cand)  # Fix A: select only, bind after commit
                                 volume = len(unit_ids)
                                 fee = WAGE_GRAIN_RATE * self._factor_price(seller_cand, buyer_cand, 'labor') * volume if volume > 0 else 0
                             elif kind == 'license':
@@ -3382,6 +3395,8 @@ class SandKingsSimulation:
                                 'suspended': False,
                                 'alive': True,
                             }
+                            if kind == 'labor':   # Fix A: bind ONLY after the contract commits
+                                self._bind_selected_labor(unit_ids, seller_cand, buyer_cand, w)
                             self._wage_contracts().append(contract)
                             self._log_event(f"House {self._house_name(seller_cand)} contracts {kind} to House {self._house_name(buyer_cand)}")
 
@@ -3389,6 +3404,14 @@ class SandKingsSimulation:
         """Main wage market tick: renegotiate, settle, open, suspend/close (WG11a)."""
         if not WAGE_ENABLED:
             return                         # DEFAULT-NEUTRAL: no RNG, no state — byte-identical
+        # WG13 liquidity floor (Fix B): grains mint only from weak forecast accuracy,
+        # so without a floor the market has no money and never transacts. Each
+        # settlement interval, top a broke living colony up to ECON_GRAIN_FLOOR so
+        # trade can always bootstrap (also seeds respawned colonies).
+        if self.step_count % SETTLEMENT_INTERVAL == 0:
+            for c in self.colonies:
+                if c.is_alive() and getattr(c, 'currency', 0.0) < ECON_GRAIN_FLOOR:
+                    c.currency = ECON_GRAIN_FLOOR
         # order per coupling #7: renegotiate -> settle -> open -> suspend/close -> sweep
         if self.step_count % RENEGOTIATE_INTERVAL == 0:
             self._wage_renegotiate()   # WG9
