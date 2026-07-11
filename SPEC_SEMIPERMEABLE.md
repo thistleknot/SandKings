@@ -1,4 +1,4 @@
-# SPEC: Semi-Permeable Parameters — learnable soft params + the daylight tracer (SP1–SP10)
+# SPEC: Semi-Permeable Parameters — learnable soft params + the daylight tracer (SP1–SP11)
 
 A reusable **semi-permeable parameter** primitive plus ONE tracer application
 (daylight). The terrarium today is mostly frozen constants and hard `if metric >
@@ -27,6 +27,13 @@ soft params can later be **evolved / fit** exactly like `ColonyGenome.brain_hidd
 >   the oscillator term is `0.0` and the EMA consumes ZERO RNG, so the battery
 >   stays byte-identical. The one-way `sun → water` (`SUN_DRYING`) edge is
 >   preserved and NO `water → sun` edge is added (the graph stays ACYCLIC).
+> - **ADDS (SP11)** a temperature-controlled Boltzmann softmax over the three
+>   bargain-mode EVs: one constant `BARGAIN_TEMP` (default `0.0` = identity / hard
+>   argmax) and a mode switch in `_bargain_pair_mode` — the semi-permeable
+>   membrane applied to a discrete CHOICE (softmax) rather than a scalar (`jitter`)
+>   or a binary gate (`soft_gate`). Default routes to the EXACT pre-SP11 argmax
+>   (ZERO RNG, byte-identical battery); `> 0` samples the mode with
+>   `P(mode) ∝ exp(EV_mode / BARGAIN_TEMP)`.
 > - **REUSES** the existing seeded module RNG streams (`random` + `np.random`,
 >   seeded by tests / `play_kit` at construction), the `_clamp01` module-helper
 >   convention (`sandkings.py:526`), and the whole `BIOME_TICK` weather cadence
@@ -38,6 +45,8 @@ soft params can later be **evolved / fit** exactly like `ColonyGenome.brain_hidd
 >   match today exactly. SP9 keeps this: `CAPTURE_TEMP == 0.0` is the byte-for-byte
 >   flat-gate identity path. SP10 keeps this: `SUN_OSC_AMP == 0.0` makes the swing
 >   term `0.0` and the EMA is pure arithmetic (no RNG), so the stream is unmoved.
+>   SP11 keeps this: `BARGAIN_TEMP == 0.0` routes to the exact hard argmax and
+>   draws NO RNG, so the bargain-mode selection is byte-identical.
 
 Layer: **Requirements + Structural + Behavioral.** Observable soft-param
 behaviour (requirements), two pure primitives + holders + contracts
@@ -1033,6 +1042,270 @@ and call `_biome_tick()` to sample one day at a time.
 
 ---
 
+## SP11 — Behavioral: the bargain-mode membrane (hard argmax → Boltzmann softmax, BARGAIN_TEMP)
+
+Migrates the frozen **bargain-mode SELECTION** from a hard deterministic `argmax`
+over the three net-extraction EVs into a **temperature-controlled Boltzmann softmax
+sample** — a semi-permeable choice instead of a discrete cliff. Same pattern as SP9
+(capture): a temperature constant whose default (`0.0`) routes to the EXACT existing
+code (identity, byte-identical battery, ZERO RNG), and whose positive values opt
+into a tempered stochastic choice. The three EV computations (`_bargain_ev_wage` /
+`_bargain_ev_brute` / `_bargain_ev_destroy`) and the strong/weak assignment are
+UNCHANGED — only the selection AMONG the three EVs changes. This applies the
+semi-permeable membrane to a discrete CHOICE (softmax over 3 modes), where SP5
+applied it to a scalar (`jitter`) and SP9 to a binary gate (`soft_gate`).
+
+### SP11.1 — Current anchors (verified against `sandkings.py`, 2026-07-11)
+
+| Symbol | Line | Note |
+|---|---|---|
+| `BARGAIN_MODE_*` string enum | `:377–380` | `NONE` / `WAGE` / `SUBJUGATE` / `ANNIHILATE` |
+| Bargain constants block | `:382–395` | `BARGAIN_ENABLED = False :382` … `BARGAIN_GRUDGE_SENS = 1.2 :395` (last line of block; `BARGAIN_TEMP` appends here) |
+| `_bargain_ev_wage/brute/destroy` (defs) | `:4475 / :4486 / :4500` | pure EV functions — **NOT touched** by SP11 |
+| `_bargain_pair_mode` (def) | `:4546` | the frozen argmax gate; body `:4547–4562` (the ONLY code SP11 rewrites) |
+| SOLE call site | `:4579` | inside `_bargain_tick`'s pair double-loop; result stored into `modes[key]`, then `self.bargain_modes = modes` wholesale |
+
+**Sample-once finding (SP11 load-bearing — VERIFIED, no risk).**
+`_bargain_pair_mode` is invoked **exactly once per unordered living-colony pair per
+`_bargain_tick` recompute** — the single call at `:4579`, inside the
+`for i, a in enumerate(living): for b in living[i+1:]:` loop — and the returned mode
+is written into the local `modes[key]` dict which replaces `self.bargain_modes`
+wholesale at the end of the tick. Every downstream reader hits that CACHE, never
+`_bargain_pair_mode`: `_bargain_mode` (def `:4482`; read at `:3616` and `:4643`) and
+`_bargain_mode_ids` (def `:4487`; read at `:1909`) both `.get(...)` off
+`_bargain_modes()`. Therefore `_bargain_pair_mode` is **NOT on any read-hot path**;
+under sampling a pair's mode is drawn once and stays stable for the whole tick — no
+resample / no flicker. **No caching change is required** — the existing
+recompute-then-cache structure already satisfies SP11's sample-once guarantee.
+
+### SP11.2 — Requirements (observable behaviour + contracts)
+
+| # | Requirement | Acceptance criterion (mechanically checkable) |
+|---|---|---|
+| SP11.2a | **Identity mode-switch** | `BARGAIN_TEMP <= 0.0` (DEFAULT) executes the EXACT pre-SP11 lines — `best<=0 → NONE`; `e_wage>=e_brute and e_wage>=e_destroy → WAGE`; `e_brute>=e_destroy → SUBJUGATE`; else `ANNIHILATE` — INCLUDING the exact tie-break order, and consumes ZERO RNG. Same return value AND same draw count as pre-SP11 for every EV triple (SPA-18). |
+| SP11.2b | **NONE guard precedes any draw** | The `best <= 0.0 → BARGAIN_MODE_NONE` guard is FIRST in BOTH modes: when nothing is worth doing there is NO draw on either path (SPA-18, SPA-20). |
+| SP11.2c | **Tempered soft choice** | `BARGAIN_TEMP > 0.0` (opt-in) Boltzmann-samples among {WAGE, SUBJUGATE, ANNIHILATE} with `P(mode) ∝ exp(EV_mode / BARGAIN_TEMP)`; empirical frequencies over many draws approximate `softmax(EV/temp)`; close EVs → near-uniform, a dominant EV → near-deterministic (SPA-19). |
+| SP11.2d | **Exactly one draw on the soft path** | With `best > 0` and `BARGAIN_TEMP > 0`, a single `_bargain_pair_mode` call consumes EXACTLY ONE `random.random()` draw; with `best <= 0`, ZERO (SPA-20). |
+| SP11.2e | **Numerically stable softmax** | Weights use `exp((EV_i − best)/temp)` (max-subtracted before `exp`), then a single inverse-CDF pick over the ordered (WAGE, SUBJUGATE, ANNIHILATE) list — no overflow (SPA-19). |
+| SP11.2f | **Canon under softness** | Two same-seed runs with `BARGAIN_TEMP > 0` produce identical mode selections (SPA-21). |
+| SP11.2g | **Sample-once stability** | A pair's sampled mode is computed once per recompute and cached in `bargain_modes`; downstream reads never resample within a tick (SP11.1 finding; no code change needed). |
+| SP11.2h | **Security** | Pure numeric + one seeded-stream draw. No I/O, no host codegen, no `eval`/`exec`, no sockets, no subprocess; reads `BARGAIN_TEMP` as a bare module global and draws only from module `random`. |
+
+### SP11.3 — Behavioral: the `_bargain_pair_mode` mode switch
+
+Replace the BODY of `_bargain_pair_mode` (`sandkings.py:4547–4562`) with a mode
+switch on `BARGAIN_TEMP`. The strong/weak assignment (`:4548–4551`) and the three
+`_bargain_ev_*` calls (`:4552–4554`) are UNCHANGED; only the selection among the
+three EVs changes. Rote, drop-in pseudocode for the WHOLE method:
+
+```python
+    def _bargain_pair_mode(self, a: Colony, b: Colony) -> str:
+        """Choose the enforcement mode for the unordered pair (a, b).
+
+        SP11: selection is a mode switch on the module constant BARGAIN_TEMP.
+          BARGAIN_TEMP <= 0.0 (default): the exact pre-SP11 hard argmax over the
+            three EVs (byte-identical, ZERO RNG, same tie-break order).
+          BARGAIN_TEMP > 0.0 (opt-in): a Boltzmann softmax sample among the three
+            feasible modes {WAGE, SUBJUGATE, ANNIHILATE} with
+            P(mode) proportional to exp(EV_mode / BARGAIN_TEMP), drawn ONCE.
+        The best<=0 -> NONE guard is FIRST in BOTH modes (no draw when nothing is
+        worth doing). Reads BARGAIN_TEMP as a bare module global; the soft draw
+        rides the seeded module `random` stream. Called once per pair per
+        _bargain_tick recompute (result cached in bargain_modes) -> a pair's mode
+        is stable within a tick even under sampling.
+        """
+        # strong/weak assignment + the three EVs — UNCHANGED from pre-SP11
+        if composite_power(a) >= composite_power(b):
+            strong, weak = a, b
+        else:
+            strong, weak = b, a
+        e_wage    = self._bargain_ev_wage(strong, weak)
+        e_brute   = self._bargain_ev_brute(strong, weak)
+        e_destroy = self._bargain_ev_destroy(strong, weak)
+        best = max(e_wage, e_brute, e_destroy)
+        # (G) NONE guard FIRST — both modes; NO draw when nothing is worth doing
+        if best <= 0.0:
+            return BARGAIN_MODE_NONE                     # nothing worth doing -> plain peace
+        if BARGAIN_TEMP <= 0.0:
+            # IDENTITY PATH — byte-for-byte the pre-SP11 hard argmax. ZERO RNG.
+            if e_wage >= e_brute and e_wage >= e_destroy:
+                return BARGAIN_MODE_WAGE
+            if e_brute >= e_destroy:
+                return BARGAIN_MODE_SUBJUGATE
+            return BARGAIN_MODE_ANNIHILATE
+        # SOFT PATH — opt-in tempered choice (BARGAIN_TEMP > 0). EXACTLY ONE draw.
+        modes   = (BARGAIN_MODE_WAGE, BARGAIN_MODE_SUBJUGATE, BARGAIN_MODE_ANNIHILATE)
+        evs     = (e_wage, e_brute, e_destroy)
+        # numerically stable softmax: subtract best (the max EV) before exp
+        weights = [math.exp((ev - best) / BARGAIN_TEMP) for ev in evs]
+        total   = weights[0] + weights[1] + weights[2]   # > 0 (the best term is exp(0)=1.0)
+        # single inverse-CDF pick over the ordered (WAGE, SUBJUGATE, ANNIHILATE) list
+        r   = random.random() * total                    # the ONLY draw, taken past the NONE guard
+        acc = 0.0
+        for mode, w in zip(modes, weights):
+            acc += w
+            if r < acc:
+                return mode
+        return BARGAIN_MODE_ANNIHILATE                    # float-guard fallthrough (last ordered mode)
+```
+
+**Reading BARGAIN_TEMP as a module global (SP11.3a).** `_bargain_pair_mode`
+references `BARGAIN_TEMP` as a **bare name** (module global resolved at call time),
+exactly as it already reads the `BARGAIN_MODE_*` constants and as `_try_capture`
+reads `CAPTURE_TEMP` (SP9.4a). Do NOT read it off `self`; tests monkeypatch
+`sandkings.BARGAIN_TEMP`. `math` and `random` are already imported at module top
+(SP2.1); no new import.
+
+**Why route to the literal old code at temp<=0 (SP11.3b — the SP9 lesson).** Do
+NOT reproduce the identity path as a `tau→0` softmax limit. Floating-point `exp`
+and the argmax tie-break order would drift — the pre-SP11 `>=`-chain resolves a
+three-way tie to WAGE deterministically, whereas a softmax with equal weights
+samples uniformly — breaking the byte-identical battery AND consuming a draw where
+today there is none. Route to the EXACT pre-SP11 `>=`-chain (same lesson as SP9's
+`CAPTURE_TEMP<=0` mode switch: the neutral path is the literal old code, never a
+limiting case of the soft path).
+
+**Feasible-set note (SP11.3c).** The soft path samples over ALL THREE modes
+{WAGE, SUBJUGATE, ANNIHILATE}; a mode whose EV is `<= 0` (but where `best > 0`)
+still receives a small positive weight `exp((EV−best)/temp) ∈ (0,1]` and remains
+sampleable. This is intentional — the `best <= 0` guard already removes the
+"nothing worth doing" case (→ NONE); past it, at least one EV is positive and the
+tempered choice may still occasionally pick a weaker mode, which is the whole point
+of a semi-permeable (not hard) selection.
+
+**Contract (`_bargain_pair_mode`, SP11):**
+- **Require** — `a`, `b` are colonies with `composite_power` defined; `BARGAIN_TEMP`
+  a finite float (module global; default `0.0`).
+- **Guarantee** — `BARGAIN_TEMP <= 0.0` ⇒ identical return value and identical
+  RNG-draw count (ZERO) to pre-SP11 for every EV triple, including tie-break order.
+  `BARGAIN_TEMP > 0.0` ⇒ returns NONE with ZERO draws when `best <= 0`; else takes
+  EXACTLY ONE `random.random()` draw and returns a mode in {WAGE, SUBJUGATE,
+  ANNIHILATE} sampled with
+  `P(mode) = exp((EV_mode−best)/temp) / Σ_i exp((EV_i−best)/temp)`.
+- **Maintain** — the three `_bargain_ev_*` values and the strong/weak assignment are
+  unchanged; the returned mode is cached once per pair per recompute at the `:4579`
+  call site (no resample within a tick).
+- **Assert** — at `BARGAIN_TEMP == 0.0`, output equals the pre-SP11 argmax for the
+  battery `{(10,1,1)→WAGE, (1,10,1)→SUBJUGATE, (1,1,10)→ANNIHILATE, (0,-1,-2)→NONE,
+  (5,5,5)→WAGE, (1,5,5)→SUBJUGATE}` with zero draws; at `BARGAIN_TEMP > 0` with
+  `best > 0`, exactly one draw is consumed.
+
+### SP11.4 — Constants
+
+Place in the bargain constants block, appended immediately after
+`BARGAIN_GRUDGE_SENS = 1.2` (`sandkings.py:395`), grouped with the other `BARGAIN_*`
+constants:
+
+```python
+BARGAIN_TEMP = 0.0                    # SP11: softmax temperature over the three bargain EVs (0 = identity/hard argmax; >0 = tempered stochastic choice; learnable)
+```
+
+| Constant | Value | Provenance | Meaning |
+|---|---|---|---|
+| `BARGAIN_TEMP` | `0.0` | `[prov:B fit=mode-diversity]` | Boltzmann temperature over the three bargain EVs; **defaults `0.0` = identity / hard argmax** (routes to the exact pre-SP11 selection, ZERO RNG); `> 0` opts into a tempered stochastic choice (close EVs → near-uniform, a dominant EV → near-deterministic). Learnable — fitting dials it up for mode diversity. |
+| softmax form | `exp(EV/temp)` normalized | `[prov:A lit=Boltzmann / softmax action selection, Sutton&Barto]` | the tempered-choice shape is the standard Boltzmann / softmax action-selection response; used structurally, not tuned here. |
+
+**Load-bearing identity constant:** `BARGAIN_TEMP == 0.0` is the single value that
+keeps the bargain-mode path byte-identical (the mode switch takes the exact
+pre-SP11 argmax branch and draws NO RNG). A positive value is an intentional
+behaviour change: it turns each pair's mode into a per-recompute draw and thereby
+shifts the shared RNG trajectory for everything downstream in that tick — so
+`BARGAIN_TEMP > 0` is only canon-comparable to same-temp runs (mirror the SP9
+`CAPTURE_TEMP` and SP7 `SUN_JITTER_SD` notes). The battery stays byte-identical
+ONLY at the `0.0` default. Do NOT fabricate a citation for the value — `0.0` is
+chosen for identity; the softmax FORM itself is the cited Sutton&Barto pattern, not
+the numeric.
+
+**The evolve/fit seam (SP11.5, documented not implemented).** `BARGAIN_TEMP` is the
+natural learnable of a per-colony (or per-house) choice-temperature: a house could
+carry its own `bargain_temp` and `_bargain_pair_mode` would read it instead of the
+module constant — letting sharp houses sample decisively (low temp) and erratic
+houses diffusely (high temp), the SP3.1 per-colony seam. NOT implemented in this
+pass (module constant only).
+
+### SP11.6 — Acceptance (`tests/test_semipermeable.py`, EXTEND)
+
+Add `BARGAIN_TEMP` and the four `BARGAIN_MODE_*` constants to the `from sandkings
+import (...)` line. Seed both streams like the other clauses
+(`random.seed(s); np.random.seed(s)`). REUSE the `RandomSpy` from the SP9 section.
+
+**Shared fixture (rote).** Force one `_bargain_pair_mode` call against a real seeded
+sim with the three EVs stubbed to fixed values, so the selection logic is exercised
+deterministically without constructing power / endowment states:
+
+```python
+def _bargain_probe(ev_wage, ev_brute, ev_destroy, temp, seed=50, forced_roll=None):
+    """Force one _bargain_pair_mode call with controlled EVs + temperature.
+
+    Returns (mode: str, draw_count: int). Stubs the three _bargain_ev_* methods to
+    return fixed EVs; strong/weak still resolves via composite_power on two real
+    alive colonies (their actual power is irrelevant — the EVs are stubbed).
+    Sets/restores sandkings.BARGAIN_TEMP in a finally.
+    """
+    import sandkings
+    random.seed(seed); np.random.seed(seed)
+    sim = SandKingsSimulation(width=48, height=36, depth=12, num_colonies=3)
+    sandkings.BARGAIN_TEMP = temp
+    alive = [c for c in sim.colonies if c.is_alive() and c.units]
+    a, b = alive[0], alive[1]
+    sim._bargain_ev_wage    = lambda s, w: ev_wage
+    sim._bargain_ev_brute   = lambda s, w: ev_brute
+    sim._bargain_ev_destroy = lambda s, w: ev_destroy
+    spy = RandomSpy(forced=forced_roll)
+    old = random.random; random.random = spy
+    try:
+        mode = sim._bargain_pair_mode(a, b)
+    finally:
+        random.random = old
+        sandkings.BARGAIN_TEMP = 0.0
+    return mode, spy.count
+```
+
+18. **SPA-18 — IDENTITY + ZERO RNG (gating; keeps the battery byte-identical).**
+    With `BARGAIN_TEMP == 0.0`, `_bargain_pair_mode`'s return AND draw count match
+    the pre-SP11 hard argmax across this battery. Compare against a LOCAL reference
+    `_argmax_mode(ew, eb, ed)` in the test that reproduces the exact pre-SP11
+    `>=`-chain, and assert both `mode == _argmax_mode(...)` AND `draw_count == 0`
+    for every row:
+    | (e_wage, e_brute, e_destroy) | expect mode | branch exercised |
+    |---|---|---|
+    | `(10, 1, 1)` | `WAGE` | clear WAGE |
+    | `(1, 10, 1)` | `SUBJUGATE` | clear SUBJUGATE |
+    | `(1, 1, 10)` | `ANNIHILATE` | clear ANNIHILATE |
+    | `(0.0, -1.0, -2.0)` | `NONE` | best<=0 guard |
+    | `(-1.0, -2.0, -3.0)` | `NONE` | best<=0 guard |
+    | `(5, 5, 5)` | `WAGE` | three-way tie → WAGE branch (`e_wage>=both`) |
+    | `(1, 5, 5)` | `SUBJUGATE` | tie e_brute==e_destroy → SUBJUGATE |
+    | `(5, 5, 1)` | `WAGE` | tie e_wage==e_brute → WAGE |
+    | `(1, 5, 3)` | `SUBJUGATE` | e_brute strict max |
+    Use `_bargain_probe(..., temp=0.0)`; the zero-draw assertion pins that the
+    identity path is byte-identical to today.
+19. **SPA-19 — SOFTMAX SHAPE (temp>0).** Construct ONE seeded sim, stub the three
+    EVs, set `BARGAIN_TEMP > 0`, and sample many times in a loop calling
+    `sim._bargain_pair_mode(a, b)` (each call advances the same seeded stream);
+    tally mode frequencies. Assert:
+    - **Equal EVs → ~uniform:** with `(5, 5, 5)` and any `temp > 0`, each of the
+      three modes occurs ≈ `1/3` (tolerance e.g. `±0.05` over ≥ `3000` samples).
+    - **Approximates softmax:** with `(2.0, 1.0, 0.0)` and `temp = 1.0`, empirical
+      frequencies approximate `softmax([2,1,0]) ≈ (0.665, 0.245, 0.090)` within
+      tolerance (`±0.05`).
+    - **Dominant EV → near-deterministic:** with a large gap `(10, 0, 0)` and a
+      small `temp` (e.g. `0.5`), WAGE occurs with probability `> 0.95`.
+20. **SPA-20 — ONE DRAW / ZERO ON NONE.** With `BARGAIN_TEMP > 0` (e.g. `1.0`):
+    `_bargain_probe(5, 5, 5, temp=1.0)` consumes EXACTLY ONE draw
+    (`draw_count == 1`); `_bargain_probe(0.0, -1.0, -2.0, temp=1.0)` returns `NONE`
+    and consumes ZERO draws (the `best<=0` guard precedes the draw). Also assert the
+    identity path draws zero: `_bargain_probe(10, 1, 1, temp=0.0)` → `draw_count == 0`.
+21. **SPA-21 — CANON under softness.** Two probe loops, each preceded by the SAME
+    `random.seed(s); np.random.seed(s)`, `sandkings.BARGAIN_TEMP` set to the same
+    `> 0` value, stubbed EVs near-uniform (e.g. `(3, 2, 1)`), collect the sequence
+    of sampled modes over `N ≥ 200` calls; assert the two sequences are IDENTICAL.
+    (Optional full-sim mirror of SPA-11: two `BARGAIN_ENABLED=True`, same-seed sims
+    with `BARGAIN_TEMP > 0` run ≥ `50` steps produce identical per-step
+    `bargain_modes` maps.) Restore `sandkings.BARGAIN_TEMP` in a `finally`.
+
+---
+
 ## Status / Reconciliation
 
 - **Drafted 2026-07-11. Spec-first: implementation pending.** Introduces a
@@ -1057,21 +1330,35 @@ and call `_biome_tick()` to sample one day at a time.
   byte-identical. Keeps the graph ACYCLIC (one-way `sun → water` preserved; no
   `water → sun` edge). Acceptance clauses SPA-12…SPA-17 (extend
   `tests/test_semipermeable.py`).
+- **SP11 added 2026-07-11 (this revision).** Converts the bargain-mode SELECTION
+  from a hard `argmax` over the three net-extraction EVs into a temperature-
+  controlled Boltzmann softmax sample behind `BARGAIN_TEMP` (default `0.0` =
+  byte-for-byte hard-argmax identity, ZERO RNG). Changes ONLY the selection body of
+  `_bargain_pair_mode` — the three `_bargain_ev_*` computations and the strong/weak
+  assignment are untouched. Adds one constant (`BARGAIN_TEMP = 0.0`) and acceptance
+  clauses SPA-18…SPA-21 (extend `tests/test_semipermeable.py`). VERIFIED
+  `_bargain_pair_mode` is called once per pair per `_bargain_tick` recompute (sole
+  call site `:4579`, result cached in `bargain_modes`, all reads hit the cache) —
+  NOT a read-hot path, so a pair's sampled mode is stable within a tick and NO
+  caching change is needed.
 - **Reuses, does not duplicate:** the seeded module RNG streams, the `_clamp01`
   module-helper convention (`:526`), the `BIOME_TICK` cadence (`:222`) as the
   day boundary, and (SP10) the `EPS_POWER` divisor guard (`:365`). Adds
   `jitter`/`soft_gate`/`power_ratio`, `DistParam`/`GateParam`, one `sun_effective`
   field (+ SP10's `sun_ema_mean`/`sun_ema_sd`), `SUN_JITTER_SD`/`CAPTURE_CENTER`/
-  `CAPTURE_TEMP`/`SUN_OSC_AMP`/`SUN_OSC_PERIOD`/`SUN_EMA_ALPHA` constants, one
-  day-boundary draw (now oscillator+EMA), three reader redirections, the `_sun_z`
-  read helper, one count-sibling refactor, and one capture mode-switch.
+  `CAPTURE_TEMP`/`SUN_OSC_AMP`/`SUN_OSC_PERIOD`/`SUN_EMA_ALPHA`/`BARGAIN_TEMP`
+  constants, one day-boundary draw (now oscillator+EMA), three reader redirections,
+  the `_sun_z` read helper, one count-sibling refactor, one capture mode-switch,
+  and (SP11) one bargain-mode selection mode-switch.
 - **Default-neutral strategy:** `SUN_JITTER_SD == 0.0`, `temp <= 0`,
-  `CAPTURE_TEMP == 0.0`, and `SUN_OSC_AMP == 0.0` make every effect the identity
-  transform; `jitter` consumes ZERO RNG at `sd == 0`, the capture mode-switch takes
-  the exact pre-SP9 branch, and the SP10 swing term is exactly `0.0` with a
-  pure-arithmetic (zero-RNG) EMA — so the shared draw stream is unperturbed and the
-  battery + the subjugation suite + `--canon` stay byte-identical. Dynamism appears
-  only when variance/softness/amplitude is dialed in (evolution/fitting, future).
+  `CAPTURE_TEMP == 0.0`, `SUN_OSC_AMP == 0.0`, and `BARGAIN_TEMP == 0.0` make every
+  effect the identity transform; `jitter` consumes ZERO RNG at `sd == 0`, the
+  capture mode-switch takes the exact pre-SP9 branch, the SP10 swing term is exactly
+  `0.0` with a pure-arithmetic (zero-RNG) EMA, and the SP11 mode-switch routes to
+  the exact pre-SP11 argmax with zero draws — so the shared draw stream is
+  unperturbed and the battery + the subjugation suite + `--canon` stay
+  byte-identical. Dynamism appears only when variance/softness/amplitude/temperature
+  is dialed in (evolution/fitting, future).
 - **Next-tracer seam REALIZED:** SP4's `CAPTURE_CHANCE → soft_gate` binding is now
   implemented by SP9 (was: deferred, signature-validation only).
 - **Real anchors verified against `sandkings.py` (2026-07-11):** `_clamp01:530`,
@@ -1080,7 +1367,10 @@ and call `_biome_tick()` to sample one day at a time.
   `SUN_MIN/SUN_MAX:222`, `BIOME_TICK:223`, `SUN_JITTER_SD:224`, `SUN_DRYING:226`),
   sun setpoint + `sun_effective` init `:1527–1528`, `keeper_set_sun:2734`,
   `_biome_growth_units:2745` (reads `:2747/2751`), `_biome_tick:2756` (SP5 draw
-  `:2762–2765`, water-equilibrium read `:2767`), test-seeding precedent
-  `tests/test_semipermeable.py:23–28`. NOTE: the SP5/SP6/SP9 line anchors quoted
-  verbatim in those older blocks (`:1459`, `:2687`, `:4640`, …) predate later
-  drift; SP10's anchors above are the current truth.
+  `:2762–2765`, water-equilibrium read `:2767`), bargain constants block `:382–395`
+  (`BARGAIN_GRUDGE_SENS:395`), `BARGAIN_MODE_*:377–380`, `_bargain_pair_mode:4546`
+  (body `:4547–4562`), sole call site `:4579` in `_bargain_tick:4564`, cache reads
+  `_bargain_mode:4482`/`_bargain_mode_ids:4487` (consumers `:1909/:3616/:4643`),
+  test-seeding precedent `tests/test_semipermeable.py:23–28`. NOTE: the SP5/SP6/SP9
+  line anchors quoted verbatim in those older blocks (`:1459`, `:2687`, `:4640`, …)
+  predate later drift; SP10's and SP11's anchors above are the current truth.

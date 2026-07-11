@@ -19,6 +19,7 @@ from sandkings import (
     SUN_OSC_AMP, SUN_OSC_PERIOD, SUN_EMA_ALPHA, EPS_POWER,
     SandKingsSimulation, jitter, soft_gate, power_ratio,
     CAPTURE_CHANCE, CAPTURE_CENTER, CAPTURE_TEMP, CAPTURE_HEALTH,
+    BARGAIN_TEMP, BARGAIN_MODE_NONE, BARGAIN_MODE_WAGE, BARGAIN_MODE_SUBJUGATE, BARGAIN_MODE_ANNIHILATE,
 )
 
 
@@ -804,6 +805,210 @@ def test_spa17_canon_under_dynamism():
     finally:
         sandkings.SUN_OSC_AMP = original_osc_amp
         sandkings.SUN_JITTER_SD = original_jitter_sd
+
+
+# SP11 Bargain-Mode Membrane Tests (SPA-18 through SPA-21)
+
+def _bargain_probe(ev_wage, ev_brute, ev_destroy, temp, seed=50, forced_roll=None):
+    """Force one _bargain_pair_mode call with controlled EVs + temperature.
+
+    Returns (mode: str, draw_count: int). Stubs the three _bargain_ev_* methods to
+    return fixed EVs; strong/weak still resolves via composite_power on two real
+    alive colonies (their actual power is irrelevant — the EVs are stubbed).
+    Sets/restores sandkings.BARGAIN_TEMP in a finally.
+    """
+    import sandkings
+    random.seed(seed)
+    np.random.seed(seed)
+    sim = SandKingsSimulation(width=48, height=36, depth=12, num_colonies=3)
+    sandkings.BARGAIN_TEMP = temp
+    alive = [c for c in sim.colonies if c.is_alive() and c.units]
+    a, b = alive[0], alive[1]
+    sim._bargain_ev_wage    = lambda s, w: ev_wage
+    sim._bargain_ev_brute   = lambda s, w: ev_brute
+    sim._bargain_ev_destroy = lambda s, w: ev_destroy
+    spy = RandomSpy(forced=forced_roll)
+    old = random.random
+    random.random = spy
+    try:
+        mode = sim._bargain_pair_mode(a, b)
+    finally:
+        random.random = old
+        sandkings.BARGAIN_TEMP = 0.0
+    return mode, spy.count
+
+
+def test_spa18_identity_and_zero_rng():
+    """SPA-18 — IDENTITY + ZERO RNG (gating; keeps the battery byte-identical).
+    With BARGAIN_TEMP == 0.0, _bargain_pair_mode's return AND draw count match
+    the pre-SP11 hard argmax. Compare against a LOCAL reference _argmax_mode(ew, eb, ed)
+    that reproduces the exact pre-SP11 >=chain, and assert both mode == _argmax_mode(...)
+    AND draw_count == 0 for every row."""
+    def _argmax_mode(ew, eb, ed):
+        """Pre-SP11 hard argmax reference implementation."""
+        best = max(ew, eb, ed)
+        if best <= 0.0:
+            return BARGAIN_MODE_NONE
+        if ew >= eb and ew >= ed:
+            return BARGAIN_MODE_WAGE
+        if eb >= ed:
+            return BARGAIN_MODE_SUBJUGATE
+        return BARGAIN_MODE_ANNIHILATE
+
+    test_cases = [
+        (10, 1, 1),      # clear WAGE
+        (1, 10, 1),      # clear SUBJUGATE
+        (1, 1, 10),      # clear ANNIHILATE
+        (0.0, -1.0, -2.0),  # best<=0 guard
+        (-1.0, -2.0, -3.0),  # best<=0 guard
+        (5, 5, 5),       # three-way tie -> WAGE
+        (1, 5, 5),       # tie e_brute==e_destroy -> SUBJUGATE
+        (5, 5, 1),       # tie e_wage==e_brute -> WAGE
+        (1, 5, 3),       # e_brute strict max
+    ]
+
+    for ev_wage, ev_brute, ev_destroy in test_cases:
+        expected_mode = _argmax_mode(ev_wage, ev_brute, ev_destroy)
+        mode, draw_count = _bargain_probe(ev_wage, ev_brute, ev_destroy, temp=0.0)
+        assert mode == expected_mode, \
+            f"SPA-18 fail: ({ev_wage},{ev_brute},{ev_destroy}) expected {expected_mode}, got {mode}"
+        assert draw_count == 0, \
+            f"SPA-18 fail: ({ev_wage},{ev_brute},{ev_destroy}) expected 0 draws, got {draw_count}"
+
+
+def test_spa19_softmax_shape():
+    """SPA-19 — SOFTMAX SHAPE (temp>0).
+    With BARGAIN_TEMP > 0, sample many times and assert:
+    - Equal EVs (5,5,5) -> ~uniform (each ~1/3)
+    - Approximates softmax for (2,1,0) -> softmax ~(0.665, 0.245, 0.090)
+    - Dominant EV (10,0,0) -> >0.95 for WAGE."""
+    import sandkings
+    original_temp = sandkings.BARGAIN_TEMP
+
+    try:
+        # Test 1: Equal EVs -> ~uniform
+        sandkings.BARGAIN_TEMP = 1.0
+        random.seed(50)
+        np.random.seed(50)
+        sim = SandKingsSimulation(width=48, height=36, depth=12, num_colonies=3)
+        alive = [c for c in sim.colonies if c.is_alive() and c.units]
+        a, b = alive[0], alive[1]
+        sim._bargain_ev_wage    = lambda s, w: 5.0
+        sim._bargain_ev_brute   = lambda s, w: 5.0
+        sim._bargain_ev_destroy = lambda s, w: 5.0
+
+        counts = {BARGAIN_MODE_WAGE: 0, BARGAIN_MODE_SUBJUGATE: 0, BARGAIN_MODE_ANNIHILATE: 0}
+        for _ in range(3000):
+            mode = sim._bargain_pair_mode(a, b)
+            counts[mode] += 1
+
+        total = sum(counts.values())
+        freqs = {k: counts[k] / total for k in counts}
+        # Each should be ~1/3 (tolerance ±0.05)
+        for mode, freq in freqs.items():
+            assert abs(freq - 1.0/3) < 0.05, \
+                f"SPA-19 equal EVs: {mode} freq {freq} not ~1/3"
+
+        # Test 2: Dominant EV -> near-deterministic
+        sandkings.BARGAIN_TEMP = 0.5
+        random.seed(51)
+        np.random.seed(51)
+        sim2 = SandKingsSimulation(width=48, height=36, depth=12, num_colonies=3)
+        alive2 = [c for c in sim2.colonies if c.is_alive() and c.units]
+        a2, b2 = alive2[0], alive2[1]
+        sim2._bargain_ev_wage    = lambda s, w: 10.0
+        sim2._bargain_ev_brute   = lambda s, w: 0.0
+        sim2._bargain_ev_destroy = lambda s, w: 0.0
+
+        wage_count = 0
+        for _ in range(200):
+            mode = sim2._bargain_pair_mode(a2, b2)
+            if mode == BARGAIN_MODE_WAGE:
+                wage_count += 1
+
+        wage_freq = wage_count / 200
+        assert wage_freq > 0.95, \
+            f"SPA-19 dominant EV: WAGE freq {wage_freq} not > 0.95"
+
+    finally:
+        sandkings.BARGAIN_TEMP = original_temp
+
+
+def test_spa20_one_draw_zero_on_none():
+    """SPA-20 — ONE DRAW / ZERO ON NONE.
+    With BARGAIN_TEMP > 0:
+    - (5,5,5) at temp=1.0 -> draw_count == 1
+    - (0,-1,-2) at temp=1.0 -> NONE and draw_count == 0 (best<=0 guard)
+    - (10,1,1) at temp=0.0 -> draw_count == 0 (identity path)"""
+    # Test 1: soft path draws exactly one
+    mode, draw_count = _bargain_probe(5, 5, 5, temp=1.0)
+    assert draw_count == 1, \
+        f"SPA-20 soft path (5,5,5): expected 1 draw, got {draw_count}"
+
+    # Test 2: NONE guard (best<=0) draws zero
+    mode, draw_count = _bargain_probe(0.0, -1.0, -2.0, temp=1.0)
+    assert mode == BARGAIN_MODE_NONE, \
+        f"SPA-20 NONE guard: expected NONE, got {mode}"
+    assert draw_count == 0, \
+        f"SPA-20 NONE guard: expected 0 draws, got {draw_count}"
+
+    # Test 3: identity path draws zero
+    mode, draw_count = _bargain_probe(10, 1, 1, temp=0.0)
+    assert draw_count == 0, \
+        f"SPA-20 identity path (10,1,1): expected 0 draws, got {draw_count}"
+
+
+def test_spa21_canon_under_softness():
+    """SPA-21 — CANON under softness.
+    Two probe loops, each preceded by SAME random.seed(s); np.random.seed(s),
+    BARGAIN_TEMP set to same > 0 value, stubbed EVs near-uniform (e.g. (3,2,1)),
+    collect sequence of sampled modes over >= 200 calls; assert the two sequences
+    are IDENTICAL."""
+    import sandkings
+    original_temp = sandkings.BARGAIN_TEMP
+
+    try:
+        sandkings.BARGAIN_TEMP = 1.0
+        seed = 123
+
+        # First loop
+        random.seed(seed)
+        np.random.seed(seed)
+        sim1 = SandKingsSimulation(width=48, height=36, depth=12, num_colonies=3)
+        alive1 = [c for c in sim1.colonies if c.is_alive() and c.units]
+        a1, b1 = alive1[0], alive1[1]
+        sim1._bargain_ev_wage    = lambda s, w: 3.0
+        sim1._bargain_ev_brute   = lambda s, w: 2.0
+        sim1._bargain_ev_destroy = lambda s, w: 1.0
+
+        seq1 = []
+        for _ in range(200):
+            mode = sim1._bargain_pair_mode(a1, b1)
+            seq1.append(mode)
+
+        # Second loop with same seed
+        random.seed(seed)
+        np.random.seed(seed)
+        sim2 = SandKingsSimulation(width=48, height=36, depth=12, num_colonies=3)
+        alive2 = [c for c in sim2.colonies if c.is_alive() and c.units]
+        a2, b2 = alive2[0], alive2[1]
+        sim2._bargain_ev_wage    = lambda s, w: 3.0
+        sim2._bargain_ev_brute   = lambda s, w: 2.0
+        sim2._bargain_ev_destroy = lambda s, w: 1.0
+
+        seq2 = []
+        for _ in range(200):
+            mode = sim2._bargain_pair_mode(a2, b2)
+            seq2.append(mode)
+
+        # Sequences should be identical
+        assert len(seq1) == len(seq2), \
+            f"SPA-21: sequence lengths differ: {len(seq1)} vs {len(seq2)}"
+        for i, (m1, m2) in enumerate(zip(seq1, seq2)):
+            assert m1 == m2, \
+                f"SPA-21: sequence mismatch at index {i}: {m1} != {m2}"
+    finally:
+        sandkings.BARGAIN_TEMP = original_temp
 
 
 if __name__ == "__main__":

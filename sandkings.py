@@ -393,6 +393,7 @@ BARGAIN_TRUST_REF = 100.0             # negative-trust magnitude that saturates 
 BARGAIN_GRUDGE_FEUD_W = 0.6           # weight of blood-feud presence in grudge score
 BARGAIN_GRUDGE_TRUST_W = 0.6          # weight of negative diplomatic trust in grudge score
 BARGAIN_GRUDGE_SENS = 1.2             # how hard grudge collapses the wage trust-factor
+BARGAIN_TEMP = 0.0                    # SP11: softmax temperature over the three bargain EVs (0 = identity/hard argmax; >0 = tempered stochastic choice; learnable)
 
 # Metamorphosis (SPEC_METAMORPHOSIS MT1-MT4): the maw grows into a new breed
 MOLT_POP = 26                # population that triggers the stage-2 molt
@@ -4544,7 +4545,21 @@ class SandKingsSimulation:
         return _clamp01(1.0 - BARGAIN_GRUDGE_SENS * self._bargain_grudge(a, b))
 
     def _bargain_pair_mode(self, a: Colony, b: Colony) -> str:
-        """Choose the enforcement mode for the unordered pair (a, b). Pure; no RNG."""
+        """Choose the enforcement mode for the unordered pair (a, b).
+
+        SP11: selection is a mode switch on the module constant BARGAIN_TEMP.
+          BARGAIN_TEMP <= 0.0 (default): the exact pre-SP11 hard argmax over the
+            three EVs (byte-identical, ZERO RNG, same tie-break order).
+          BARGAIN_TEMP > 0.0 (opt-in): a Boltzmann softmax sample among the three
+            feasible modes {WAGE, SUBJUGATE, ANNIHILATE} with
+            P(mode) proportional to exp(EV_mode / BARGAIN_TEMP), drawn ONCE.
+        The best<=0 -> NONE guard is FIRST in BOTH modes (no draw when nothing is
+        worth doing). Reads BARGAIN_TEMP as a bare module global; the soft draw
+        rides the seeded module `random` stream. Called once per pair per
+        _bargain_tick recompute (result cached in bargain_modes) -> a pair's mode
+        is stable within a tick even under sampling.
+        """
+        # strong/weak assignment + the three EVs — UNCHANGED from pre-SP11
         if composite_power(a) >= composite_power(b):
             strong, weak = a, b
         else:
@@ -4553,13 +4568,30 @@ class SandKingsSimulation:
         e_brute   = self._bargain_ev_brute(strong, weak)
         e_destroy = self._bargain_ev_destroy(strong, weak)
         best = max(e_wage, e_brute, e_destroy)
+        # (G) NONE guard FIRST — both modes; NO draw when nothing is worth doing
         if best <= 0.0:
             return BARGAIN_MODE_NONE                     # nothing worth doing -> plain peace
-        if e_wage >= e_brute and e_wage >= e_destroy:
-            return BARGAIN_MODE_WAGE
-        if e_brute >= e_destroy:
-            return BARGAIN_MODE_SUBJUGATE
-        return BARGAIN_MODE_ANNIHILATE
+        if BARGAIN_TEMP <= 0.0:
+            # IDENTITY PATH — byte-for-byte the pre-SP11 hard argmax. ZERO RNG.
+            if e_wage >= e_brute and e_wage >= e_destroy:
+                return BARGAIN_MODE_WAGE
+            if e_brute >= e_destroy:
+                return BARGAIN_MODE_SUBJUGATE
+            return BARGAIN_MODE_ANNIHILATE
+        # SOFT PATH — opt-in tempered choice (BARGAIN_TEMP > 0). EXACTLY ONE draw.
+        modes   = (BARGAIN_MODE_WAGE, BARGAIN_MODE_SUBJUGATE, BARGAIN_MODE_ANNIHILATE)
+        evs     = (e_wage, e_brute, e_destroy)
+        # numerically stable softmax: subtract best (the max EV) before exp
+        weights = [math.exp((ev - best) / BARGAIN_TEMP) for ev in evs]
+        total   = weights[0] + weights[1] + weights[2]   # > 0 (the best term is exp(0)=1.0)
+        # single inverse-CDF pick over the ordered (WAGE, SUBJUGATE, ANNIHILATE) list
+        r   = random.random() * total                    # the ONLY draw, taken past the NONE guard
+        acc = 0.0
+        for mode, w in zip(modes, weights):
+            acc += w
+            if r < acc:
+                return mode
+        return BARGAIN_MODE_ANNIHILATE                    # float-guard fallthrough (last ordered mode)
 
     def _bargain_tick(self):
         """Rebuild the per-pair mode map from net-extraction EVs, then let the existing
