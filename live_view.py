@@ -669,6 +669,20 @@ def build_inspect_entries(sim: SandKingsSimulation,
                 break
         if econ_line:
             entries.append((f"  {econ_line}"[:46], (230, 200, 90)))
+        # Disposition (DP9): boldness / favour / agitation
+        conf = getattr(obj, 'confidence', 0.5)
+        fav = getattr(obj, 'favoritism', 0.0)
+        agit = getattr(obj, 'agitation', 0.0)
+        disp = "bold" if conf > 0.62 else "timid" if conf < 0.38 else "steady"
+        disp_line = f"disp:{disp}"
+        if fav > 0.15:
+            disp_line += " favoured"
+        elif fav < -0.15:
+            disp_line += " abused"
+        if agit > 0.3:
+            disp_line += " agitated"
+        if disp != "steady" or abs(fav) > 0.15 or agit > 0.3:
+            entries.append((f"  {disp_line}"[:46], (210, 170, 230)))
         techs = sorted(getattr(obj, 'techs', set()))  # TE5/TE9
         if techs:
             xp = getattr(obj, 'tech_xp', {})

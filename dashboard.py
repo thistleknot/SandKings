@@ -98,6 +98,9 @@ def build_state(sim: SandKingsSimulation) -> Dict:
             "worshipped": bool(getattr(colony, 'worshipped', False)),
             "breached": bool(getattr(colony, 'breached', False)),
             "enlightened": bool(getattr(colony, 'enlightened', False)),  # EN9
+            "confidence": round(float(getattr(colony, 'confidence', 0.5)), 2),  # DP9
+            "favoritism": round(float(getattr(colony, 'favoritism', 0.0)), 2),  # DP9
+            "agitation": round(float(getattr(colony, 'agitation', 0.0)), 2),    # DP9
             "stage": int(getattr(colony, 'stage', 1)),
             "augment": int(getattr(colony, 'memory_augment', 0)),
             "currency": round(float(getattr(colony, 'currency', 0.0)), 1),
@@ -789,6 +792,7 @@ function render(){
       `<span>gen <b>${col.generation}</b></span>`+
       (col.currency?`<span>grains <b>${col.currency}</b></span>`:'')+
       (col.thralls_out||col.thralls_in?`<span>thralls <b>${col.thralls_out}↓/${col.thralls_in}↑</b></span>`:'')+
+      (col.confidence!==undefined?`<span>disp <b>${col.confidence>0.62?'bold':col.confidence<0.38?'timid':'steady'}${col.favoritism>0.15?' ♥':col.favoritism<-0.15?' ✗':''}${col.agitation>0.3?' ⚡':''}</b></span>`:'')+
       (col.aware
         ? `<span>toward you <b style="color:${sentColor(col.sentiment)}">${sentWord(col.sentiment,col.attitude)}</b></span>`
         : `<span>feels <b>${col.nature_mood||'—'}</b> <i style="opacity:.6">(unexplained forces)</i></span>`)+`</div>`+
