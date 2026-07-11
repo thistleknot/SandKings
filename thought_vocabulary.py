@@ -33,14 +33,15 @@ VOCAB_SIZE = 10_000   # "top 10k words": GloVe entries are frequency-ordered
 NEIGHBORS_PER_ANCHOR = 5
 MIN_SIMILARITY = 0.5
 
-# The 20 anchor seed words (SPEC M1). Order matters only for display.
+# The 42 anchor seed words (SPEC M1+M15). Order matters only for display.
 ANCHOR_SEEDS = [
     "food", "hunger", "war", "defense", "underground", "danger", "flee",
     "hunt", "wounded", "home", "feast", "buried", "crowd", "alone", "rich",
     "storm", "death", "enemy", "victory", "siege", "jealousy", "love",
     "clueless", "harvest", "farm", "drought", "gold", "ally", "betrayed",
     "gratitude", "dread", "machine", "radiation", "fire", "monster",
-    "self", "god", "beyond", "speak",
+    "self", "god", "beyond", "speak",  # M14: awakened anchors (K11)
+    "trade", "thrall", "ascend",  # M15: economy-arc anchors
 ]
 
 # Manual pruning: embedding neighbors that read wrong for the game
@@ -138,6 +139,9 @@ FALLBACK = {
     "god": ["divine", "maker", "keeper", "god"],
     "beyond": ["outside", "past", "further", "beyond"],
     "speak": ["voice", "word", "answer", "speak"],
+    "trade": ["barter", "market", "commerce", "trade"],
+    "thrall": ["bound", "captive", "slave", "thrall"],
+    "ascend": ["awaken", "enlighten", "transcend", "ascend"],
 }
 
 

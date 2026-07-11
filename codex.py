@@ -26,7 +26,7 @@ CORPUS_DIR = os.path.join(_HERE, "corpus")
 GLOVE_TOP = 40_000        # frequency-ordered words loaded for embedding
 CORPUS_MAX_PASSAGES = 400  # cap per plain-text file (a WikiText dump is huge)
 
-LESSONS = ("coop", "fortify", "dig", "patience", "trade")
+LESSONS = ("coop", "fortify", "dig", "patience", "trade", "commerce", "enlightenment")
 # keyword -> lesson, for untagged spec passages (CX2)
 LESSON_KEYWORDS = {
     "coop": ("cooperat", "ally", "allies", "truce", "coalition", "tribute",
@@ -38,6 +38,10 @@ LESSON_KEYWORDS = {
     "patience": ("patience", "hoard", "season", "harvest", "store",
                  "long-term", "winter"),
     "trade": ("trade", "envoy", "fertility", "grow", "economy", "surplus"),
+    "commerce": ("commerce", "wage", "contract", "market", "factor", "grain",
+                 "license", "settle"),  # CX7a: economy doctrine
+    "enlightenment": ("enlighten", "ascend", "ascension", "plasticity", "ceiling",
+                      "escape", "breach"),  # CX7a: post-escape intelligence
 }
 # the sim reads these as bounded genome nudges (CX4)
 LESSON_EFFECT = {
@@ -46,6 +50,8 @@ LESSON_EFFECT = {
     "dig": [("tunnel_preference", 1.0)],
     "patience": [("patience", 1.0)],
     "trade": [("loyalty", 0.5), ("fertility", 0.5)],
+    "commerce": [("loyalty", 1.0), ("fertility", 1.0)],  # CX7a: market doctrine
+    "enlightenment": [("plasticity", 1.0)],  # CX7a: learning-to-learn leap
 }
 CODEX_NUDGE = 0.03
 CODEX_INTERVAL = 300

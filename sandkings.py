@@ -2593,12 +2593,18 @@ class SandKingsSimulation:
         # gentle persuasion: the human can teach through talk (bounded)
         nudge_map = {'ally': 'loyalty', 'war': 'aggression',
                      'home': 'patience', 'defense': 'defense_investment',
-                     'gratitude': 'loyalty', 'love': 'loyalty'}
-        attr = nudge_map.get(heard)
-        if attr:
+                     'gratitude': 'loyalty', 'love': 'loyalty',
+                     'trade': ('fertility', 'loyalty'),  # DL7b: two attrs
+                     'thrall': 'aggression',
+                     'ascend': 'plasticity'}
+        attr_or_tuple = nudge_map.get(heard)
+        if attr_or_tuple:
             g = colony.genome
-            cur = getattr(g, attr, 0.5)
-            setattr(g, attr, float(np.clip(cur + DIALOGUE_NUDGE, 0.0, 1.0)))
+            # Normalize string to tuple for uniform handling
+            attrs = attr_or_tuple if isinstance(attr_or_tuple, tuple) else (attr_or_tuple,)
+            for attr in attrs:
+                cur = getattr(g, attr, 0.5)
+                setattr(g, attr, float(np.clip(cur + DIALOGUE_NUDGE, 0.0, 1.0)))
         reply = compose_reply(colony, self, heard)
         self._monitor(colony.colony_id).log_decision(
             self.step_count, f"House {self._house_name(colony)}",

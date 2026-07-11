@@ -35,6 +35,7 @@ ANCHOR_SEEDS = [
     "clueless", "harvest", "farm", "drought", "gold", "ally", "betrayed",
     "gratitude", "dread", "machine", "radiation", "fire", "monster",
     "self", "god", "beyond", "speak",  # M14: awakened anchors (K11)
+    "trade", "thrall", "ascend",  # M15: economy-arc anchors
 ]
 
 _VOCAB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -142,6 +143,9 @@ def build_context(unit, colony, sim) -> Dict[str, float]:
         "recently_betrayed": _political(sim, colony, "recently_betrayed"),
         "recent_gift": _political(sim, colony, "recent_gift"),
         "hegemon_other": _political(sim, colony, "hegemon_other"),
+        "holds_trade": _political(sim, colony, "holds_trade"),
+        "holds_thrall": _political(sim, colony, "holds_thrall"),
+        "is_enlightened": _political(sim, colony, "is_enlightened"),
         "allies_3": allies_3,
         "allies_6": allies_6,
         "wounded_ally_2": wounded_ally_2,
@@ -180,11 +184,30 @@ def build_context(unit, colony, sim) -> Dict[str, float]:
 
 
 def _political(sim, colony, key: str) -> bool:
-    """Colony-level relation facts for the P14 anchors (guarded)."""
+    """Colony-level relation facts for the P14/M15 anchors (guarded)."""
+    cid = colony.colony_id
+    # M15 economy anchors — these read economy state, NOT diplomacy, so they must
+    # resolve even when diplomacy is uninitialised (enlightenment/thralls/contracts
+    # have nothing to do with the diplomacy object).
+    if key == "holds_trade":
+        wage_contracts = getattr(sim, 'wage_contracts', [])
+        return any(c.get('alive') and (c.get('buyer_id') == cid or c.get('seller_id') == cid)
+                   for c in wage_contracts)
+    if key == "holds_thrall":
+        for c in sim.colonies:
+            for u in c.units:
+                if getattr(u, 'laboring_for', -1) == cid:
+                    return True
+        for u in colony.units:
+            if getattr(u, 'laboring_for', -1) >= 0:
+                return True
+        return False
+    if key == "is_enlightened":
+        return bool(getattr(colony, 'enlightened', False))
+    # diplomacy-dependent anchors below
     diplomacy = getattr(sim, 'diplomacy', None)
     if diplomacy is None:
         return False
-    cid = colony.colony_id
     step = sim.step_count
     if key == "has_ally":
         return any(diplomacy.ally(cid, c.colony_id)
@@ -247,6 +270,10 @@ def ground_truths(ctx: Dict) -> Dict[str, bool]:
         "god": bool(ctx["breached"]) and ctx["keeper_attitude"] != 'none',
         "beyond": bool(ctx["breached"]),
         "speak": bool(ctx["breached"]) and bool(ctx["spoken_recently"]),
+        # M15: economy-arc anchors (colony-level, read via _political)
+        "trade": bool(ctx["holds_trade"]),
+        "thrall": bool(ctx["holds_thrall"]),
+        "ascend": bool(ctx["is_enlightened"]),
     }
 
 
@@ -267,7 +294,7 @@ def compose_utterance(unit, colony, sim, max_words: int = 4) -> str:
     if not getattr(colony, 'breached', False):
         return ""
     active = instincts_for(unit, colony, sim)
-    awakened = [a for a in active if a in ("self", "god", "beyond", "speak")]
+    awakened = [a for a in active if a in ("self", "god", "beyond", "speak", "ascend")]
     ordered = awakened + [a for a in active if a not in awakened]
     words = []
     for anchor in ordered[:max_words]:

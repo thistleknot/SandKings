@@ -34,6 +34,11 @@ _SYNONYMS = {
     "attack": "war", "fight": "war", "kill": "war", "destroy": "war",
     "thanks": "gratitude", "thank": "gratitude", "grateful": "gratitude",
     "hate": "enemy",
+    # DL7a: economy vocabulary (M15 anchors)
+    "commerce": "trade", "market": "trade", "hire": "trade", "wage": "trade",
+    "barter": "trade", "bargain": "trade", "sell": "trade", "buy": "trade",
+    "slave": "thrall", "enslave": "thrall", "subjugate": "thrall", "captive": "thrall",
+    "enlighten": "ascend", "awaken": "ascend", "genius": "ascend",
 }
 
 _ANCHOR_VECS: Optional[Dict[str, np.ndarray]] = None
@@ -95,6 +100,7 @@ _STANCE = (
     ("aggression", 0.65, "war"),
     ("loyalty", 0.65, "ally"),
     ("patience", 0.65, "home"),
+    ("fertility", 0.65, "trade"),  # DL7c: mercantile row (optional)
 )
 
 
