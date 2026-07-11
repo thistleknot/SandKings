@@ -58,4 +58,5 @@ Governing scope record: `docs/decisions/2026-07-09-intercolony-relations-spectru
 - **SPEC_LIVE_VIEW.md** — the live terrarium viewer (`live_view.py`): render, HUD, EVENT_TINTS, manager screen.
 - **SPEC_PLAY_KIT.md** (PK1–PK6) — a headless client to drive & test the terrarium.
 - **SPEC_SANDBOX.md** (SB1–SB5) — the sandking sandbox (the escaped-maw play space beyond the glass).
+- **SPEC_FIT_CONSTANTS.md** (FC1–FC12) — learned demonstrator `fit_constants.py`: keep-if-improved search of the four semi-permeable knobs (`SUN_JITTER_SD`, `SUN_OSC_AMP`, `CAPTURE_TEMP`, `BARGAIN_TEMP`) against a healthy-ecology objective (liveness + mode-diversity + weather-variance); REPORTS fitted-vs-inert, never edits sandkings.py; sqlite load-if-exists checkpoint; Tier-2 grounding demonstrator.
 </content>
