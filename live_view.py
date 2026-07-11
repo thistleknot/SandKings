@@ -74,6 +74,7 @@ FIRE_COLOR = (255, 120, 0)
 BEAST_GLYPHS = {                    # fauna bestiary (T48)
     'spider': "x", 'rabbit': "r", 'squirrel': "q", 'bird': "v",
     'rodent': "n", 'scorpion': "t", 'snake': "S", 'anteater': "A",
+    'hornets': "z",
 }
 BEAST_COLOR = (200, 80, 220)        # violet: not of any colony
 CARVE_COLORS = {                    # F4: sentiment carving colours by glyph

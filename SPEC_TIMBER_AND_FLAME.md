@@ -138,11 +138,12 @@ vs dear-and-durable is the round's economic sentence.
   | snake (0.06) | `S` olive | 80 | 18 | 1 | beneath (substrate) | units ≤ 25 | 5 | swims through SAND (the only burrowing fauna): `Something long moves beneath the sand...` |
   | rodent (0.12) | `n` grey | 12 | 2 | 3–4 | surface edge | nothing — SCAVENGES: eats CORPSE voxels (raids the bone/cannibal economy) | 1 | flees units at 2 moves/step |
   | anteater (0.04) | `A` rust | 150 | 25 | 1 | surface edge | units ≤ 30 | 8 | apex terror: `An anteater stalks the sands!` |
+  | hornets (0.05) | `z` violet | 8 | 4 | 6–10 | surface edge / aloft | units ≤ 30 — RELENTLESS (never flees) | 1 | SCOURGE (T48b): flies `HORNET_SPEED`=3/step through AIR; each sting sets `poisoned_until` (venom 1 HP/step for `HORNET_STING_DURATION`=20); the swarm spreads stings to FRESH targets (breadth, not focus). `A hornet scourge boils out of the dark...` |
 
   Scale note (user): sand kings are scorpion-sized — scorpions are PEER
   rivals; rabbits are megafauna; anteaters are dinosaurs. Spider weight
   0.20, rabbit 0.18, squirrel 0.15, rodent 0.12, bird 0.15, scorpion
-  0.10, snake 0.06, anteater 0.04.
+  0.10, snake 0.06, anteater 0.04, hornets 0.05 (rare venom scourge).
 
   `WEB = 16` voxel (not solid, not tunnelable, flammable): a unit whose
   step enters a WEB cell clears it but LOSES the action (snared). Events:
@@ -168,6 +169,238 @@ vs dear-and-durable is the round's economic sentence.
 - **ant** — the peer eusocial rival: a raiding column that picks up FOOD
   voxels and hauls them toward its spawn point; kill the column or lose
   the dole.
+
+### T48b (hornets — the venom scourge)
+
+Layer: **Requirements** + **Behavioral**. A swarming SCOURGE: a large,
+fragile, fast-flying pack of relentless venomous stingers. It wins by
+NUMBERS + VENOM BREADTH, not durability or per-hit damage — distinct
+from every existing beast. Character, held fixed (do not re-open):
+
+- **SWARM** — one incursion spawns a big pack (`pack = (6, 10)`).
+- **FRAGILE** — `hp = 8`; a soldier swats a hornet in one or two hits.
+- **FAST / FLYING** — moves `HORNET_SPEED = 3` cells/tick through AIR
+  (mirrors the bird case in `_beast_move`).
+- **RELENTLESS** — `hunt_range = 30`; homes on the nearest unit and,
+  unlike the bird, NEVER sets `fleeing` after striking. Keeps coming
+  until killed or the incursion ages out at `FAUNA_RAMPAGE = 500`.
+- **VENOM BREADTH (signature)** — each sting sets the target's
+  `poisoned_until` (the scorpion mechanism, 1 HP/step). The swarm
+  spreads stings to FRESH (un-envenomed) targets, so a cluster of
+  hornets adjacent to several units envenoms MANY of them — breadth,
+  not focused damage on one.
+
+#### Constants & tables (rote — exact keys/values)
+
+`sandkings.py` (fauna block, ~L127-170):
+
+- `FAUNA['hornets'] = (0.05, 8, 4, (6, 10), 30, 1)`
+  — `(weight, hp, attack, pack, hunt_range, bounty)`. Weight 0.05 puts
+  it in the `random.choices` roll in `_spawn_incursion` (rare, like
+  snake/anteater). Per-species HP/atk/pack/bounty live ONLY here — no
+  separate constants for them.
+- `FAUNA_EVENTS['hornets'] = "A hornet scourge boils out of the dark - the air itself turns to venom"`
+  — MANDATORY (a missing key KeyErrors on spawn). MUST NOT contain the
+  word "slain".
+- `KEEPER_WRATH = ('spider', 'scorpion', 'snake', 'hornets')`
+  — classify as an arena predator so `keeper_release('hornets')` is
+  accepted. This propagates automatically through
+  `KEEPER_FAUNA = KEEPER_GIFTS + KEEPER_WRATH + KEEPER_NEUTRAL` and the
+  dashboard whitelist `GARAGE_SPECIES = KEEPER_FAUNA`.
+- In `keeper_release` (~L2560), add `'hornets'` to the disposition-wrath
+  tuple so wrath fires on release:
+  `if species in ('scorpion', 'spider', 'rodent', 'hornets'):`.
+- New constant block beside the other fauna constants (~L169-170),
+  provenance-tagged (the fauna block predates `[prov:]`, but the file
+  uses it elsewhere; the new lines follow the convention):
+  - `HORNET_SPEED = 3            # [prov:C feel=swarm] cells/tick; flies through AIR like the bird`
+  - `HORNET_STING_DURATION = 20  # [prov:C feel=venom] sting DoT ticks (1 HP/step); mirrors POISON_DURATION`
+
+`live_view.py` (BEAST_GLYPHS, ~L74-77):
+
+- `BEAST_GLYPHS['hornets'] = "z"` — a buzzing glyph. Verified
+  NON-COLLIDING against every live glyph value: terrain `GLYPHS`
+  (` ░▓#•%≡~;*£$Ξ&¶|x`), `FIRE_GLYPH` (`^`), `MAW_GLYPH` (`Ω`),
+  `UNIT_GLYPHS` (`w s c`), and existing `BEAST_GLYPHS`
+  (`x r q v n t S A`). `z` is used by none.
+- `BEAST_COLOR` (violet) is shared by all wild beasts — no per-species
+  color needed. `build_legend_entries` (~L760) already enumerates every
+  `BEAST_GLYPHS` species, so the legend row for hornets is automatic.
+
+#### Behavioral spec — movement, AI, combat
+
+**`_beast_move` (~L4312-4334): give hornets `HORNET_SPEED` steps.**
+Only the `steps` selection changes; the move loop (which already permits
+AIR moves for any species via the `v == VoxelType.AIR` clause) is
+unchanged — hornets fly through AIR, and do NOT get the snake's SAND
+burrow.
+
+```
+def _beast_move(beast, target):
+    if beast.species == 'hornets':
+        steps = HORNET_SPEED          # 3 cells/tick, flying
+    elif beast.species == 'bird':
+        steps = 3
+    else:
+        steps = 1
+    for _ in range(steps):
+        # ... existing sign/step-toward loop UNCHANGED ...
+        # (AIR always passable; snake also passes SAND; hornets need only AIR)
+```
+
+**`_beast_ai` (~L4336-4384): NO new branch required.**
+Hornets have `hunt_range = 30 > 0`, so they already fall into the
+existing `elif beast.hunt_range > 0:` hunt branch, which yields exactly
+the relentless-homing behavior:
+- relentless approach ← `ndist <= hunt_range` moves toward `nearest`;
+- non-scatter ← hornets are not in `('rodent', 'ant')` (the only
+  scatter species);
+- no web ← the `if beast.species == 'spider'` web guard excludes them.
+
+Do NOT add a duplicate `elif beast.species == 'hornets'` branch — it
+would be dead code identical to the `hunt_range > 0` path. (The
+relentless-vs-bird difference is a COMBAT property — no fleeing — handled
+below, not an AI property.)
+
+**`_beast_combat` (~L4391-4451): two edits inside the existing
+`if beast.hunt_range > 0 or beast.provoked:` block; death/fight-back
+path unchanged.**
+
+Edit A — victim selection (add the hornets branch to the pick):
+
+```
+if beast.species == 'bird':
+    unit, colony = min(adjacent, key=<fewest same-colony allies near>)  # straggler
+elif beast.species == 'hornets':
+    # SCOURGE breadth: sting a FRESH (un-envenomed) target so the swarm
+    # spreads venom widely instead of focus-firing one victim. Hornets
+    # are processed sequentially in _fauna_tick, so a poisoned_until set
+    # by an earlier hornet THIS tick is visible to later hornets -> the
+    # swarm walks venom across distinct units.
+    fresh = [uc for uc in adjacent
+             if getattr(uc[0], 'poisoned_until', 0) <= self.step_count]
+    unit, colony = random.choice(fresh) if fresh else random.choice(adjacent)
+else:
+    unit, colony = random.choice(adjacent)
+```
+
+Edit B — apply venom on a surviving sting (extend the scorpion elif):
+
+```
+if unit.take_damage(beast.attack, colony.genome.resilience):
+    # UNCHANGED death path: remove unit, set CORPSE, log
+    #   "was slain by a hornets"
+    ...
+elif beast.species == 'scorpion':
+    unit.poisoned_until = self.step_count + POISON_DURATION
+elif beast.species == 'hornets':
+    unit.poisoned_until = self.step_count + HORNET_STING_DURATION
+```
+
+Do NOT extend the `if beast.species == 'bird': beast.fleeing = True`
+line to hornets — hornets are relentless and MUST leave `fleeing`
+untouched (stays False).
+
+Fight-back & death — UNCHANGED and load-bearing: because
+`hunt_range > 0`, every adjacent unit strikes back
+(`beast.health -= unit.attack`); with `hp = 8` a hornet dies within one
+or two `_beast_combat` calls via the generic death path, which drops the
+bounty voxel(s) and logs `"The hornets is slain - a feast for the
+bold!"`. That line contains "slain" (feeds the chronicle
+`is slain -> the Beast-Slayer` epithet at chronicle.py:108). Keep the
+GENERIC kill line — do not add a hornet-specific one. (The plural-noun
+grammar "The hornets is slain" is acceptable; any optional singular
+line MUST still contain "slain".)
+
+Swarm breadth emerges naturally: many hornets each sting their own
+adjacent unit, and Edit A steers each toward a not-yet-poisoned victim,
+so N hornets adjacent to N units yield venom on multiple units in one
+tick — the scourge signature.
+
+#### Acceptance criteria (mechanically verifiable)
+
+Construct beasts like `tests/test_timber.py`
+(`Beast('hornets', (x, y, z), 8, 4, 30, 1, spawned_at=0)`), place via
+`sim._fauna().append(...)`, place units with `SandKing(colony_id, pos,
+UnitType.*)` and append to `colony.units`, drive with
+`_beast_ai` / `_beast_combat`. `make_sim` per that file. New tests go in
+`tests/test_timber.py` or a new `tests/test_hornets.py`.
+
+1. **HORNET-1 (swarm spawn)** — `sim.keeper_release('hornets')`
+   (deterministic; hornets ∈ KEEPER_FAUNA) spawns a pack with
+   `6 <= len(sim._fauna()) <= 10` and every beast `.species == 'hornets'`.
+   [clause: `FAUNA['hornets']` pack `(6, 10)`]. (Equivalently, monkeypatch
+   `_spawn_incursion` / seed so the roll lands on hornets — but
+   `keeper_release` is the deterministic path.)
+2. **HORNET-2 (venom sting)** — one `Beast('hornets', …, 8, 4, 30, 1)`;
+   place a WORKER at an adjacent cell (Chebyshev 1) with enough HP to
+   survive one sting; record `pre = unit.health`; call
+   `sim._beast_combat(beast)`. Assert
+   `unit.poisoned_until == sim.step_count + HORNET_STING_DURATION`
+   AND `unit.health < pre` (took the `attack`, resilience-mitigated).
+   [Edit B]
+3. **HORNET-3 (breadth)** — 3 hornets + 3 units clustered so each hornet
+   is adjacent to at least one unit; run one tick
+   (`for b in sim._fauna()[:]: sim._beast_combat(b)`). Assert
+   `sum(1 for u in units if getattr(u, 'poisoned_until', 0) > sim.step_count) > 1`
+   — venom on MULTIPLE units, not a single focus target.
+   [Edit A fresh-target rule + sequential processing]
+4. **HORNET-4 (relentless)** — after HORNET-2's combat, assert
+   `beast.fleeing is False` (contrast the bird, which sets it). The
+   hornet keeps hunting. [no fleeing clause]
+5. **HORNET-5 (fragile)** — one `Beast('hornets', …, 8, 4, 30, 1)`
+   adjacent to a SOLDIER (add attackers or call `_beast_combat` twice so
+   fight-back exceeds hp 8); assert the beast is removed from
+   `sim._fauna()`, a CORPSE bounty voxel is placed at/near its position,
+   and `any("slain" in m for _, m in sim.events)`. [generic death path]
+6. **HORNET-6 (roster)** — assert
+   `'hornets' in FAUNA and 'hornets' in FAUNA_EVENTS and 'hornets' in
+   KEEPER_WRATH and 'hornets' in KEEPER_FAUNA`; `sim.keeper_release(
+   'hornets')` grows `sim._fauna()` (accepted, not refused) and fires
+   disposition wrath; `BEAST_GLYPHS['hornets']` exists and its value is
+   unique across all glyph dicts. [roster + glyph edits]
+7. **HORNET-7 (glyph/legend coverage)** — the existing
+   `test_legend_covers_every_glyph_and_species`
+   (tests/test_live_view.py) still passes unchanged:
+   `build_legend_entries` enumerates `BEAST_GLYPHS`, so `hornets` and
+   `z` appear automatically. The existing
+   `test_sprite_forge_covers_every_voxel_and_species` also passes via the
+   `forge_beast` violet-dot fallback (iso_sprites.py:265) — no sprite
+   branch required. [live_view/iso_sprites enumerations]
+
+#### Existing-test & consumer impact (flags)
+
+- **test_arena.py (L18-53): NO edit required.** `test_roster_partitions_
+  and_small_spider` derives its sets from the LIVE constants
+  (`set(KEEPER_WRATH)` etc.) and asserts disjointness + `g|w|n ==
+  set(KEEPER_FAUNA)`. Adding `'hornets'` only to `KEEPER_WRATH` keeps the
+  partition disjoint and the union valid, so the test passes as-is.
+  `test_garage_species_is_the_roster` checks the `is`-identity
+  `GARAGE_SPECIES is KEEPER_FAUNA` — still true. (Correction to the task
+  brief: these are constant-derived and need no edit.)
+- **test_keeper.py: NO edit required.** No hardcoded roster-union
+  assertion exists.
+- **test_dashboard.py (L87-95): NOT edited, but now EXERCISES hornets.**
+  `test_keeper_release_validates_species` loops `for sp in
+  GARAGE_SPECIES` and releases each — it will now release `'hornets'`,
+  which KeyErrors unless `FAUNA_EVENTS['hornets']` (and the FAUNA tuple)
+  exist. This is the guard that makes the mandatory companion-table keys
+  non-optional.
+- **Spawn distribution shift (flag):** adding weight 0.05 makes the
+  `_spawn_incursion` `random.choices` weights sum 1.00 → 1.05 (hornets
+  ≈ 4.76%; all others shrink proportionally). NO test asserts a
+  natural-spawn species distribution — only `'cat'`, which is
+  keeper-released. `test_timber.py:132` reassigns its beast to `'rabbit'`
+  before asserting, so it is unaffected.
+- **play_kit.py `_SPECIES` (L347): OPTIONAL parity.** Add `'hornets'`
+  so the bare REPL command `hornets` works; `release hornets` already
+  works without it. Non-blocking.
+- **iso_sprites.py `forge_beast`: OPTIONAL sprite branch.** A dedicated
+  hornet-swarm sprite may be added, but the existing `else` violet-dot
+  fallback (L265) already satisfies
+  `test_sprite_forge_covers_every_voxel_and_species`.
+- **chronicle.py SALIENCE: OPTIONAL.** A salience row for the
+  scourge-arrival line may be added; not required for the battery.
 
 ## 4. Behavioral Spec — fire tick
 
@@ -230,3 +463,11 @@ Invariant: every fires key is a FLAMMABLE voxel (purge-first like crops)
   Balance watch: colony wood hovers near 0 (consumed by spears/rams
   as fast as chopped) - rams rare in soak; acceptable scarcity, worth
   a future knob.
+
+- 2026-07-11 (T48b hornets, spec draft): added the venom-scourge sub-
+  requirement. FAUNA tuple `(0.05, 8, 4, (6,10), 30, 1)`; new constants
+  HORNET_SPEED=3, HORNET_STING_DURATION=20; glyph `z`; KEEPER_WRATH gains
+  'hornets'. AI reuses the hunt_range>0 branch (no new branch);
+  _beast_move adds the 3-step case; _beast_combat adds fresh-target
+  selection + venom application, relentless (no fleeing). Awaiting Haiku
+  impl + Sonnet verification against HORNET-1..7.

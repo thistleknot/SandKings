@@ -135,6 +135,7 @@ FAUNA = {
     'scorpion': (0.10, 22, 6, (1, 2), 15, 2),
     'snake':    (0.06, 80, 18, (1, 1), 25, 5),
     'anteater': (0.04, 150, 25, (1, 1), 30, 8),
+    'hornets': (0.05, 8, 4, (6, 10), 30, 1),
     # weight 0 = keeper-introduced only (K2); never in random rolls
     'cricket':  (0.0, 8, 1, (2, 4), 0, 2),
     'ant':      (0.0, 6, 2, (4, 6), 0, 1),
@@ -152,6 +153,7 @@ FAUNA_EVENTS = {
     'scorpion': "Scorpions skitter across the dunes",
     'snake': "Something long moves beneath the sand...",
     'anteater': "An anteater stalks the sands!",
+    'hornets': "A hornet scourge boils out of the dark - the air itself turns to venom",
     'cricket': "Crickets drop from the keeper's hand",
     'ant': "A column of ants files in from a crack in the world",
     'small_spider': "Small spiders are set loose - easy prey to learn on",
@@ -163,11 +165,13 @@ FAUNA_EVENTS = {
 # AR1: the keeper's roster, classified by intent (single source of truth;
 # dashboard imports KEEPER_FAUNA as its release whitelist)
 KEEPER_GIFTS = ('cricket', 'ant', 'small_spider', 'fly')  # food + learning
-KEEPER_WRATH = ('spider', 'scorpion', 'snake')          # arena predators
+KEEPER_WRATH = ('spider', 'scorpion', 'snake', 'hornets')          # arena predators
 KEEPER_NEUTRAL = ('squirrel', 'rabbit', 'mouse')        # ambient, bite back
 KEEPER_FAUNA = KEEPER_GIFTS + KEEPER_WRATH + KEEPER_NEUTRAL
 POISON_DURATION = 20         # scorpion sting DoT (1 HP/step)
 FAUNA_RAMPAGE = 500          # steps before an unslain incursion wanders off
+HORNET_SPEED = 3            # [prov:C feel=swarm] cells/tick; flies through AIR like the bird
+HORNET_STING_DURATION = 20  # [prov:C feel=venom] sting DoT ticks (1 HP/step); mirrors POISON_DURATION
 
 # Sentience Arc constants (SPEC_SENTIENCE.md S1-S4)
 RESONANCE_RANGE = 6          # Chebyshev radius of thought contagion
@@ -2557,7 +2561,7 @@ class SandKingsSimulation:
                                        bounty, spawned_at=self.step_count))
         self._log_event(FAUNA_EVENTS[species])
         # DP3: wrath/startle for threat species (not food species)
-        if species in ('scorpion', 'spider', 'rodent'):
+        if species in ('scorpion', 'spider', 'rodent', 'hornets'):
             for c in self.colonies:
                 self._disposition_wrath(c, FAV_WRATH, AGIT_SPIKE)
 
@@ -4311,7 +4315,12 @@ class SandKingsSimulation:
 
     def _beast_move(self, beast: 'Beast', target: Tuple[int, int, int]):
         """One move toward target: birds fly 3, snakes swim through sand."""
-        steps = 3 if beast.species == 'bird' else 1
+        if beast.species == 'hornets':
+            steps = HORNET_SPEED
+        elif beast.species == 'bird':
+            steps = 3
+        else:
+            steps = 1
         for _ in range(steps):
             bx, by, bz = beast.position
             dx = int(np.sign(target[0] - bx))
@@ -4404,10 +4413,16 @@ class SandKingsSimulation:
             return
         if beast.hunt_range > 0 or beast.provoked:
             # birds pick the straggler: the victim with fewest allies near
-            unit, colony = min(adjacent, key=lambda uc: sum(
-                1 for other, oc in adjacent
-                if oc.colony_id == uc[1].colony_id)) \
-                if beast.species == 'bird' else random.choice(adjacent)
+            if beast.species == 'bird':
+                unit, colony = min(adjacent, key=lambda uc: sum(
+                    1 for other, oc in adjacent
+                    if oc.colony_id == uc[1].colony_id))
+            elif beast.species == 'hornets':
+                fresh = [uc for uc in adjacent
+                         if getattr(uc[0], 'poisoned_until', 0) <= self.step_count]
+                unit, colony = random.choice(fresh) if fresh else random.choice(adjacent)
+            else:
+                unit, colony = random.choice(adjacent)
             if unit.take_damage(beast.attack, colony.genome.resilience):
                 colony.remove_unit(unit)
                 self.world.set_voxel(*unit.position, VoxelType.CORPSE)
@@ -4417,6 +4432,8 @@ class SandKingsSimulation:
                     getattr(unit, 'thought', None))
             elif beast.species == 'scorpion':
                 unit.poisoned_until = self.step_count + POISON_DURATION
+            elif beast.species == 'hornets':
+                unit.poisoned_until = self.step_count + HORNET_STING_DURATION
             if beast.species == 'bird':
                 beast.fleeing = True  # strikes once, then wheels away
         struck = False
