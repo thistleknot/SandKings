@@ -609,6 +609,13 @@ def build_inspect_entries(sim: SandKingsSimulation,
             ("torch", getattr(obj, 'torch', False)),
             ("POISONED", getattr(obj, 'poisoned_until', 0) > step),
             ("retreating", obj.retreating)) if on]
+        # Economy: wage-laborer or THRALL status
+        wage_ratio = getattr(obj, 'wage_ratio', 0.0)
+        laboring_for = getattr(obj, 'laboring_for', -1)
+        if wage_ratio > 0:
+            flags.append("wage-laborer")
+        elif laboring_for >= 0:
+            flags.append("THRALL")
         if flags:
             entries.append(("  " + ", ".join(flags), (230, 160, 90)))
         if obj.carrying:
@@ -640,6 +647,28 @@ def build_inspect_entries(sim: SandKingsSimulation,
         stage_name = {1: "insectoid", 2: "new breed", 3: "SHADE"}.get(stage, "")
         entries.append((f"  posture {posture}   stage: {stage_name}"
                         + (f"   mem+{aug}" if aug else ""), (170, 200, 140)))
+        # Economy: enlightened, currency, thralls, bargain mode
+        econ_line = ""
+        if getattr(obj, 'enlightened', False):
+            econ_line += "enlightened "
+        currency = getattr(obj, 'currency', 0.0)
+        if currency > 0:
+            econ_line += f"grains:{currency:.0f} "
+        thralls_held = sum(1 for u in obj.units
+                          if getattr(u, 'laboring_for', -1) >= 0)
+        thralls_lost = sum(1 for other in sim.colonies
+                          for u in other.units
+                          if getattr(u, 'laboring_for', -1) == obj.colony_id)
+        if thralls_held or thralls_lost:
+            econ_line += f"thralls:{thralls_held}↓/{thralls_lost}↑ "
+        # Find dominant bargain mode for this colony
+        bargain_map = getattr(sim, 'bargain_modes', {})
+        for pair, mode in bargain_map.items():
+            if mode != 'none' and obj.colony_id in pair:
+                econ_line += f"mode:{mode} "
+                break
+        if econ_line:
+            entries.append((f"  {econ_line}"[:46], (230, 200, 90)))
         techs = sorted(getattr(obj, 'techs', set()))  # TE5/TE9
         if techs:
             xp = getattr(obj, 'tech_xp', {})

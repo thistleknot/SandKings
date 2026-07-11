@@ -151,6 +151,8 @@ class Terrarium:
             head += f" BOUND<{st.get('keeper_bound_by', '?')}>"
         elif st.get("keeper_influence_word"):
             head += f" ({st['keeper_influence_word']})"
+        if st.get("grains_minted", 0) > 0:
+            head += f" |{st['grains_minted']}g"
         lines = [head]
         for c in st.get("colonies", []):
             if not c.get("alive"):
@@ -159,11 +161,20 @@ class Terrarium:
             flags = []
             if c.get("worshipped"):
                 flags.append("worship")
+            if c.get("enlightened"):
+                flags.append("enlightened")
             stage = c.get("stage", 1)
             flags.append({1: "insectoid", 2: "newbreed", 3: "SHADE"}.get(stage))
+            econ = ""
+            if c.get("currency", 0) > 0:
+                econ += f" grains{c['currency']}"
+            if c.get("thralls_out", 0) > 0:
+                econ += f" out{c['thralls_out']}"
+            if c.get("thralls_in", 0) > 0:
+                econ += f" in{c['thralls_in']}"
             lines.append(
                 f"  {c['house']}: pop{c['pop']} food{int(c['food'])} "
-                f"sent{c.get('sentiment', 0.5):.2f} " + " ".join(f for f in flags if f))
+                f"sent{c.get('sentiment', 0.5):.2f} " + " ".join(f for f in flags if f) + econ)
         return "\n".join(lines)
 
     def aim(self, cid: int):
@@ -173,6 +184,34 @@ class Terrarium:
             return (st["world"][0] // 2, st["world"][1] // 2)
         m = self.sim.colonies[cid].maw.position
         return (m[0], m[1])
+
+    def economy(self, mode: str = 'bargain') -> None:
+        """Enable the in-process economy layer (subjugation, wages, or bargain).
+
+        mode: 'bargain' (full inter-colony mode selection) | 'wages' (wage market only)
+              | 'subjugation' (capture only). Mirrors sandkings.py launcher flags.
+        Requires in-process sim; no-op if remote.
+        """
+        if self.sim is None:
+            print("  (economy: remote sim, no in-process control)")
+            return
+        import sandkings as sk
+        if mode == 'bargain':
+            sk.BARGAIN_ENABLED = True
+            sk.WAGE_ENABLED = True
+            sk.CAPTURE_CHANCE = sk.BARGAIN_CAPTURE_CHANCE
+            self.sim.bargain_enabled = True
+            print(f"  [economy] BARGAIN ENABLED (CAPTURE_CHANCE={sk.BARGAIN_CAPTURE_CHANCE})")
+        elif mode == 'wages':
+            sk.WAGE_ENABLED = True
+            self.sim.wage_enabled = True
+            print("  [economy] WAGES ENABLED")
+        elif mode == 'subjugation':
+            sk.CAPTURE_CHANCE = sk.SUBJUGATION_LIVE_CHANCE
+            self.sim.subjugation_enabled = True
+            print(f"  [economy] SUBJUGATION ENABLED (CAPTURE_CHANCE={sk.SUBJUGATION_LIVE_CHANCE})")
+        else:
+            raise ValueError(f"unknown economy mode: {mode}")
 
     def close(self):
         if self._remote is not None:
@@ -273,12 +312,35 @@ def scenario_turning(t: Terrarium) -> ScenarioResult:
     return ScenarioResult("turning", bool(bound), log)
 
 
+def scenario_economy(t: Terrarium) -> ScenarioResult:
+    log = []
+    if t.sim is None:
+        return ScenarioResult("economy", False, ["needs in-process sim"])
+    log.append("scenario: bargain layer — colonies choose mode by extraction")
+    t.economy(mode='bargain')
+    for step in range(300):
+        t.step(1)
+        st = t.state()
+        # Harvest events: contracts opening, captures, ascensions
+        events = st.get("events", [])
+        for e in events:
+            if any(kw in e.lower() for kw in ["contract", "capture", "ascend", "bondage"]):
+                log.append(f"  [{st['step']}] {e[:80]}")
+    ok = len(log) > 1  # at least one economic event fired
+    if ok:
+        log.append("economy layer ran without error")
+    else:
+        log.append("no economic events observed")
+    return ScenarioResult("economy", ok, log)
+
+
 SCENARIOS = {
     "worship": scenario_worship,
     "cruelty": scenario_cruelty,
     "metamorphosis": scenario_metamorphosis,
     "dialogue": scenario_dialogue,
     "turning": scenario_turning,
+    "economy": scenario_economy,
 }
 
 # short command aliases for the REPL / --do runner
@@ -333,6 +395,14 @@ def dispatch(t: Terrarium, line: str) -> str:
         return t.summary()
     elif cmd == "events":
         return "\n".join(t.events(int(args[0]) if args else 10))
+    elif cmd == "economy" and args:
+        mode = args[0].lower()
+        if mode in ('bargain', 'wages', 'subjugation'):
+            t.economy(mode=mode)
+        else:
+            return f"  ? economy mode must be bargain|wages|subjugation"
+    elif cmd == "economy":
+        return "  ? economy requires mode: bargain|wages|subjugation"
     else:
         return f"  ? unknown command: {line.strip()}"
     return t.summary()
@@ -354,6 +424,12 @@ def _main():
     p.add_argument("--url", help="remote console URL (else in-process)")
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--no-canon", action="store_true")
+    p.add_argument("--bargain", action="store_true",
+                   help="Enable bargain layer: per-pair mode selection by net extraction")
+    p.add_argument("--wages", action="store_true",
+                   help="Enable wage market: colonies trade labor, tech, and goods")
+    p.add_argument("--subjugation", action="store_true",
+                   help="Enable subjugation: at-war colonies capture broken enemies as thralls")
     args = p.parse_args()
 
     if args.scenario:
@@ -370,6 +446,14 @@ def _main():
 
     t = (Terrarium.connect(args.url) if args.url
          else Terrarium(canon=not args.no_canon, seed=args.seed))
+
+    # Apply economy flags (only for in-process sim)
+    if args.bargain:
+        t.economy(mode='bargain')
+    elif args.wages:
+        t.economy(mode='wages')
+    elif args.subjugation:
+        t.economy(mode='subjugation')
     if args.do:
         for line in args.do.split(";"):
             out = dispatch(t, line)
@@ -382,7 +466,7 @@ def _main():
         print(t.summary())
         print("commands: step [n] | feed | gift | cricket|ant|spider|... |"
               " cat | drought on|off | heat | cold | say <id> <text> |"
-              " speak <id> | state | events | quit")
+              " speak <id> | economy bargain|wages|subjugation | state | events | quit")
         while True:
             try:
                 line = input("keeper> ").strip()

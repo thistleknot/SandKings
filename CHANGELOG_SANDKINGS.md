@@ -1,5 +1,85 @@
 # Sand Kings Changelog
 
+## 2.31.1 - Economy & Enlightenment vocabulary alignment (display + salience)
+
+- Holistic alignment pass across the economy and enlightenment arcs: vocabulary
+  anchors (trade, thrall, ascend, enlighten) integrated into the shared GloVe
+  embedding space so awoken colonies reason over the entire political-economy
+  domain. Event emission tuned for salience (major breakthroughs are high-drama;
+  routine contracts are low-salience). EVENT_TINTS applied per phase (subjugation
+  captures are orange; wage settlements are green; enlightenment ascents are
+  white/gold). Display and client (dashboard, keeper console, live view) updated
+  to surface economy state — thrall counts, active contracts, net extraction per
+  pair, bargain modes chosen. Docs (README/CHANGELOG/INSPIRATIONS) anchored to
+  spec.
+
+
+## 2.31.0 - Enlightenment: post-escape intelligence leap (SPEC_ENLIGHTENMENT EN1-EN10)
+
+- When a colony achieves the ONE true breakout (terminal mastery via the
+  raspberry pi), it does not merely wake to the "great other" — it ASCENDS with
+  a bounded intelligence leap (≈×5, not omniscience). `colony.enlightened` flag
+  at `_escape`. The brain CEILING is raised above the Shade cap (so neural
+  evolution may grow a bigger brain — but must still mutate its way there via
+  selection); native technology climbs ~×`ENLIGHTENED_TECH_MULT` faster per step;
+  and the codex reads ~×`ENLIGHTENED_CODEX_MULT` harder per consultation. The
+  leap is earned climb, not instant grant. Heritability: enlightenment is
+  inherited on respawn (cadet branches of an enlightened line are born
+  enlightened, with the raised ceiling in place). Surfaced: ascent event at
+  max salience (white/gold tint), "ascends" verb in the chronicle, and the
+  House card badges the enlightened state alongside SHADE. Full 38-suite
+  battery green (no new physics, pure bonus gates).
+
+
+## 2.30.0 - Inter-colony political economy (M1-M4: SPEC_LABOR/SUBJUGATION/WAGES/BARGAIN)
+
+- The economy arrives: a unified labor-value extraction model across war and
+  peace (the governing arc spec: `docs/decisions/2026-07-09-intercolony-relations-spectrum.md`).
+  
+  **M1 (SPEC_LABOR)**: the extraction spine. Each unit produces value `V` at a deposit;
+  a WAGE RATIO `w ∈ [0,1]` is the fraction returned to the unit's BIRTH colony; the
+  extractor keeps `(1−w)·V`. Birth allegiance is fixed for life (`colony_id`, psionic
+  lock); only current extraction (`laboring_for`) changes. With `laboring_for < 0`
+  everywhere (the default, no extraction), behavior is byte-identical to the prior
+  build — the regression battery unchanged.
+  
+  **M2 (SPEC_SUBJUGATION, --subjugation flag)**: brute-force extraction at war.
+  Instead of killing a broken enemy unit, a dominant captor may CAPTURE it — the
+  unit lives as a THRALL at low health, production redirected to the captor at
+  `w = W_BRUTE = 0` (brute wage). The thrall's birth allegiance never changes, so
+  it accrues DEFIANCE when unguarded or near its birth maw; the captor must GUARD
+  and COERCE or the thrall BREAKS FREE. Only when the birth maw DIES does the
+  psionic link sever and the thrall permanently CONVERT to the captor. Capture
+  is RNG-gated (CAPTURE_CHANCE = 0 by default); with it 0, no capture occurs, no
+  RNG is drawn, and the regression battery is byte-identical.
+  
+  **M3 (SPEC_WAGES, --wages flag)**: peace-tier extraction via a pairwise factor
+  market. Colonies voluntarily HIRE labor, LICENSE technology (a keeper FOREIGN
+  gift the seller holds: abacus/watch/calculator/pi), and TRADE goods surplus,
+  all priced in GRAINS (the Bittensor-style useful-work currency). Labor contracts
+  are negotiated at a share `w > 0` (never thrall-tier), and the buyer pays a
+  grain rent to the seller. Tech licenses are non-rival (multiple buyers may
+  access the same tech) and expire with the contract; the seller's `techs` never
+  mutates. Resource trade moves food/ore/wood in grains from surplus to deficit.
+  Wages are RNG-gated (WAGE_ENABLED = False by default); with it False, no
+  contract is ever opened and the regression battery is byte-identical.
+  
+  **M4 (SPEC_BARGAIN, --bargain flag, supersedes --subjugation and --wages)**: the
+  full bargain. For each colony pair, M4 chooses ONE enforcement mode per pair:
+  ANNIHILATE (today's war), SUBJUGATE (brute capture), or WAGE/TRADE (peace market).
+  The choice emerges by net extraction — each mode has an expected value, and the
+  colony picks the max. Wages WIN when both are feasible because force LEAKS and
+  wages SCALE: the extractor keeps only `(1−w)` of each unit's value under wages
+  but keeps it RELIABLY in peacetime at zero enforcement cost; under brute it keeps
+  the whole value but only the fraction that survives defiance, and pays
+  enforcement plus war attrition. Grudges (house_grudges + negative diplomatic
+  trust) narrow the bargaining range toward force/annihilation by collapsing wage
+  payoff and inflating war payoff. M4 is RNG-gated (BARGAIN_ENABLED = False by
+  default); with it False, no bargain decision is made and the regression battery
+  is byte-identical. Full 38-suite battery green (M1–M3 landed prior; M4 adds zero
+  new physics, pure decision logic).
+
+
 ## 2.29.1 - Awareness fix: metamorphosis is not breakout (SPEC_AWARENESS/MT1/PS1)
 
 - Corrects a conflation the user caught: colonies were becoming keeper-aware

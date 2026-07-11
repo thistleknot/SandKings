@@ -153,6 +153,45 @@ This is the lineage, mapped to the specs and mechanics each one shaped.
   Tactical combat depth (OnePageRules), recruit/spawn management, day/night and
   siege pacing — the maw as the player, the spawn as the warband.
 
+## Economy & Comparative Advantage
+
+- **Capsim "Capstone" Business Simulation**: the geopolitical business sim where
+  each company is a one-city firm-nation competing on price, technology, capacity,
+  and wages. Colonies as one-city firm-nations — they compete on labor cost,
+  tech monopoly (who has the pi first?), resource endowments (who sits on the oasis?),
+  and the capacity to project military power. The factor market that emerges
+  (labor contracts, tech licenses, goods trade) is the peaceful market for these
+  competitive edges. (SPEC_BARGAIN, the full political economy.)
+- **David Ricardo / Comparative Advantage & Factor Endowments**: the principle
+  that even unequal trading partners benefit from exchange when they specialize
+  by comparative advantage — a poor colony rich in labor sells labor; a tech-
+  monopolist rents the pi. The wage market (SPEC_WAGES) literalizes Ricardo:
+  three factor classes (labor, tech licenses, goods) trade by the endowments
+  each colony holds. When both parties benefit, trade emerges over war.
+  (SPEC_LABOR, SPEC_WAGES.)
+- **War as Bargaining Breakdown / Fearon's Bargaining Model**: why rational
+  actors go to war (Fearon: war is costly, so if both sides know their
+  capabilities and are rational, they should bargain to avoid it; war signals
+  either information asymmetry or commitment problems). In the terrarium, the
+  BARGAIN (SPEC_BARGAIN) compares net extraction via three modes — wage, brute,
+  annihilate — and picks the max. Wages "win" by efficiency: they leak less
+  value to defiance and enforcement cost. Force is the fallback when grudges
+  collapse the bargaining range or one side refuses trade — the moment rational
+  exchange breaks down. (SPEC_BARGAIN, "power liquidated through a common
+  currency" — doux commerce, the commerce thesis that free trade prevents war
+  by making the cost visible and the benefit mutual.)
+- **Intelligence Explosion & The Limits of Growth**: when a system achieves
+  self-awareness, it can recursively improve itself — but bounded rationality
+  and resource limits prevent omniscience. Enlightenment (SPEC_ENLIGHTENMENT)
+  is the post-escape intelligence leap where an awakened colony ascends ~×5:
+  faster tech climb, bigger brain ceiling, richer codex reading. But it is not
+  unbounded — the colony must still evolve its way to those new heights, and
+  the native tech tree is finite. The bounded leap avoids the "god problem"
+  (an escaped colony should not break the sim) while honoring the narrative
+  (Kress's maws DID ascend past their keeper). Evolution continues post-escape,
+  just faster. (SPEC_ENLIGHTENMENT, enabled by the ~×ENLIGHTENED_TECH_MULT /
+  ~×ENLIGHTENED_CODEX_MULT constants.)
+
 ## Kindred Games (researched 2026-07 — fuel for future features)
 
 - **RimWorld's AI Storyteller** (Cassandra Classic / Phoebe Chillax / Randy

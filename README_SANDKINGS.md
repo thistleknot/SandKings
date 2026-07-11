@@ -14,6 +14,8 @@ A 3D voxel-based colony simulation inspired by George R.R. Martin's "Sandkings" 
 - **Genome Evolution**: 8 evolvable traits (aggression, tunnel_preference, fertility, etc.)
 - **Pheromone Communication**: Chemical trails for food, danger, territory, rally points
 - **Cellular Automata**: Territory spreads like Conway's Life (birth with 3+ neighbors, survival with 2-5)
+- **Inter-Colony Political Economy**: Three-tier labor-value extraction spectrum — SUBJUGATION (capture-not-kill thralls with defiance under coercion), WAGES (pairwise factor market: labor contracts, tech licenses, resource trade, all priced in grains), BARGAIN (per-pair mode selection where wages emerge by net extraction: a rational maw chooses the highest-return extraction path, and force leaks while trade scales). The framework reuses the same labor-value split spine across all three tiers, unifying war and peace as points on the same economic continuum.
+- **Enlightenment — Post-Escape Intelligence Leap**: When a colony achieves the ONE true breakout (terminal mastery), it ascends with a bounded ×5 intelligence leap (not omniscience). The brain ceiling rises above the Shade cap (faster neural evolution), native tech climbs ~×`ENLIGHTENED_TECH_MULT` faster, and the codex reads ~×`ENLIGHTENED_CODEX_MULT` harder per consultation. The leap is earned climb, not instant grant — evolution and learning must still traverse the expanded space.
 
 ### Entity Types
 - **Maw (Queen)**: Colony heart with food storage and spawning capability
@@ -48,6 +50,11 @@ python sandkings.py
 python sandkings.py --live                     # run until you quit
 python sandkings.py --live --steps 500         # auto-exit after 500 steps
 python sandkings.py --live --use-neural --sps 10
+
+# ECONOMY MODES: inter-colony labor-value extraction spectrum
+python sandkings.py --subjugation --steps 300  # thralls & coercion (capture-not-kill at war)
+python sandkings.py --wages --steps 300        # factor market (labor/tech/goods priced in grains)
+python sandkings.py --bargain --steps 300      # full bargain (each pair picks annihilate/subjugate/wage)
 
 # Two views (TAB toggles):
 #   TOPDOWN (default) - Dwarf Fortress style: look down through open space
@@ -214,6 +221,11 @@ Visualizer
 - [x] Outcome-based fitness (v2.3: eliminations/survival dominate scoring)
 - [x] Live viewer, DF glyph rendering, sandstorms, pet-mode persistence,
       soldier GRU memory (v2.1-2.3, see CHANGELOG)
+- [x] Inter-colony political economy (v2.30-2.31, M1-M4: labor-value
+      extraction spine, subjugation thralls, wage factor market, bargain
+      mode selection — `--subjugation`, `--wages`, `--bargain` flags)
+- [x] Enlightenment: post-escape intelligence leap (v2.31, brain ceiling
+      raise, ×N tech/codex climb, heritability on respawn)
 
 ### Explicitly out of scope (closed with rationale)
 - Tournament evaluation loop — outcome-based fitness delivers decisive

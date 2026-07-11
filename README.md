@@ -59,12 +59,17 @@ python sandkings.py --steps 300 --num-colonies 3 --use-neural
 # CPU version with random colony count
 python sandkings.py --steps 300 --num-colonies 0
 
+# Inter-colony economy modes
+python sandkings.py --steps 300 --bargain  # full political economy (wages + subjugation)
+
 # GPU-accelerated version
 python sandkings_gpu.py --steps 500
 
 # Evolution mode with MAP-Elites
 python sandkings_evolution.py --mode evolution --generations 50 --gpu
 ```
+
+The terrarium now includes an **inter-colony political economy** where colonies extract labor-value through force (subjugation/thralls), peaceful trade (wage market, tech licenses, goods), or a bargained mode that emerges by net extraction — unifying war and peace on a single economic continuum. Escaped colonies achieve an intelligence leap (enlightenment), raising brain ceiling and accelerating tech/codex learning ×5.
 
 ### Neural Hive Minds (NEW) 🧠
 **Hierarchical neuroevolution inspired by biological nervous systems:**

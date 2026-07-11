@@ -62,6 +62,7 @@ def build_state(sim: SandKingsSimulation) -> Dict:
     """DB3: pure JSON snapshot of the terrarium (no mutation)."""
     from chronicle import saga_rows
     from hive_mind_monitor import compose_utterance
+    from sandkings import WAGE_ENABLED
     season = sim.season_index()
     weather = [name for attr, name in (
         ("storm_until", "sandstorm"), ("hail_until", "hail"),
@@ -123,6 +124,33 @@ def build_state(sim: SandKingsSimulation) -> Dict:
     events = [f"[{step}] {sim._substitute_houses(m)}"
               if hasattr(sim, '_substitute_houses') else f"[{step}] {m}"
               for step, m in list(getattr(sim, 'events', []))[-10:]]
+
+    # Economy: wage contracts (capped at ~20) and bargain modes
+    contracts = []
+    for c in getattr(sim, 'wage_contracts', [])[:20]:
+        if c.get('alive'):
+            contracts.append({
+                'kind': c.get('kind', ''),
+                'buyer': int(c.get('buyer_id', -1)),
+                'seller': int(c.get('seller_id', -1)),
+                'factor': c.get('factor', ''),
+                'w': round(float(c.get('w', 0.0)), 2),
+                'fee': round(float(c.get('fee', 0.0)), 2),
+            })
+
+    bargain_modes = []
+    for pair, mode in getattr(sim, 'bargain_modes', {}).items():
+        if mode != 'none':
+            ids = list(pair)
+            if len(ids) == 2:
+                bargain_modes.append({
+                    'a': int(ids[0]),
+                    'b': int(ids[1]),
+                    'mode': str(mode),
+                })
+
+    economy_on = bool(getattr(sim, 'bargain_enabled', False)) or WAGE_ENABLED
+
     return {
         "step": int(sim.step_count),
         "year": int(sim.year() + 1),
@@ -143,6 +171,9 @@ def build_state(sim: SandKingsSimulation) -> Dict:
         "colonies": colonies,
         "saga": saga,
         "events": events,
+        "contracts": contracts,
+        "bargain_modes": bargain_modes,
+        "economy_on": economy_on,
         "keeper": {
             "auto": bool(getattr(sim, 'keeper_auto', True)),
             "gifts_given": list(getattr(sim, 'gifts_given', [])),
@@ -757,6 +788,7 @@ function render(){
       `<span>food <b>${col.food}</b></span><span>maw <b>${col.maw_hp}%</b></span>`+
       `<span>gen <b>${col.generation}</b></span>`+
       (col.currency?`<span>grains <b>${col.currency}</b></span>`:'')+
+      (col.thralls_out||col.thralls_in?`<span>thralls <b>${col.thralls_out}↓/${col.thralls_in}↑</b></span>`:'')+
       (col.aware
         ? `<span>toward you <b style="color:${sentColor(col.sentiment)}">${sentWord(col.sentiment,col.attitude)}</b></span>`
         : `<span>feels <b>${col.nature_mood||'—'}</b> <i style="opacity:.6">(unexplained forces)</i></span>`)+`</div>`+
@@ -775,6 +807,34 @@ function render(){
   document.getElementById('saga').innerHTML=
     state.saga.slice().reverse().map(l=>`<div class="line">${l}</div>`).join('')
     ||'<div class="line" style="color:var(--dim)">The chronicle is yet unwritten.</div>';
+
+  // Economy panel: bargain modes, contracts, status
+  const econ=document.createElement('div');
+  econ.className='saga';
+  let econHtml='<h3>Economy</h3>';
+  if(!state.economy_on){econHtml+='<div class="line" style="color:var(--dim)">— off —</div>';}
+  else{
+    if(state.bargain_modes&&state.bargain_modes.length){
+      econHtml+='<div class="line" style="font-size:12px;margin-bottom:4px"><b>Bargains</b></div>';
+      state.bargain_modes.forEach(bm=>{
+        const mode_colors={'wage':'#f2c14e','subjugate':'#e0554e','annihilate':'#ff5555'};
+        const col_a=state.colonies.find(c=>c.id===bm.a);const col_b=state.colonies.find(c=>c.id===bm.b);
+        const arrow=bm.mode==='wage'?'→':bm.mode==='subjugate'?'⊳':bm.mode==='annihilate'?'✗':'?';
+        const col=mode_colors[bm.mode]||'#9aa0ac';
+        econHtml+=`<div class="line" style="font-size:11px;color:${col}">${col_a?col_a.house:'C'+bm.a} ${arrow} ${col_b?col_b.house:'C'+bm.b}</div>`;
+      });
+    }
+    if(state.contracts&&state.contracts.length){
+      econHtml+='<div class="line" style="font-size:12px;margin:6px 0 4px 0"><b>Contracts</b></div>';
+      state.contracts.forEach(ct=>{
+        const buyer=state.colonies.find(c=>c.id===ct.buyer);const seller=state.colonies.find(c=>c.id===ct.seller);
+        const bname=buyer?buyer.house:'C'+ct.buyer;const sname=seller?seller.house:'C'+ct.seller;
+        econHtml+=`<div class="line" style="font-size:11px">${ct.kind} ${bname}←${sname} w:${ct.w} fee:${ct.fee}</div>`;
+      });
+    }
+  }
+  econ.innerHTML=econHtml;
+  document.getElementById('rail').appendChild(econ);
 }
 async function poll(){try{const r=await fetch('/api/state');if(r.ok){state=await r.json();render();}}
   catch(e){}}
