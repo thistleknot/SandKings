@@ -183,12 +183,12 @@ class Codex:
         self.__init__()
 
 
-def apply_lesson(genome, lesson: str) -> List[str]:
+def apply_lesson(genome, lesson: str, scale: float = 1.0) -> List[str]:
     """CX4: bounded genome nudge; returns the attrs it moved."""
     moved = []
     for attr, weight in LESSON_EFFECT.get(lesson, ()):
         current = getattr(genome, attr, 0.5)
         setattr(genome, attr,
-                float(np.clip(current + CODEX_NUDGE * weight, 0.0, 1.0)))
+                float(np.clip(current + CODEX_NUDGE * weight * scale, 0.0, 1.0)))
         moved.append(attr)
     return moved

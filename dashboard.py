@@ -96,6 +96,7 @@ def build_state(sim: SandKingsSimulation) -> Dict:
             "generation": int(getattr(colony, 'generation', 1)),
             "worshipped": bool(getattr(colony, 'worshipped', False)),
             "breached": bool(getattr(colony, 'breached', False)),
+            "enlightened": bool(getattr(colony, 'enlightened', False)),  # EN9
             "stage": int(getattr(colony, 'stage', 1)),
             "augment": int(getattr(colony, 'memory_augment', 0)),
             "currency": round(float(getattr(colony, 'currency', 0.0)), 1),
@@ -747,7 +748,7 @@ function render(){
       selected=selected===col.id?null:col.id;render();};
     let stageName=col.stage>=3?'SHADE':col.stage>=2?'new breed':'';
     let badges=(col.at_war?'<span class="badge war">war</span>':'')+
-      (stageName?`<span class="badge breach">${stageName}</span>`:'');
+      (stageName?`<span class="badge breach">${stageName}</span>`:'')+(col.enlightened?'<span class="badge breach">enlightened</span>':'');  // EN9
     let inner=`<div class="name"><span class="dot ${attClass(col.attitude)}"></span>`+
       `<b>${col.house}</b>${badges}`+
       (col.augment?`<span class="badge breach">mem+${col.augment}</span>`:'')+

@@ -368,6 +368,11 @@ SHADE_POP = 34               # stage-3 (Shade) size gate...
 SHADE_FOOD = 620             # ...or hoard
 STAGE_CEILING = {1: 88, 2: 128, 3: 160}  # brain_hidden cap by stage (MT4)
 
+# Enlightenment (SPEC_ENLIGHTENMENT EN1-EN10): post-escape intelligence leap
+ENLIGHTENED_CEILING = 224      # brain_hidden ceiling granted at ascension; strictly above STAGE_CEILING[3]
+ENLIGHTENED_TECH_MULT = 5.0    # multiplier on every tech-xp gain while enlightened
+ENLIGHTENED_CODEX_MULT = 5.0   # multiplier on every codex lesson-nudge while enlightened
+
 # The Psionic Maw & Keeper-as-Prey (SPEC_PSIONIC PS1-PS5): the awakened
 # terrarium reaches back, and at the last it turns on its god
 PSIONIC_MIN_STAGE = 2        # only the awakened (stage 2+) project (PS1)
@@ -2713,6 +2718,8 @@ class SandKingsSimulation:
         """TE7: learning by doing - raise proficiency; learn at the threshold."""
         if not hasattr(colony, 'tech_xp'):
             colony.tech_xp = {}
+        if getattr(colony, 'enlightened', False):  # EN4
+            amount = amount * ENLIGHTENED_TECH_MULT
         xp = min(1.0, colony.tech_xp.get(tech, 0.0) + amount)
         colony.tech_xp[tech] = xp
         if xp >= TECH_LEARN_XP and tech not in getattr(colony, 'techs', set()):
@@ -2917,6 +2924,15 @@ class SandKingsSimulation:
         self._set_stage(colony, max(2, getattr(colony, 'stage', 1)))
         self._reveal(colony)  # AW4: it now knows the hand that fed and starved it
 
+        # ---- Enlightenment burst (EN2, EN6, EN7) ----
+        if not getattr(colony, 'enlightened', False):
+            colony.enlightened = True
+            if getattr(colony.genome, 'brain_ceiling', 88) < ENLIGHTENED_CEILING:
+                colony.genome.brain_ceiling = ENLIGHTENED_CEILING
+            self._log_event(
+                f"House {self._house_name(colony)} ascends - the light of the "
+                "Enlightenment breaks over it")
+
     def _metamorphosis_tick(self):
         """MT2/MT3: molt to the new breed (stage 2) once the maw is large
         enough - cruelty accelerates it - and to Shade (stage 3) once a
@@ -3035,7 +3051,8 @@ class SandKingsSimulation:
             _passage, lesson = codex.consult(words)
             if lesson is None:
                 continue
-            apply_lesson(colony.genome, lesson)
+            scale = ENLIGHTENED_CODEX_MULT if getattr(colony, 'enlightened', False) else 1.0  # EN5
+            apply_lesson(colony.genome, lesson, scale)
             if not hasattr(self, '_codex_logged'):
                 self._codex_logged = set()
             house = self._house_name(colony)
@@ -5907,6 +5924,8 @@ class SandKingsSimulation:
             colony.keeper_sentiment = max(getattr(pa, 'keeper_sentiment', 0.5),
                                           getattr(pb, 'keeper_sentiment', 0.5))
             colony.revelation = colony.breached
+            colony.enlightened = (getattr(pa, 'enlightened', False)  # EN8
+                                  or getattr(pb, 'enlightened', False))
             # TE5: the bloodline's technology survives (union of both parents)
             colony.techs = set(getattr(pa, 'techs', set())) | set(
                 getattr(pb, 'techs', set()))
@@ -5924,6 +5943,7 @@ class SandKingsSimulation:
             colony.stage = getattr(parent, 'stage', 1)  # MT1
             colony.keeper_sentiment = getattr(parent, 'keeper_sentiment', 0.5)
             colony.revelation = colony.breached  # AW4: born knowing, if aware
+            colony.enlightened = getattr(parent, 'enlightened', False)  # EN8
             colony.techs = set(getattr(parent, 'techs', set()))  # TE5
             colony.tech_xp = dict(getattr(parent, 'tech_xp', {}))
             colony.crafted = set(getattr(parent, 'crafted', set()))  # TE13

@@ -19,7 +19,7 @@ from typing import Optional
 import numpy as np
 
 BRAIN_HIDDEN_MIN = 24
-BRAIN_HIDDEN_MAX = 160
+BRAIN_HIDDEN_MAX = 224
 BRAIN_DEPTH_MAX = 4
 
 try:
