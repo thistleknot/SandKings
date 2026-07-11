@@ -6,6 +6,7 @@ Inspired by GRRM's Sand Kings novella - 4 colored Maw colonies compete for terri
 """
 
 import itertools
+import math
 import os
 import pickle
 import random
@@ -220,6 +221,7 @@ WATER_LEVEL_DEFAULT = 0.6    # free-water fraction 0..1 (default-neutral)
 SUN_HOURS_DEFAULT = 12       # daylight hours/day
 SUN_MIN, SUN_MAX = 4, 20     # panel sunlight range
 BIOME_TICK = 20              # emergent-weather cadence
+SUN_JITTER_SD = 0.0          # SP7: std-dev of per-day daylight draw (0 = identity; learnable)
 BIOME_EASE = 0.03            # water eases toward equilibrium per step
 SUN_DRYING = 0.5             # how far sun lowers the water equilibrium
 DRY_THRESHOLD = 0.35         # below this the biome is in drought
@@ -526,6 +528,61 @@ def w_bargain(power_ratio: float = 1.0,
 def _clamp01(x: float) -> float:
     """Clamp x to [0, 1]. Pure helper for WG2/WG3 (WG12)."""
     return max(0.0, min(1.0, x))
+
+
+def jitter(mean: float, sd: float = 0.0,
+           lo: float = float('-inf'), hi: float = float('inf'),
+           rng=random) -> float:
+    """FORM 1 — distributional scalar: draw X ~ N(mean, sd), clipped to [lo, hi].
+
+    Precondition:  rng provides .gauss(mu, sigma) (module `random` or a
+                   random.Random instance — the SEEDED stream, never default_rng).
+    Failure modes: none raised; sd<=0 short-circuits, lo>hi would clamp to hi.
+    IDENTITY:      sd <= 0.0 returns float(mean) and DRAWS NOTHING (no rng call),
+                   so the shared RNG stream is unperturbed (canon stays in sync).
+    """
+    if sd <= 0.0:
+        return float(mean)                      # identity — NO draw consumed
+    x = rng.gauss(mean, sd)                      # single draw from the seeded stream
+    return float(min(max(x, lo), hi))            # clip to [lo, hi]
+
+
+def soft_gate(metric: float, center: float, temp: float) -> float:
+    """FORM 2 — soft gate: P(act) = logistic((metric - center) / temp), in [0,1].
+
+    The CALLER draws rng.random() < P(act); this function is pure (no RNG here).
+    Failure modes: none raised; overflow-safe logistic (branch on sign of z).
+    IDENTITY:      temp <= 0.0 collapses to the hard step 1.0 if metric > center
+                   else 0.0 — byte-for-byte the pre-existing `if metric > C` gate.
+    """
+    if temp <= 0.0:
+        return 1.0 if metric > center else 0.0   # identity — hard threshold at center
+    z = (metric - center) / temp
+    if z >= 0.0:
+        return 1.0 / (1.0 + math.exp(-z))
+    e = math.exp(z)
+    return e / (1.0 + e)
+
+
+@dataclass
+class DistParam:
+    """Learnable holder for a FORM-1 distributional scalar. Swap for an evolved
+    instance to make the scalar adaptive; default (sd=0) is identity."""
+    mean: float
+    sd: float = 0.0
+    lo: float = float('-inf')
+    hi: float = float('inf')
+    def draw(self, rng=random) -> float:
+        return jitter(self.mean, self.sd, self.lo, self.hi, rng)
+
+@dataclass
+class GateParam:
+    """Learnable holder for a FORM-2 soft gate. Swap for an evolved instance to
+    make the threshold adaptive; default (temp=0) is a hard step at center."""
+    center: float
+    temp: float = 0.0
+    def prob(self, metric: float) -> float:
+        return soft_gate(metric, self.center, self.temp)
 
 
 class VoxelWorld:
@@ -1457,6 +1514,7 @@ class SandKingsSimulation:
         self.water_level = WATER_LEVEL_DEFAULT  # BI1: the closed water budget
         self.water_target = WATER_LEVEL_DEFAULT  # the reservoir set point (panel)
         self.sun_hours = SUN_HOURS_DEFAULT      # BI1: daylight hours/day (panel)
+        self.sun_effective = SUN_HOURS_DEFAULT   # SP5: the drawn sky for the current biome-day
         self._storm_wind = (1, 0)              # per-storm prevailing direction
         
         # Initialize colonies with random count (3-5) and positions
@@ -2675,11 +2733,11 @@ class SandKingsSimulation:
 
     def _biome_growth_units(self) -> int:
         """BI5: non-oasis crop growth per tick from the water+sun budget."""
-        if self._is_dry() or getattr(self, 'sun_hours',
-                                     SUN_HOURS_DEFAULT) < SUN_COLD:
+        if self._is_dry() or getattr(self, 'sun_effective', getattr(self, 'sun_hours',
+                                     SUN_HOURS_DEFAULT)) < SUN_COLD:
             return 0  # drought or dark: the field stalls
         water = getattr(self, 'water_level', WATER_LEVEL_DEFAULT)
-        sun = getattr(self, 'sun_hours', SUN_HOURS_DEFAULT)
+        sun = getattr(self, 'sun_effective', getattr(self, 'sun_hours', SUN_HOURS_DEFAULT))
         if water > WET_THRESHOLD and SUN_COLD < sun < SUN_HOT:
             return 2  # lush
         return 1
@@ -2688,8 +2746,14 @@ class SandKingsSimulation:
         """BI3/BI4: the closed water cycle and the weather that emerges from it.
         Water eases toward an equilibrium set by the reservoir and the sun;
         extremes spill floods, bake heat, or bring a chill."""
+        # SP5: draw the EFFECTIVE daylight ONCE per biome-day so every reader in
+        # this day sees the same sky. Identity at SUN_JITTER_SD==0 (no RNG draw).
+        if self.step_count == 1 or self.step_count % BIOME_TICK == 0:
+            self.sun_effective = jitter(
+                mean=getattr(self, 'sun_hours', SUN_HOURS_DEFAULT),
+                sd=SUN_JITTER_SD, lo=SUN_MIN, hi=SUN_MAX)
         target = getattr(self, 'water_target', WATER_LEVEL_DEFAULT)
-        sun = getattr(self, 'sun_hours', SUN_HOURS_DEFAULT)
+        sun = getattr(self, 'sun_effective', getattr(self, 'sun_hours', SUN_HOURS_DEFAULT))
         water = getattr(self, 'water_level', WATER_LEVEL_DEFAULT)
         equilibrium = float(np.clip(
             target - SUN_DRYING * (sun - SUN_HOURS_DEFAULT) / SUN_HOURS_DEFAULT,

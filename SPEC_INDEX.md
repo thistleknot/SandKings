@@ -9,6 +9,7 @@ contract). Governing decision records live under `docs/decisions/`.
 - **SPEC_BIOME.md** (BI1–BI7) — the closed biome & the panel (Phase 3): the sealed world and its glass.
 - **SPEC_SEASONS_AND_STONE.md** — seasons, scarcity, farming, the oasis, ore, colony learning.
 - **SPEC_WEATHER.md** (W1–W6) — desert weather: storm, hail, cold, flood.
+- **SPEC_SEMIPERMEABLE.md** (SP1–SP8) — semi-permeable params: a reusable soft-param primitive (distributional scalar `jitter` + logistic `soft_gate`) with the daylight tracer (`sun_effective` drawn per biome-day); identity at neutral (`SUN_JITTER_SD=0`).
 - **SPEC_TIMBER_AND_FLAME.md** — timber, bone & flame: fortifications, organic weapons, decay, fire.
 - **SPEC_HYDRO_HAND.md** (HH1–HH5) — the hand's water & seeds (Phase 2 / Hydro-Hand).
 - **SPEC_ARENA.md** (AR1–AR7) — arena mode: the keeper's gifts, wrath, and neutrals.
