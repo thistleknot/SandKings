@@ -324,6 +324,8 @@ POWER_TECH_FOREIGN = 30.0    # weight per known FOREIGN (keeper-gift) tech
 # Subjugation: Capture, Coercion & Conversion (SPEC_SUBJUGATION SJ8)
 CAPTURE_CHANCE = 0.0          # probability a dominant captor takes a broken enemy alive
 CAPTURE_HEALTH = 3            # health a captured thrall is revived to
+CAPTURE_CENTER = 0.5         # SP9: power_ratio at which the soft capture gate is a coin-flip [prov:B fit=capture-liveness]
+CAPTURE_TEMP = 0.0           # SP9: capture-gate softness; 0.0 = identity (exact flat coin-flip) [prov:B fit=capture-liveness]
 GUARD_RADIUS = 6              # Chebyshev range within which a captor soldier keeps a thrall docile
 DEFIANCE_RISE = 0.05          # defiance gained per tick while unguarded
 DEFIANCE_CALM = 0.10          # defiance shed per tick while guarded
@@ -562,6 +564,15 @@ def soft_gate(metric: float, center: float, temp: float) -> float:
         return 1.0 / (1.0 + math.exp(-z))
     e = math.exp(z)
     return e / (1.0 + e)
+
+
+def power_ratio(enforcers: int, defenders: int) -> float:
+    """SP9: local numerical superiority in [0,1]. 1.0 = uncontested (no defenders),
+    0.5 = even, 0.0 = no captor present. Pure, no RNG."""
+    total = enforcers + defenders
+    if total <= 0:
+        return 0.0
+    return enforcers / total
 
 
 @dataclass
@@ -4614,6 +4625,25 @@ class SandKingsSimulation:
         return bool(getattr(self, 'subjugation_enabled', False)
                     and getattr(captor_colony, 'at_war', False))
 
+    def _dominance_counts(self, captor_colony: 'Colony', captor_unit: 'SandKing',
+                          victim: 'SandKing', victim_colony: 'Colony'):
+        """SP9: (enforcers, defenders) within Chebyshev radius 1 of victim.
+        enforcers = captor SOLDIERs adjacent; defenders = victim's free birth-house
+        units (laboring_for < 0) adjacent. Pure read, no mutation, no RNG."""
+        vx, vy, vz = victim.position
+        enforcers = 0
+        defenders = 0
+        for other in self._units_near(victim.position, radius=1):
+            if other is victim:
+                continue
+            if (other.colony_id == captor_colony.colony_id
+                    and other.unit_type == UnitType.SOLDIER):
+                enforcers += 1
+            elif (other.colony_id == victim_colony.colony_id
+                    and getattr(other, 'laboring_for', -1) < 0):
+                defenders += 1
+        return enforcers, defenders
+
     def _local_dominance(self, captor_colony: Colony, captor_unit: SandKing,
                         victim: SandKing, victim_colony: Colony) -> bool:
         """Check local dominance: at least one captor enforcer (soldier) adjacent to victim
@@ -4623,18 +4653,7 @@ class SandKingsSimulation:
         Guarantee: True only when enforcers >= 1 and defenders == 0 within Chebyshev radius 1.
         Maintain: pure read, no mutation, no RNG.
         """
-        vx, vy, vz = victim.position
-        enforcers = 0      # captor soldiers within radius 1 of victim
-        defenders = 0      # victim's birth free units within radius 1 (rescuers)
-        for other in self._units_near(victim.position, radius=1):
-            if other is victim:
-                continue
-            if (other.colony_id == captor_colony.colony_id
-                    and other.unit_type == UnitType.SOLDIER):
-                enforcers += 1
-            elif (other.colony_id == victim_colony.colony_id
-                    and getattr(other, 'laboring_for', -1) < 0):  # free birth-house unit
-                defenders += 1
+        enforcers, defenders = self._dominance_counts(captor_colony, captor_unit, victim, victim_colony)
         return enforcers >= 1 and defenders == 0
 
     def _try_capture(self, captor_colony: Colony, captor_unit: SandKing,
@@ -4651,6 +4670,11 @@ class SandKingsSimulation:
         Maintain: no unit migration; colony_id unchanged on capture; RNG stream
           untouched whenever CAPTURE_CHANCE <= 0.
         Assert: after capture, victim.health > 0 and victim not in units_to_remove.
+
+        SP9: when CAPTURE_TEMP>0 the hard dominance wall is relaxed — capture needs only
+        enforcers>=1 and its probability is CAPTURE_CHANCE*soft_gate(power_ratio,
+        CAPTURE_CENTER,CAPTURE_TEMP); at CAPTURE_TEMP<=0 (default) the exact flat coin-flip
+        and hard wall are preserved (byte-identical).
         """
         # (1) HARD GATE — no RNG, default-neutral
         if CAPTURE_CHANCE <= 0.0:
@@ -4658,12 +4682,23 @@ class SandKingsSimulation:
         # (2) stance gate (default False) — no RNG
         if not self._subjugate_stance(captor_colony, victim_colony):
             return False
-        # (3) SJ2 dominance — no RNG
-        if not self._local_dominance(captor_colony, captor_unit, victim, victim_colony):
-            return False
-        # (4) RNG reached ONLY past 1–3
-        if random.random() >= CAPTURE_CHANCE:
-            return False
+
+        # (3)+(4) SP9: mode-switch on CAPTURE_TEMP.
+        if CAPTURE_TEMP <= 0.0:
+            # IDENTITY PATH — exact pre-SP9 behavior (hard dominance wall + flat coin-flip).
+            if not self._local_dominance(captor_colony, captor_unit, victim, victim_colony):
+                return False
+            if random.random() >= CAPTURE_CHANCE:
+                return False
+        else:
+            # SOFT MEMBRANE — relax the wall: capture possible whenever an enforcer is
+            # present; probability rises with local superiority.
+            enforcers, defenders = self._dominance_counts(captor_colony, captor_unit, victim, victim_colony)
+            if enforcers < 1:
+                return False
+            p = CAPTURE_CHANCE * soft_gate(power_ratio(enforcers, defenders), CAPTURE_CENTER, CAPTURE_TEMP)
+            if random.random() >= p:
+                return False
         # CAPTURE
         victim.laboring_for = captor_colony.colony_id
         victim.health = CAPTURE_HEALTH
