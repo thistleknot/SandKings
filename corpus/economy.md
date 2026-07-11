@@ -27,3 +27,17 @@ colony covets it. But the maw that holds the oasis alone draws the envy
 of all the rest. Share its bounty through alliance and tribute, or hold
 it and face the coalition. Even the richest ground is safer shared than
 seized.
+
+## The wage outlasts the whip
+LESSON: commerce
+
+There are two ways to take another house's labor. Break its soldiers and
+drive them as thralls, and you keep the whole of what they produce — but
+only the part that survives their defiance, and you pay guards to hold
+them, and you pay the cost of the war that took them. Hire them instead at
+a wage, and you keep only a share of each unit's work — but you keep it
+reliably, in peacetime, at no cost of enforcement, from every free hand
+they will lend you. Force merely leaks; the wage scales. The house that
+hires a labor contract, licenses a scarce keeper-gift for grains, or ships
+its surplus to a house in deficit out-earns the raider over the long run of
+seasons. Keep faith and keep growing, and the market keeps paying.

@@ -13,6 +13,15 @@ minds; the spawn are its remote underlings (OnePageRules-style skirmish units).
 Because a maw cannot READ a rival's mind, tech can only be earned, OBSERVED off
 the underlings' works, bartered for, or taken by conquest — never simply read.
 
+> Cross-ref (inbound): a house's keeper FOREIGN gift (`abacus`/`watch`/
+> `calculator`/`pi`, held in `techs ∩ TECH_FOREIGN`, TE3) is a MONOPOLY factor —
+> scarce, non-reproducible, keeper-only — and is therefore LICENSABLE in the
+> inter-colony economy: a rival may rent ACCESS to its productivity effect for
+> grains via a read-only "effective gifts" view that NEVER mutates `techs`. See
+> `SPEC_WAGES.md` (M3, WG6 tech licenses) and `SPEC_LABOR.md` (LV4
+> `composite_power`, which ranks FOREIGN gifts highest). Grains (`SPEC_CURRENCY.md`)
+> are both the license rent and the TE9 research sink.
+
 All new state is getattr-guarded, pickled, and inherited on respawn;
 `EnhancedSandKingsSimulation.step` stays inert; every mechanic is DEFAULT-NEUTRAL
 (no effect at empty tech / zero proficiency) so prior behaviour is unchanged.
@@ -186,3 +195,8 @@ Surfaced: `/api/keeper/material`, a dashboard Materials group, the card/build_st
 - Deferred: boats/naval war and terraforming (lakes/canals) share the water
   system and are planned in the parked HYDROLOGY arc, not here. Also queued: the
   ballista (siege sibling) and biohacking (pi-driven self-genome editing).
+- 2026-07-11 — Economy-arc alignment: added the inbound cross-ref noting a held
+  FOREIGN gift is a licensable monopoly factor in the inter-colony economy
+  (SPEC_WAGES M3/WG6, licensed via a read-only effective-gifts view that never
+  mutates `techs`; ranked highest in SPEC_LABOR LV4 `composite_power`). No
+  mechanic change here.

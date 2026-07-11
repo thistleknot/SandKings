@@ -1,9 +1,9 @@
 # SPEC: Subjugation — Capture, Coercion & Conversion — SJ1–SJ8
 
 Module **M2** of the inter-colony political-economy arc (governing scope record:
-`intercolony-relations-spectrum`). Depends ONLY on M1 `SPEC_LABOR` (the
-`laboring_for` field, `_credit_labor`, `composite_power`). M3 `SPEC_WAGES` and M4
-`SPEC_BARGAIN` are NOT specified here.
+`docs/decisions/2026-07-09-intercolony-relations-spectrum.md`). Depends ONLY on M1
+`SPEC_LABOR` (the `laboring_for` field, `_credit_labor`, `composite_power`). M3
+`SPEC_WAGES` and M4 `SPEC_BARGAIN` are NOT specified here.
 
 **The mechanic.** Instead of killing a broken enemy unit, a dominant captor may
 CAPTURE it — the unit lives at low health as a THRALL, its production redirected to
@@ -398,6 +398,41 @@ default-neutral gate:
 - This changes NO default behavior: with the flag off, `subjugation_enabled` is
   absent (False) and `CAPTURE_CHANCE` is 0.0, so every gate is closed.
 
+## Events, Vocabulary & Surfacing
+
+Standing contract for M2's own words, drama, and display. This is the BRUTE tier —
+force, war only — and it is where the arc gets its darkest chronicle lines. All
+gated by the economy gates (`CAPTURE_CHANCE > 0`, and per pair by SPEC_BARGAIN),
+so at shipped defaults NONE of these fire and the chronicle is byte-identical.
+
+- **Events emitted (canonised strings; each needs a `chronicle.py` SALIENCE
+  substring entry + a `live_view.py` EVENT_TINTS colour):**
+
+  | Event string | Trigger | SALIENCE | EVENT_TINTS intent |
+  |---|---|---|---|
+  | `House X takes a soldier of House Y in bondage` | SJ1 capture succeeds (`_try_capture` returns True) | 7 (match on `in bondage`) | crimson / blood-red — a taking by force |
+  | `The thralls of House Y kneel to House X` | SJ6a permanent conversion on birth-maw death | 8 (match on `kneel to`) | dark crimson — a house broken into another |
+  | `A thrall of House X breaks free and flees home` | SJ5 break-free (already specced) | 6 (match on `breaks free`) | pale blue — a liberation, the psionic tie holds |
+
+  Salience weights sit alongside the existing war band (`declares war` 7, `is
+  slain` 7, `betrays` 9) so bondage/conversion read as major events. The capture
+  event is the "display-only salience event" SJ1 already allows; canonised here.
+- **Display fields it should surface (SJ8, display-only):** the THRALL
+  RELATIONSHIPS — per-colony `thralls_held` (units anywhere with `laboring_for ==
+  this colony_id`) and `thralls_lost` (own units with `laboring_for >= 0`), and the
+  per-thrall `defiance` meter (so the keeper can watch a captive's resolve rise
+  toward break-free). Live-view inspect / dashboard card MAY render "N held / M
+  lost" and a defiance bar; no control flow keys off them.
+- **Anchor it contributes:** `thrall` (SPEC_HIVE_MONITOR M15) — M2 is the primary
+  writer of the `laboring_for >= 0` state the `thrall` anchor measures, so a colony
+  holding thralls or losing units to bondage thinks/speaks in the `thrall`
+  vocabulary. It also feeds the dialogue `thrall` synonym pins (slave / enslave /
+  subjugate / captive → thrall, SPEC_DIALOGUE DL7a) and the `thrall → aggression`
+  nudge (DL7b).
+- **Lesson it contributes:** none of its own. Subjugation is the whip the codex
+  `commerce` lesson (SPEC_CODEX CX7) teaches houses to OUTGROW ("the wage outlasts
+  the whip"); M2 is the foil, not a taught doctrine.
+
 ## Status / Reconciliation
 
 - **Drafted + implemented 2026-07-10.** SJ1–SJ8 implemented in `sandkings.py`
@@ -417,3 +452,10 @@ default-neutral gate:
   hooks `_check_maw_deaths` beside `_plunder_techs`; the tick slots into the existing
   numbered `step()` sequence; thrall hostility rides the existing `colony_id`-keyed
   `hostile()` with a single inert per-unit filter.
+- 2026-07-11 — Economy-arc alignment: added the "Events, Vocabulary & Surfacing"
+  standing contract — the capture / conversion / break-free event strings with
+  their intended SALIENCE weights and EVENT_TINTS colours, the thrall-relationship
+  display fields (`thralls_held`/`thralls_lost` + defiance), and the `thrall`
+  anchor / dialogue-synonym contribution (SPEC_HIVE_MONITOR M15, SPEC_DIALOGUE DL7).
+  The named event strings still need matching `chronicle.py` SALIENCE substrings and
+  `live_view.py` EVENT_TINTS entries in code.

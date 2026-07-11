@@ -1,4 +1,4 @@
-# SPEC: Dialogue (Round 17) — DL1–DL6
+# SPEC: Dialogue (Round 17) — DL1–DL7
 
 User intent: "a console dialogue option with a human using their
 'thoughts'... thoughts they can send back by clicking on them... add
@@ -74,6 +74,62 @@ disposition for the same heard concept; converse gates on breach
 returns a non-empty reply for the awakened; the dashboard /api/converse
 endpoint works; keyword fallback works without vectors.
 
+## DL7 — Economy vocabulary (the labor political-economy arc)
+The economy arc (SPEC_LABOR/SUBJUGATION/WAGES/BARGAIN + SPEC_ENLIGHTENMENT)
+adds three anchors — `trade`, `thrall`, `ascend` (SPEC_HIVE_MONITOR M15).
+So a human can now converse ABOUT the shipped economy in plain words that
+map onto those concepts, and can nudge a colony's disposition toward
+commerce, cruelty, or ascension by talk. Every synonym VALUE below is a
+REAL anchor (the M15 anchors must exist first).
+
+**DL7a — `_SYNONYMS` pins (commerce, bondage, enlightenment).** Extend the
+`_SYNONYMS` map (`dialogue.py:30`), checked before the antonym-prone
+embedding step, so mercantile / slaving / awakening words the human is
+likely to use resolve to the right anchor rather than a GloVe near-miss:
+- commerce / market / hire / wage / barter / bargain / sell / buy → `trade`
+- slave / enslave / subjugate / captive → `thrall`
+- enlighten / awaken / genius → `ascend`
+
+Rationale: like peace≈war, these are sentiment/context-loaded — "barter"
+and "wage" sit near generic economics words in GloVe, "captive" near
+war/enemy, "genius"/"awaken" near unrelated common terms — so a bare
+nearest-anchor lookup misroutes them. Pinning keeps the shared-vocabulary
+promise intact for the economy the same way DL1 does for peace/hate.
+
+**DL7b — `converse` `nudge_map` additions (the human teaches through talk).**
+The DL3 persuasion nudge lives in `sim.converse` (`sandkings.py:2594`) as a
+`nudge_map` from the heard anchor to a genome disposition. Add three entries
+so talking economy shifts disposition, mirroring the codex `commerce` /
+`enlightenment` lessons (SPEC_CODEX CX7):
+- `trade` → fertility AND loyalty (the commerce lesson's two attrs)
+- `thrall` → aggression
+- `ascend` → plasticity
+
+Code note (real structure differs from a flat map): the shipped `nudge_map`
+values are single attribute strings (`{'ally':'loyalty', ...}`) and apply
+ONE `DIALOGUE_NUDGE`. `trade` needs TWO attrs. Canonised resolution: allow a
+`nudge_map` value to be a string OR a tuple of attrs, and apply the bounded
+`DIALOGUE_NUDGE` to each — `trade`: `('fertility','loyalty')`,
+`thrall`: `'aggression'`, `ascend`: `'plasticity'`. Existing single-string
+entries are unchanged (normalise a bare string to a one-tuple at read).
+Each nudge stays `np.clip(..., 0.0, 1.0)` bounded (DL5), so nothing escapes
+`[0,1]`.
+
+**DL7c — optional mercantile `_STANCE` row.** `compose_reply`'s `_STANCE`
+table (`dialogue.py:94`) opens the reply with a disposition-driven stance
+word (aggression→war, loyalty→ally, patience→home). OPTIONAL, additive: add
+a mercantile row `("fertility", 0.65, "trade")` so a high-fertility (growth /
+commerce) colony opens with a trade word — a merchant-nation voice distinct
+from the warlike and loyal ones. It slots into the same first-match-wins
+scan; if omitted, stance falls through to the existing rows unchanged. Keep
+it AFTER the aggression/loyalty rows so a warlike merchant still reads
+warlike.
+
+**DL7d — gating unchanged.** All three additions ride the existing DL3
+breach gate: an un-awakened colony still hears only noise, so the economy
+vocabulary is speakable only to a colony that has escaped. No new state; the
+map/table edits are pure and consume no RNG (DL5 holds).
+
 ## Status / Reconciliation
 - Drafted + implemented 2026-07-09 (same session). Verified: interpret
   maps direct mentions and embeds unnamed words ("friends and comrades"
@@ -85,3 +141,8 @@ endpoint works; keyword fallback works without vectors.
   keyword fallback holds without vectors. 19/19 suites green incl.
   tests/test_dialogue.py (7). The console speak box is now a two-way
   chat showing the colony's reply.
+- 2026-07-11 — DL7 added (economy-arc alignment): `_SYNONYMS` pins for
+  commerce/bondage/enlightenment, `converse` `nudge_map` gains
+  trade/thrall/ascend, optional mercantile `_STANCE` row. Depends on the
+  M15 anchors (`trade`/`thrall`/`ascend`) existing in `ANCHOR_SEEDS`.
+  Spec-first: implementation pending.

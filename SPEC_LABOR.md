@@ -1,9 +1,9 @@
 # SPEC: Labor-Value & the Extractor's Surplus — LV1–LV7
 
 Module **M1** of the inter-colony political-economy arc (governing scope record:
-`intercolony-relations-spectrum`; this spec is the no-dependency FOUNDATION —
-M2 `SPEC_SUBJUGATION` builds on it, M3 `SPEC_WAGES` / M4 `SPEC_BARGAIN` are NOT
-specified here).
+`docs/decisions/2026-07-09-intercolony-relations-spectrum.md`; this spec is the
+no-dependency FOUNDATION — M2 `SPEC_SUBJUGATION` builds on it, M3 `SPEC_WAGES` /
+M4 `SPEC_BARGAIN` are NOT specified here).
 
 **One mechanic.** A unit produces value `V` at a deposit. `w ∈ [0,1]` is the
 share of that value returned to the LABORER'S BIRTH colony; `(1−w)·V` is the
@@ -356,6 +356,30 @@ readout. Surfacing must not alter the RNG stream or any sim state.
   module-level `composite_power(colony)`; `politics.power` is left intact so P7
   coalition behaviour stays default-neutral.
 
+## Events, Vocabulary & Surfacing
+
+Standing contract for how this arc surfaces its own words, drama, and display.
+M1 is the FOUNDATION substrate — it emits no events of its own (default-neutral),
+but it owns the state the rest of the arc dramatises. What M1 contributes:
+
+- **Events emitted:** NONE. M1 is pure accounting — no chronicle string, no
+  salience, no tint. (Force emits capture/conversion drama in SPEC_SUBJUGATION;
+  wages emit contract drama in SPEC_WAGES; the selector emits mode-shift drama in
+  SPEC_BARGAIN.) M1 stays silent so the default battery is byte-identical.
+- **Display fields it should surface (LV5, display-only):** per-unit
+  `laboring_for`, and the derived per-colony `thralls_out` (own units with
+  `laboring_for >= 0`) and `thralls_in` (units anywhere with `laboring_for ==
+  this colony_id`); `composite_power(colony)` for a card readout. No control flow
+  keys off any surfaced value.
+- **Anchor it underpins:** `thrall` (SPEC_HIVE_MONITOR M15) reads exactly M1's
+  `laboring_for` state — a colony's `thrall` anchor is active when it holds
+  thralls (units with `laboring_for == its colony_id`) OR any of its own units is
+  laboring (`laboring_for >= 0`). M1 emits no anchor of its own; it is the
+  substrate the `thrall` word measures.
+- **Lesson it contributes:** none directly. The wage form of this same
+  labor-value split is what the codex `commerce` lesson (SPEC_CODEX CX7) teaches;
+  M1 is the mechanism beneath it.
+
 ## Status / Reconciliation
 
 - **Drafted 2026-07-10.** Spec-first: implementation pending.
@@ -366,3 +390,7 @@ readout. Surfacing must not alter the RNG stream or any sim state.
 - Reuse, not reinvention: generalizes the crop `0.6/0.4` co-op split rather than
   duplicating it; `composite_power` extends `politics.power`'s shape; new state
   follows the `stage`/`breached` getattr-guarded, pickled, inherited convention.
+- 2026-07-11 — Economy-arc alignment: added the "Events, Vocabulary & Surfacing"
+  standing contract (M1 emits no events; surfaces `thralls_out`/`thralls_in` +
+  `composite_power`; underpins the `thrall` anchor of SPEC_HIVE_MONITOR M15) and
+  pinned the governing decision-record cross-reference to its full path.

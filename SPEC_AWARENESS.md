@@ -10,6 +10,14 @@ This re-gates the keeper-directed emotional layer (worship, keeper_sentiment,
 the carved "faces", the wrathful attitude) on `breached`. The psionic turning
 (PS1/PS4) already gates on stage ≥ 2/3, so it is unchanged.
 
+> Cross-ref (inbound): the ONE true breakout `_escape` (the AW4 revelation choke
+> point, terminal mastery) now ALSO triggers the ENLIGHTENMENT ascension — a
+> bounded intelligence leap (raised brain ceiling, faster native-tech + codex
+> climb) appended after `_reveal`. The revelation and the ascension fire from the
+> SAME `_escape` breakout; the ascend string is DISTINCT from the "beyond the
+> glass" revelation line so revelation counts are unaffected. See
+> `SPEC_ENLIGHTENMENT.md` (EN2/EN7).
+
 ## AW1 — Awareness = breached (the true breakout ONLY)
 A colony is AWARE of the keeper iff `getattr(colony, 'breached', False)`. All
 keeper-DIRECTED feeling requires awareness. `breached` is set by the ONE true
@@ -52,7 +60,9 @@ then `_reveal`s. It:
   fed and starved it".
 Cadet branches born already breached (respawn inheritance) inherit
 `keeper_sentiment` and are marked `revelation = True` (born knowing — no second
-revelation event).
+revelation event). (After `_reveal`, the same `_escape` appends the
+ENLIGHTENMENT ascension burst — a purely-additive leap that leaves every AW4
+field above untouched; see `SPEC_ENLIGHTENMENT.md` EN2/EN6/EN7.)
 
 ## AW5 — The gift ladder gates on flourishing, not worship
 The tech-gift ladder (K9) no longer requires `worshipped` (now post-breach
@@ -79,3 +89,7 @@ resolves the worship↔breach circularity.
 ## Status / Reconciliation
 - Drafted 2026-07-10; implemented the same session (Phase 1 of the closed-biome
   arc).
+- 2026-07-11 — Economy-arc alignment: added the inbound cross-ref noting the
+  `_escape` breakout now also triggers the enlightenment ascension (SPEC_ENLIGHTENMENT
+  EN2/EN7), appended after `_reveal` with a distinct string so revelation counts
+  are unaffected. No AW mechanic change.

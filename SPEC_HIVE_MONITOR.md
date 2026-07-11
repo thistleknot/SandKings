@@ -148,6 +148,50 @@ with no ground truth).
   lexicon grows 33 → 35: `fire` (a burning cell within Chebyshev 3),
   `monster` (a beast within Manhattan 6). **Canonical count: 35 seeds**,
   asserted by tests/test_hive_monitor.py.
+- **M14 (awakened anchors, owned by SPEC_KEEPER.md K11)** Already shipped in
+  code but previously uncanonised in this list: the lexicon grew 35 → 39 with
+  the four breach-gated awakened anchors `self` / `god` / `beyond` / `speak`
+  (each true only for a `breached` colony). They form the awakened PRIORITY
+  TUPLE `("self","god","beyond","speak")` that `compose_utterance` renders
+  FIRST — an escaped maw speaks of its awakening before its instincts.
+- **M15 (economy-arc anchors, owned by the labor political-economy M1–M4 +
+  SPEC_ENLIGHTENMENT)** The lexicon grows 39 → 42 with three COLONY-LEVEL
+  relation anchors that make the shipped economy legible and give the codex /
+  dialogue arcs their retrieval hooks. Each follows the existing `_political`
+  colony-fact pattern (a guarded helper read in `build_context`, evaluated in
+  `ground_truths`), NOT a per-unit spatial predicate:
+
+  | Anchor | Ground truth (colony-level, guarded) | Reads |
+  |---|---|---|
+  | `trade` | the colony holds a LIVE wage/trade contract — some `getattr(sim,'wage_contracts',[])` entry (SPEC_WAGES WG1b) is `alive` and names this `colony_id` as `buyer_id` or `seller_id` | M3 |
+  | `thrall` | the colony holds thralls (some unit anywhere has `laboring_for == colony_id`) OR any of its OWN units has `laboring_for >= 0` (forced OR contracted labor) | M1/M2/M3 |
+  | `ascend` | `getattr(colony,'enlightened',False)` (SPEC_ENLIGHTENMENT EN1) | ENL |
+
+  - **build_context measurements (additive, guarded, no RNG):** add three
+    booleans mirroring the P14 political reads — `holds_trade`, `holds_thrall`,
+    `is_enlightened` — each computed by a `_political`-style helper (or an inline
+    guarded scan) so a sim without the economy arc reads all three False and the
+    anchors never fire. Default-neutral: the words exist before the mechanics
+    that light them, exactly like the M14 awakened anchors.
+  - **`ascend` joins the awakened priority tuple.** In `compose_utterance` the
+    awakened set becomes `("self","god","beyond","speak","ascend")`, so an
+    escaped, enlightened maw speaks of its ascension alongside its awakening.
+    `ascend` is only ever true for a `breached` colony (enlightenment fires
+    inside `_escape`), so it never leaks into an un-breached mind.
+  - **Two-file sync + JSON rebuild (mandatory).** `ANCHOR_SEEDS` is DUPLICATED
+    in `hive_mind_monitor.py:31` and `thought_vocabulary.py:37`; the three new
+    seeds MUST be appended IDENTICALLY to both, and `thought_vocabulary.json`
+    regenerated (`python thought_vocabulary.py`, or the curated-fallback path)
+    so each new anchor gets its embedding-derived cluster. Add a per-anchor
+    entry to `thought_vocabulary.py`'s `FALLBACK` table (and, if its GloVe
+    neighborhood is a function-word swamp, `CURATED_OVERRIDE`) so the offline
+    build still yields a sane mild→seed cluster, e.g. `trade`:
+    `["barter","market","commerce","trade"]`; `thrall`:
+    `["bound","captive","slave","thrall"]`; `ascend`:
+    `["awaken","enlighten","transcend","ascend"]`.
+  - **Canonical count: 42 seeds.** `tests/test_hive_monitor.py:43` currently
+    asserts `len(ANCHOR_SEEDS) == 39`; it MUST be updated to `== 42` (the only
+    count-assertion change this clause forces).
 - **Later manager-screen surfaces owned elsewhere:** the D6 colony
   moods line (pride/vengeance/legacy — SPEC_DYNASTIES.md, direct
   colony-level predicates, not probes) and the S5 resonance line
@@ -236,3 +280,11 @@ sandkings.py additions
     underground", roster thoughts like "ALONE HUNTER ... TUNNEL HATRED",
     a death entry carrying final thoughts); persistence round-trip with
     monitors; throughput unchanged.
+- 2026-07-11 — Economy-arc alignment (M15 + the M14 backfill): the lexicon is
+  canonised at **42 seeds** (M14 awakened +4 to 39, already shipped; M15
+  economy `trade`/`thrall`/`ascend` +3 to 42). `ANCHOR_SEEDS` stays mirrored
+  across `hive_mind_monitor.py` and `thought_vocabulary.py`; the JSON is
+  regenerated; `tests/test_hive_monitor.py:43` count assertion moves 39 → 42.
+  These anchors are what make the codex `commerce`/`enlightenment` lessons and
+  the dialogue economy synonyms retrievable (SPEC_CODEX CX7, SPEC_DIALOGUE
+  DL7). Spec-first: implementation pending.

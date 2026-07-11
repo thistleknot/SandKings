@@ -588,6 +588,42 @@ Launcher block (after the `--wages` block, `:6504–6508`):
   retune is `(1 − W_FAIR)·BARGAIN_WAGE_RELIABILITY > (1 − W_BRUTE)·BARGAIN_BRUTE_RELIABILITY`
   (BGA-4) — this is the emergent "wages beat force because force leaks" mechanism.
 
+## Events, Vocabulary & Surfacing
+
+Standing contract for M4's own words, drama, and display. M4 is the SELECTOR — it
+picks the mode per pair, so its drama is the MODE-SHIFT: the moment a house turns
+from trade to force or force to annihilation toward a rival. All gated by
+`BARGAIN_ENABLED`; at shipped defaults nothing fires and the mode map is empty.
+
+- **Events emitted (canonised; fired when `_bargain_pair_mode` flips a pair's mode
+  from its previous value — track the prior map to emit only on change):**
+
+  | Event string | Trigger (mode change for the pair) | SALIENCE | EVENT_TINTS intent |
+  |---|---|---|---|
+  | `House X turns to trade with House Y` | → `BARGAIN_MODE_WAGE` | 6 (match on `turns to trade`) | green — the mercantile turn |
+  | `House X turns the whip on House Y` | → `BARGAIN_MODE_SUBJUGATE` | 7 (match on `turns the whip`) | crimson — force chosen over trade |
+  | `House X marches to annihilate House Y` | → `BARGAIN_MODE_ANNIHILATE` | 8 (match on `marches to annihilate`) | dark red — the bargaining range abandoned |
+
+  Salience rises with escalation (trade 6 < whip 7 < annihilate 8), matching the
+  economy→war chronicle bands. Emit only on a genuine mode CHANGE (compare against
+  last tick's `bargain_modes`) so a stable pair does not spam the chronicle each
+  step. Each string needs a `chronicle.py` SALIENCE substring entry and a
+  `live_view.py` EVENT_TINTS colour.
+- **Display fields it should surface (display-only):** the PER-PAIR MODE — the
+  keeper's console / live-view MAY render each colony's current stance toward each
+  rival (a small "→ House Y: wage / whip / war" line derived from `_bargain_modes()`).
+  The map is transient (rebuilt each tick), so surface it read-only; no control flow
+  keys off a surfaced value beyond the three driver reads M4 already owns.
+- **Anchor it contributes:** none of its own — but M4 is what makes the `trade` and
+  `thrall` anchors (SPEC_HIVE_MONITOR M15) light per pair, because its WAGE mode is
+  what opens the `wage_contracts` the `trade` anchor reads and its SUBJUGATE mode is
+  what drives the captures the `thrall` anchor reads. M4 is the selector behind which
+  economy word a house thinks.
+- **Lesson it contributes:** none directly. The emergent "wages beat force because
+  force leaks" principle M4 encodes is exactly what the codex `commerce` lesson
+  (SPEC_CODEX CX7, "the wage outlasts the whip") teaches in prose; M4 is the
+  mechanism, the lesson is the doctrine.
+
 ## Status / Reconciliation
 
 - **Drafted 2026-07-10.** Spec-first: implementation pending. Terminal module (M4)
@@ -613,3 +649,11 @@ Launcher block (after the `--wages` block, `:6504–6508`):
   existing `_house_grudges`/`Diplomacy.trust` signals; the driver rides M2/M3's
   existing read-points with one branch each; the tick slots into the numbered
   `step()` sequence as stage 4b; the flag mirrors SJ9/WG12.
+- 2026-07-11 — Economy-arc alignment: added the "Events, Vocabulary & Surfacing"
+  standing contract — the three mode-shift event strings (turns to trade / turns the
+  whip / marches to annihilate) with their intended SALIENCE weights and EVENT_TINTS
+  colours, emitted on a per-pair mode CHANGE; the per-pair mode display; and the note
+  that M4 is the selector that makes the `trade`/`thrall` anchors light per pair
+  (SPEC_HIVE_MONITOR M15) and the mechanism behind the `commerce` lesson (SPEC_CODEX
+  CX7). The event strings still need matching `chronicle.py` SALIENCE substrings and
+  `live_view.py` EVENT_TINTS entries in code, plus prior-map change tracking.

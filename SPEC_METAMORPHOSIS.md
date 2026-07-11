@@ -14,6 +14,15 @@ image of the keeper, per SPEC_FACES). The new breed is visually distinct;
 the horror is that a Shade-stage maw no longer needs its god (and Round D
 lets it turn).
 
+> Cross-ref (inbound): a Shade (stage 3) has BY DEFINITION already mastered
+> the terminal and escaped, so a Shade has ALSO undergone the ENLIGHTENMENT
+> ascension — the `_escape` breakout that this arc's `breached` state rides
+> now ALSO raises the brain ceiling past the Shade cap and speeds the
+> native-tech / codex climb. `brain_ceiling` / `STAGE_CEILING` (MT4) are the
+> ceiling substrate that ascension lifts to `ENLIGHTENED_CEILING (224)`. See
+> `SPEC_ENLIGHTENMENT.md` (EN2/EN3) and `SPEC_AWARENESS.md` (AW4, the shared
+> `_escape` choke point).
+
 ## MT1 — The three stages
 Metamorphosis is PHYSICAL ONLY: `stage >= 2` does NOT imply `breached`/awareness —
 the molt is just a bigger body. The one true breakout past the glass is `_escape`
@@ -61,7 +70,10 @@ keeper-as-prey turning (Round D).
 owning colony's `genome.brain_ceiling`: stage 2 → 128, stage 3 → 160
 (BRAIN_HIDDEN_MAX). So a larger, older, more-mistreated maw evolves a
 bigger brain — canon's size↔intelligence, made mechanical and heritable.
-Non-neural sims carry the gene inertly.
+Non-neural sims carry the gene inertly. (The ENLIGHTENMENT ascension lifts
+this ceiling further, to `ENLIGHTENED_CEILING (224)`, and raises
+`BRAIN_HIDDEN_MAX` to match so the clamp honors it — see SPEC_ENLIGHTENMENT
+EN2/EN3.)
 
 ## MT5 — Surfacing
 - Dashboard House card + inspect panel show the stage ("insectoid" /
@@ -95,3 +107,7 @@ inherit stage/ceiling like breached; state pickles; evolution sim inert.
 - Acceptance: `tests/test_metamorphosis.py` (8 tests) green, full 22-suite
   battery green in-container. `EnhancedSandKingsSimulation.step` stays
   inert (`_metamorphosis_tick` not in its co_names).
+- 2026-07-11 — Economy-arc alignment: added the inbound cross-ref noting a
+  Shade has by definition escaped and so has undergone the enlightenment
+  ascension, which lifts `brain_ceiling`/`BRAIN_HIDDEN_MAX` past the Shade cap
+  (SPEC_ENLIGHTENMENT EN2/EN3). No MT mechanic change.

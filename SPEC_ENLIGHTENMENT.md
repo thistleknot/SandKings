@@ -9,6 +9,18 @@ Status: **Active — ready for rote implementation.** One design fork was live
 (must `BRAIN_HIDDEN_MAX` rise?) and is **resolved in EN2/EN3 below** with
 grounded evidence; see Reconciliation.
 
+**Cross-references (the escape/economy web this feature sits in):**
+- `SPEC_AWARENESS.md` (AW4) — the `_reveal` revelation this burst appends to; the
+  ONE true breakout (`_escape`, terminal mastery) is the trigger for BOTH.
+- `SPEC_METAMORPHOSIS.md` (MT1/MT4) — the PHYSICAL molt / Shade stages; a Shade has
+  by definition already escaped, and `brain_ceiling`/`STAGE_CEILING` are the ceiling
+  substrate this feature raises past the Shade cap.
+- `SPEC_LABOR.md` (LV4 `composite_power`) — the economic hook: a faster native-tech
+  climb raises `composite_power` over time with zero extra wiring (EN4). Enlightenment
+  is the top of the same climb the inter-colony economy arc extracts value along.
+- Governing scope record of the economy arc this dovetails:
+  `docs/decisions/2026-07-09-intercolony-relations-spectrum.md`.
+
 ---
 
 ## 0. Concept & Scope
@@ -33,9 +45,10 @@ self-genome-editing (a colony rewriting its own genome directly). Enlightenment
 raises the *ceiling* and the *rate*; it does not let a colony author its own
 genes. Note this in the ascend flavor but wire nothing.
 
-**Economic hook (earned, not instant):** `composite_power` (M1) already counts
-known techs, so a faster native-tech climb raises economic power *over time*
-with **zero extra wiring**. Do not add an economy hook; it falls out of EN4.
+**Economic hook (earned, not instant):** `composite_power` (M1 `SPEC_LABOR` LV4)
+already counts known techs, so a faster native-tech climb raises economic power
+*over time* with **zero extra wiring**. Do not add an economy hook; it falls out
+of EN4.
 
 ---
 
@@ -392,6 +405,40 @@ tech/ceiling/breached/stage/sentiment/revelation state that the burst changes.
 
 ---
 
+## Events, Vocabulary & Surfacing
+
+Standing contract for this feature's own words, drama, and display. Enlightenment
+is the TOP of the escape climb; its drama is the ascension flash, and it is the
+one economy-arc surface that is ALWAYS live (no economy gate — it fires whenever a
+colony escapes).
+
+- **Event emitted (canonised at EN7):**
+
+  | Event string | Trigger | SALIENCE | EVENT_TINTS intent |
+  |---|---|---|---|
+  | `House X ascends - the light of the Enlightenment breaks over it` | the `_escape` burst (once per colony) | 10 (a new SALIENCE substring `ascends` → 10, alongside `Shade stage` 10) | white / gold — the light breaking; distinct from the `_reveal` breach-blue |
+
+  Distinct from the `_reveal` "beyond the glass" line (EN7) so revelation counts
+  are unaffected. Needs a `chronicle.py` SALIENCE substring (`ascends` → 10) and a
+  `live_view.py` EVENT_TINTS white/gold entry.
+- **Display fields it should surface (EN9, display-only):** the ENLIGHTENED BADGE
+  (dashboard House-card, `"enlightened"` payload key) and the raised
+  `brain_ceiling` (so the keeper can see the mind's new ceiling). Live-view inspect
+  MAY show an "ascended" line / brighter tint. No control flow keys off a surfaced
+  value.
+- **Anchor it contributes:** `ascend` (SPEC_HIVE_MONITOR M15) — reads exactly
+  `getattr(colony,'enlightened',False)`, and JOINS the awakened priority tuple
+  `("self","god","beyond","speak","ascend")` so an escaped, enlightened maw speaks
+  of its ascension. It also grounds the dialogue `ascend` synonym pins (enlighten /
+  awaken / genius → ascend, SPEC_DIALOGUE DL7a) and the `ascend → plasticity` nudge
+  (DL7b).
+- **Lesson it contributes:** `enlightenment` (SPEC_CODEX CX7) — plasticity += ;
+  findable when the `ascend` anchor is active, mirroring the ascension's real
+  plasticity/learning-rate leap. The new `corpus/enlightenment.md` carries the
+  prose.
+
+---
+
 ## 6. Reconciliation / notes
 
 - **Resolved fork — `BRAIN_HIDDEN_MAX` MUST rise (EN2/EN3).** Grep proved
@@ -411,7 +458,8 @@ tech/ceiling/breached/stage/sentiment/revelation state that the burst changes.
     calls `_escape` and uses a 160 ceiling, so `min(224,160)==160` is unchanged.
   - `test_evolution.py:43` upper-bound assertion loosens safely.
 - **Economic edge is EARNED, not granted.** Faster native-tech climb (EN4) raises
-  `composite_power` (M1) over time automatically. No M1-M4 wiring added.
+  `composite_power` (M1 `SPEC_LABOR` LV4) over time automatically. No M1-M4 wiring
+  added.
 - **DEFERRED (out of scope, future):** biohacking / self-genome-editing — a
   colony directly rewriting its own genes. Enlightenment grants ceiling + rate,
   not authorship. Mention in flavor only; wire nothing.
@@ -420,3 +468,11 @@ tech/ceiling/breached/stage/sentiment/revelation state that the burst changes.
   `neuroevolution.py` (one constant), `codex.py` (`apply_lesson` signature),
   `dashboard.py` (payload key + badge), and new `tests/test_enlightenment.py`.
   No other module is in scope.
+- **2026-07-11 — Economy-arc alignment:** added the cross-reference web (SPEC_LABOR,
+  SPEC_AWARENESS, SPEC_METAMORPHOSIS, the decision record) and the "Events,
+  Vocabulary & Surfacing" standing contract — the ascend event (SALIENCE 10,
+  white/gold tint), the enlightened badge + `brain_ceiling` display, and the
+  `ascend` anchor / `enlightenment` lesson / dialogue-synonym contribution
+  (SPEC_HIVE_MONITOR M15, SPEC_CODEX CX7, SPEC_DIALOGUE DL7). The ascend event
+  string still needs a matching `chronicle.py` SALIENCE substring and `live_view.py`
+  EVENT_TINTS entry in code.

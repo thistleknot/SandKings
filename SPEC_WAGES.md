@@ -742,6 +742,41 @@ computation and leaked orphaned bound units on a liquidity skip. (2) WG9
 (ore:* → 'ore') before `_factor_price`, matching WG4's mapping (it previously passed
 the raw sink name and raised KeyError once goods contracts could open).
 
+## Events, Vocabulary & Surfacing
+
+Standing contract for M3's own words, drama, and display. This is the PEACE / WAGE
+tier — the mercantile face of the arc, where the terrarium reads like a
+comparative-advantage market. All gated by `WAGE_ENABLED` (and per pair by
+SPEC_BARGAIN); at shipped defaults nothing fires and surfacing is inert.
+
+- **Events emitted (canonised; the string already exists at WG4):**
+
+  | Event string | Trigger | SALIENCE | EVENT_TINTS intent |
+  |---|---|---|---|
+  | `House X contracts {kind} to House Y` | WG4 opens a labor / license / goods contract | 5 (match on `contracts`) | green — a trade struck, the mercantile-peace colour |
+
+  Salience 5 sits with the existing economy band (`mints` 5, `tribute` 5, `gift` 5)
+  — a routine market event, not a war headline. `{kind}` renders `labor` / `license`
+  / `goods` so the chronicle reads which factor traded. The string needs a
+  `chronicle.py` SALIENCE substring entry (`contracts` → 5) and a `live_view.py`
+  EVENT_TINTS green entry.
+- **Display fields it should surface (WG12, display-only):** the LIVE CONTRACT BOOK
+  — per-colony `contracts_out` / `contracts_in` counts and `grains` (`currency`),
+  and ideally the open contracts themselves (kind, partner house, `w`, `fee`) so the
+  keeper can read the market. The dashboard card / live-view inspect panel MAY render
+  a contract line ("hires 4 from House Y @ w=0.42" / "licenses calculator to House
+  Z"); no control flow keys off any surfaced value.
+- **Anchor it contributes:** `trade` (SPEC_HIVE_MONITOR M15) — a colony's `trade`
+  anchor is active when it holds a live `wage_contracts` entry as buyer or seller, so
+  a trading house thinks/speaks in the `trade` vocabulary. It also grounds the
+  dialogue `trade` synonym pins (commerce / market / hire / wage / barter / bargain /
+  sell / buy → trade, SPEC_DIALOGUE DL7a), the `trade → fertility/loyalty` nudge
+  (DL7b), and the optional mercantile `_STANCE` row (DL7c).
+- **Lesson it contributes:** `commerce` (SPEC_CODEX CX7) — the market's own doctrine
+  (loyalty += fertility += ; "the wage outlasts the whip"), findable when the `trade`
+  anchor is active. M3 is the mechanism the `commerce` lesson teaches houses to
+  prefer over the M2 whip.
+
 ## Status / Reconciliation
 
 - **Drafted 2026-07-10; implemented + playtest-hardened same day.** Kept as ONE file (the
@@ -764,3 +799,9 @@ the raw sink name and raised KeyError once goods contracts could open).
   slots into the existing numbered `step()` sequence at 5c; settlement reuses the
   `currency`/`_house_grains` ledger; the war predicate reads the existing
   `Diplomacy.war_target`.
+- 2026-07-11 — Economy-arc alignment: added the "Events, Vocabulary & Surfacing"
+  standing contract — the `contracts {kind}` event (SALIENCE 5, green tint), the live
+  contract-book display fields (`contracts_out`/`contracts_in` + grains), and the
+  `trade` anchor / `commerce` lesson / dialogue-synonym contribution
+  (SPEC_HIVE_MONITOR M15, SPEC_CODEX CX7, SPEC_DIALOGUE DL7). The event still needs a
+  matching `chronicle.py` SALIENCE substring and `live_view.py` EVENT_TINTS entry.

@@ -10,6 +10,15 @@ proportion to how ACCURATE its forecasts prove - a colony that models
 its world well produces valuable predictions, and the accumulated
 "grains" are the terrarium's useful economic output the human harvests.
 
+> Cross-ref (inbound): grains are the MEDIUM of the inter-colony economy —
+> the wage market settles labor/license/goods contracts by transferring these
+> grains (never minting), and a colony's grain balance is a liquidity
+> constraint on hiring. `_score_forecasts` (CU2/CU3) stays the ONLY mint; the
+> economy only moves grains around. See `SPEC_WAGES.md` (WG8 settlement,
+> WG13 liquidity floor) and `SPEC_BARGAIN.md` (mode selection). Grains also
+> feed native-tech research as the first SINK (`SPEC_TECH.md` TE9) and weigh
+> into `composite_power` (`SPEC_LABOR.md` LV4).
+
 ## CU1 — The ledger
 Per-colony `colony.currency` (float, grains earned in this maw's life)
 and a sim-level `sim.grains_minted` (the running total produced for the
@@ -62,3 +71,8 @@ the dashboard exposes grains; evolution sim inert.
   green incl. tests/test_currency.py (6). Note: the currency is a SCORE
   of useful predictive work (Bittensor-style), not spendable in-sim yet;
   a sink (buy gifts/augments with grains) is a natural next step.
+- 2026-07-11 — Economy-arc alignment: added the inbound cross-ref noting
+  grains are the medium the wage/bargain economy transfers (SPEC_WAGES/
+  BARGAIN), the tech-research sink (SPEC_TECH TE9), and a `composite_power`
+  term (SPEC_LABOR LV4). No mechanic change: `_score_forecasts` stays the
+  only mint.
