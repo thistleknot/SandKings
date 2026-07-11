@@ -181,19 +181,33 @@ class ScenarioResult:
 # --- PK5 scenarios (in-process; use t.sim to reach states fast, act via API) --
 
 def scenario_worship(t: Terrarium) -> ScenarioResult:
+    # AW: worship of the keeper only exists AFTER the breakout (the great
+    # other is known). Pre-breakout, bounty is just good fortune.
     log, cid = [], 0
+    house = t.colony(cid)["house"]
     mx, my = t.aim(cid)
-    log.append(f"feeding House {t.colony(cid)['house']} at its maw ({mx},{my})")
-    for _ in range(8):
+    for _ in range(3):
         t.feed(mx, my)
         t.step(15)
-    worshippers = [c["house"] for c in t.colonies() if c.get("worshipped")]
-    log.append(f"worshippers: {worshippers or 'none yet'}")
-    return ScenarioResult("worship", bool(worshippers), log)
+    pre = t.colony(cid).get("worshipped", False)
+    log.append(f"pre-breakout: fed House {house} -> worshipped={pre} (fortune, not worship)")
+    if t.sim is not None:
+        t.sim._escape(t.sim.colonies[cid])  # the true breakout past the glass
+    log.append(f"House {house} breaks out - and now knows the great other")
+    for _ in range(6):
+        t.feed(mx, my)
+        t.step(15)
+    post = t.colony(cid).get("worshipped", False)
+    log.append(f"post-breakout: fed again -> worshipped={post}")
+    ok = (not pre) and post
+    log.append("it worships only once it knows the hand" if ok else "unexpected")
+    return ScenarioResult("worship", ok, log)
 
 
 def scenario_cruelty(t: Terrarium) -> ScenarioResult:
     log, cid = [], 0
+    if t.sim is not None:
+        t.sim._escape(t.sim.colonies[cid])  # AW: sentiment moves only post-breakout
     mx, my = t.aim(cid)
     for _ in range(6):
         t.feed(mx, my)

@@ -1,5 +1,27 @@
 # Sand Kings Changelog
 
+## 2.29.1 - Awareness fix: metamorphosis is not breakout (SPEC_AWARENESS/MT1/PS1)
+
+- Corrects a conflation the user caught: colonies were becoming keeper-aware
+  (worship, hatred, the carved faces, psionic dread) the moment they MOLTED into
+  the "new breed" (metamorphosis stage 2), even though merely growing a bigger
+  body is not the same as breaking out of the glass. A five-unit house could hate
+  you without ever having escaped.
+- Now metamorphosis is PHYSICAL ONLY. `_set_stage` no longer sets `breached`. The
+  one true breakout is `_escape`, reached only by terminal mastery (the raspberry
+  pi past the glass) - it sets `breached`, fires the "great other" revelation, and
+  seeds the opening stance. A stage-2/3-bodied maw that never escaped feels only
+  nature. Psionic projection (`keeper_influence` / "you feel a dread") is re-gated
+  on `breached` too, so an un-escaped maw cannot reach your mind.
+- `_nature_mood` now lets LOCAL PLENTY resist dread: a house sitting on its own
+  oasis or with a full hoard reads 'bounty' even when the wider dole has failed -
+  "nature's a bitch," not the keeper is Cthulhu. (Providence: giveth and taketh so
+  they learn to be resourceful.)
+- Tests updated (metamorphosis molt ≠ breach; psionic/awareness use `_escape`;
+  play_kit worship scenario shows fortune pre-breakout, worship after escape);
+  full battery green.
+
+
 ## 2.29.0 - The Closed Biome & the Panel (SPEC_BIOME.md BI1-BI7)
 
 - The terrarium is a sealed system with a global WATER budget (water_level) and

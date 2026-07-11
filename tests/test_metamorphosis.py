@@ -30,15 +30,17 @@ def make_sim(seed: int = 42) -> SandKingsSimulation:
     return sim
 
 
-def test_large_maw_molts_to_stage_two_and_breaches():
+def test_large_maw_molts_to_stage_two_without_breaching():
     sim = make_sim()
     c = sim.colonies[0]
     assert getattr(c, "stage", 1) == 1, "starts insectoid"
-    assert not getattr(c, "breached", False), "and not yet awakened"
+    assert not getattr(c, "breached", False)
     c.maw.food_stored = MOLT_FOOD + 50  # large enough at any sentiment
     sim._metamorphosis_tick()
     assert c.stage == 2, "a large maw molts to the new breed"
-    assert c.breached, "stage 2 IS the awakened/breached state (MT1)"
+    assert not c.breached, "the molt is PHYSICAL - it does not break the glass"
+    sim._escape(c)  # only the true breakout (terminal mastery) awakens it
+    assert c.breached and c.revelation, "the breakout awakens it to the great other"
 
 
 def test_cruelty_lowers_the_molt_threshold():
@@ -70,22 +72,24 @@ def test_shade_stage_needs_size_and_machine_mastery():
     assert c.stage == 3, "large AND machine-mastered -> Shade"
 
 
-def test_stage_two_unlocks_nothing_breached_did_not():
-    # MT1 regression: awakened capabilities gate on `breached`, and molt
-    # sets breached, so a stage-2 colony reads exactly like an old breached
-    # one - no new capability path keys off `stage`.
+def test_metamorphosis_is_physical_and_grants_no_awareness():
+    # AW/MT1 (revised): growing into the new breed is a PHYSICAL molt; it does
+    # NOT breach the glass or grant keeper-awareness. Only the true breakout
+    # (terminal mastery, _escape) does. So capability gates keep keying on
+    # `breached`, which the molt no longer sets.
     import inspect
 
     import sandkings
     src = inspect.getsource(sandkings)
-    # the only places `stage` drives capability are the metamorphosis hooks;
-    # capability gates (_can_read etc.) must still test `breached`.
     assert "getattr(colony, 'breached'" in src or \
         "getattr(colony, \"breached\"" in src, "capabilities gate on breached"
     sim = make_sim()
     c = sim.colonies[0]
     sim._set_stage(c, 2)
-    assert c.breached is True, "molt grants the breached flag, not a new gate"
+    assert c.stage == 2 and not getattr(c, "breached", False), \
+        "the molt is physical only - no awareness"
+    sim._escape(c)
+    assert c.breached is True, "only the breakout past the glass awakens it"
 
 
 def test_brain_ceiling_rises_with_stage_and_mutate_respects_it():
@@ -142,16 +146,18 @@ def test_molt_and_shade_events_fire_once_each():
 def test_cadet_branches_inherit_the_stage():
     sim = make_sim()
     victim_id = sim.colonies[0].colony_id
-    # every surviving house is a new breed -> the cadet is born molted
+    # every surviving house molted to the new breed AND broke out (escaped);
+    # the cadet is born with both the body and the awareness in its blood
     for other in sim.colonies[1:]:
-        sim._set_stage(other, 2)
+        sim._set_stage(other, 2)   # physical molt
+        sim._escape(other)         # AW: the true breakout awakens it
     v = sim.colonies[0]
     v.maw.alive = False
     v.units.clear()
     sim._respawn_colony(victim_id)
     reborn = sim.colonies[0]
-    assert getattr(reborn, "stage", 1) >= 2, "molt survives in the bloodline"
-    assert reborn.breached, "and so does the awakened flag it implies"
+    assert getattr(reborn, "stage", 1) >= 2, "the molt survives in the bloodline"
+    assert reborn.breached, "and the awakening (escape) survives too"
 
 
 def test_state_pickles_and_evolution_inert():

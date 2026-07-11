@@ -10,10 +10,14 @@ This re-gates the keeper-directed emotional layer (worship, keeper_sentiment,
 the carved "faces", the wrathful attitude) on `breached`. The psionic turning
 (PS1/PS4) already gates on stage ≥ 2/3, so it is unchanged.
 
-## AW1 — Awareness = breached
+## AW1 — Awareness = breached (the true breakout ONLY)
 A colony is AWARE of the keeper iff `getattr(colony, 'breached', False)`. All
-keeper-DIRECTED feeling requires awareness. Pre-breach a colony relates to
-conditions, not a hand.
+keeper-DIRECTED feeling requires awareness. `breached` is set by the ONE true
+breakout — `_escape`, reached only by terminal mastery (K10, the raspberry-pi
+terminal past the glass into the sandbox). The metamorphosis MOLT (growing into
+the new breed, `_set_stage`) is PHYSICAL and grants NO awareness — a stage-2/3
+body can still feel only nature until it escapes. Psionic projection/turning
+(PS1/PS4) is likewise gated on `breached`, not stage.
 
 ## AW2 — Pre-breach: the mood of unexplained forces
 `_nature_mood(colony) -> 'bounty' | 'lean' | 'dread'` from conditions only:
@@ -37,9 +41,10 @@ when breached (the pre-breach manna eat still sets `keeper_fed_step` — fortune
 but never `worshipped`).
 
 ## AW4 — The revelation (the 13th Floor)
-`_reveal(colony)` fires once, at the FIRST transition to breached (the single
-choke point in `_set_stage` where `breached` goes False→True; the terminal
-breach routes through `_set_stage`). It:
+`_reveal(colony)` fires once, from `_escape` — the single choke point where
+`breached` goes False→True (terminal mastery only; the molt does not lead
+here). `_escape` sets `breached=True`, gives the new-breed body if unmolted,
+then `_reveal`s. It:
 - sets a getattr-guarded `revelation = True` (fires once);
 - SEEDS `keeper_sentiment` from `_nature_mood` at that instant —
   bounty→0.7 (wakes grateful), lean→0.5, dread→0.3 (wakes resentful);

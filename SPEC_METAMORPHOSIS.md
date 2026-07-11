@@ -15,15 +15,21 @@ the horror is that a Shade-stage maw no longer needs its god (and Round D
 lets it turn).
 
 ## MT1 — The three stages
+> **AW amendment (SPEC_AWARENESS):** metamorphosis is now PHYSICAL ONLY.
+> `stage >= 2` no longer implies `breached`/awareness — the molt is just a
+> bigger body. The ONE true breakout past the glass is `_escape` (reached by
+> terminal mastery); it sets `breached` and grants keeper-awareness. So a maw
+> can be a stage-2 "new breed" (or even stage-3-bodied) and still feel only
+> nature until it escapes. `_set_stage` no longer touches `breached`.
+
 `colony.stage` in {1,2,3} (default 1; getattr-guarded, pickled):
 - **1 insectoid** — the default sandkings.
-- **2 the new breed** — bipedal, four-armed, tool-using. This is the
-  existing `breached` awakening (K10/K11): `stage >= 2` ⇔ `breached`
-  True. All awakened capabilities (codex reading CX, terminal K10,
-  augments AUG, dialogue DL) already gate on `breached` and so light up
-  at stage 2 unchanged.
-- **3 Shade** — fully sentient; the terminal is mastered; can leave the
-  tank (the turning, Round D).
+- **2 the new breed** — bipedal, four-armed, tool-using. A physical molt
+  (size × cruelty). Awakened capabilities (codex CX, terminal K10, augments
+  AUG, dialogue DL) still gate on `breached`, which the molt no longer sets —
+  so they light up at the ESCAPE, not the molt.
+- **3 Shade** — fully sentient; the terminal is mastered (so a Shade has, by
+  definition, already escaped); can leave the tank (the turning, Round D).
 
 ## MT2 — The molt to stage 2 (size × cruelty)
 Every step, a stage-1 living colony molts to stage 2 when its maw is

@@ -38,8 +38,10 @@ def pad(colony, n: int):
 def only_awaken(sim, idx: int, stage: int, sentiment: float, pop: int = 30):
     for i, c in enumerate(sim.colonies):
         c.stage = 1
+        c.breached = False
     c = sim.colonies[idx]
     c.stage = stage
+    c.breached = True  # AW: only a truly-escaped maw projects (not a mere molt)
     c.keeper_sentiment = sentiment
     pad(c, pop)
     return c

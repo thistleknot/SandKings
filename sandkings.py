@@ -2028,18 +2028,25 @@ class SandKingsSimulation:
 
     def _nature_mood(self, colony: Colony) -> str:
         """AW2: a pre-breach colony's read of unexplained FORCES, not a keeper.
-        bounty (fed/full) | lean | dread (drought, want, or harsh weather)."""
+        bounty (fed/full/spring-fed) | lean | dread. Local plenty resists
+        dread - a house on its own oasis with a full hoard does not despair
+        just because the wider dole failed (providence favours the resourceful)."""
         step = self.step_count
-        starving = colony.maw.food_stored < 2 * BOOTSTRAP_FLOOR
-        harsh = self._is_dry() or starving or any(
-            getattr(self, a, 0) > step for a in (
-                'cold_until', 'arena_cold_until', 'arena_heat_until',
-                'flood_until', 'hail_until', 'storm_until'))
-        if harsh:
+        food = colony.maw.food_stored
+        mx, my, _ = colony.maw.position
+        # LOCAL plenty: a full hoard, or sitting on the oasis (its own spring)
+        provided = food > 4 * BOOTSTRAP_FLOOR or self.in_oasis(mx, my)
+        # acute violence of nature is always dread, even for the rich
+        acute = any(getattr(self, a, 0) > step for a in (
+            'cold_until', 'arena_cold_until', 'arena_heat_until',
+            'flood_until', 'hail_until', 'storm_until'))
+        starving = food < 2 * BOOTSTRAP_FLOOR
+        if acute or starving:
             return 'dread'
-        if (self.keeper_attitude(colony) == 'reverent'
-                or colony.maw.food_stored > 4 * BOOTSTRAP_FLOOR):
-            return 'bounty'
+        if provided or self.keeper_attitude(colony) == 'reverent':
+            return 'bounty'  # it has its own; the dry wider world is not dread
+        if self._is_dry():
+            return 'dread'  # no reserves AND the rains have failed
         return 'lean'
 
     def _reveal(self, colony: Colony):
@@ -2409,14 +2416,23 @@ class SandKingsSimulation:
         """MT4: promote a colony's metamorphosis stage and raise its brain
         ceiling accordingly (size -> intelligence)."""
         colony.stage = stage
-        if stage >= 2 and not getattr(colony, 'breached', False):
-            colony.breached = True  # stage 2+ is the awakened state (K10)
-            self._reveal(colony)    # AW4: the 13th-Floor moment
-        elif stage >= 2:
-            colony.breached = True
+        # AW/MT: metamorphosis is PHYSICAL only - growing into the new breed no
+        # longer grants awareness of the keeper. Only the true breakout past the
+        # glass (_escape, reached by terminal mastery) meets the "great other".
         ceiling = STAGE_CEILING.get(stage, 88)
         if getattr(colony.genome, 'brain_ceiling', 88) < ceiling:
             colony.genome.brain_ceiling = ceiling
+
+    def _escape(self, colony: Colony):
+        """AW/K10: the ONE true breakout - past the glass into the sandbox,
+        where the maw meets the 'great other'. Reached only by terminal mastery
+        (metamorphosis does NOT lead here). Grants keeper-awareness and gives
+        the new-breed body if it hasn't molted yet. Fires once."""
+        if getattr(colony, 'breached', False):
+            return
+        colony.breached = True
+        self._set_stage(colony, max(2, getattr(colony, 'stage', 1)))
+        self._reveal(colony)  # AW4: it now knows the hand that fed and starved it
 
     def _metamorphosis_tick(self):
         """MT2/MT3: molt to the new breed (stage 2) once the maw is large
@@ -2457,8 +2473,10 @@ class SandKingsSimulation:
             if not colony.is_alive():
                 continue
             stage = getattr(colony, 'stage', 1)
-            if stage < PSIONIC_MIN_STAGE:
-                continue  # only the awakened reach back (PS1)
+            # AW: only a maw that has truly BROKEN OUT (met the great other) can
+            # reach the keeper's mind - a merely-molted new breed cannot project
+            if not getattr(colony, 'breached', False):
+                continue  # (PS1, re-gated on the real breakout, not the molt)
             weight = STAGE_PROJECTION.get(stage, 0.0)
             size = min(1.0, len(colony.units) / PSIONIC_SIZE_REF)
             sentiment = getattr(colony, 'keeper_sentiment', 0.5)
@@ -2656,7 +2674,7 @@ class SandKingsSimulation:
         colony.terminal_uses = getattr(colony, 'terminal_uses', 0) + 1
         if (colony.terminal_uses == TERMINAL_MASTERY
                 and not getattr(colony, 'breached', False)):
-            self._set_stage(colony, max(2, getattr(colony, 'stage', 1)))  # MT1
+            self._escape(colony)  # AW/K10: the true breakout past the glass
             self._log_event(f"The glass is no longer a wall to House"
                             f" {self._house_name(colony)}")
 

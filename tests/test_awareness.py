@@ -74,17 +74,18 @@ def test_revelation_fires_once_and_seeds_from_treatment():
     sim = make_sim()
     good = sim.colonies[0]
     good.maw.food_stored = 4 * BOOTSTRAP_FLOOR + 60  # bounty at breakout
-    sim._set_stage(good, 2)
+    sim._escape(good)  # the TRUE breakout (terminal mastery), not the molt
     assert good.breached and good.revelation
     assert good.keeper_sentiment == 0.7, "well-treated wakes grateful"
     reveals = [m for _, m in sim.events if "beyond the glass" in m]
     assert len(reveals) == 1, "the revelation fires once"
-    sim._set_stage(good, 3)  # a further promotion must not re-reveal
+    sim._escape(good)  # a second call must not re-reveal
+    sim._set_stage(good, 3)  # nor does a further molt
     assert len([m for _, m in sim.events if "beyond the glass" in m]) == 1
 
     bad = sim.colonies[1]
     bad.maw.food_stored = BOOTSTRAP_FLOOR  # starving -> dread at breakout
-    sim._set_stage(bad, 2)
+    sim._escape(bad)
     assert bad.keeper_sentiment == 0.3, "mistreated wakes resentful"
 
 
@@ -131,6 +132,36 @@ def test_post_breach_faces_still_work():
     sim.step_count = 200
     sim._keeper_tick()
     assert CARVE_SYMBOLS["hateful"] in sim._carvings().values()
+
+
+def test_molted_new_breed_is_still_nature_only():
+    # AW: growing into the new breed (a physical molt) does NOT make a colony
+    # aware of the keeper. Until it truly breaks out it carves nature, cannot
+    # worship, and cannot project onto the keeper.
+    from sandkings import CARVE_SYMBOLS, NATURE_SYMBOLS
+    sim = make_sim()
+    c = sim.colonies[0]
+    sim._set_stage(c, 2)
+    assert c.stage == 2 and not c.breached
+    sim.keeper_drought(True)
+    c.maw.food_stored = 5  # starving -> nature dread, not keeper hatred
+    sim.step_count = 200
+    sim._keeper_tick()
+    carv = sim._carvings()
+    assert any(v in set(NATURE_SYMBOLS.values()) for v in carv.values())
+    assert not any(v in set(CARVE_SYMBOLS.values()) for v in carv.values())
+    assert not c.worshipped, "a molted-but-unescaped maw does not worship"
+    sim._psionic_tick()
+    assert sim.keeper_influence == 0.0, "and it cannot reach the keeper's mind"
+
+
+def test_local_plenty_resists_dread():
+    sim = make_sim()
+    c = sim.colonies[0]
+    sim.keeper_drought(True)  # the wider dole has failed
+    c.maw.food_stored = 10 * BOOTSTRAP_FLOOR  # but its own hoard is full
+    assert sim._nature_mood(c) == "bounty", \
+        "a house with its own reserves does not despair at the dry world"
 
 
 def test_state_pickles_and_evolution_inert():

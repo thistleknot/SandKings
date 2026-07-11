@@ -14,11 +14,16 @@ This is the canonical form of the "breach beyond the glass" the keeper set
 in motion — not the sandkings escaping, but the keeper being caught.
 
 ## PS1 — The psionic field (`sim.keeper_influence`)
+> **AW amendment (SPEC_AWARENESS):** projection is gated on `breached` (the
+> true breakout), NOT on stage. A merely-molted new breed that never escaped
+> cannot reach the keeper's mind — only a maw that has met the "great other"
+> projects. The `STAGE_PROJECTION` weight (2→0.5, 3→1.0) still scales an
+> ESCAPED maw's reach by its stage.
+
 A signed scalar in [-1, 1] (getattr-guarded default 0.0, pickled),
 recomputed every step by `_psionic_tick` as the net emotion the AWAKENED
-maws project onto the human. Only stage-2+ colonies (the new breed and
-Shade) project; stage-1 insectoids reach nothing. Each awakened living
-colony contributes:
+(breached/escaped) maws project onto the human. Un-escaped colonies (however
+large) reach nothing. Each escaped living colony contributes:
 `stage_weight · size · valence`, where
 - `stage_weight = STAGE_PROJECTION[stage]` (stage 2 → 0.5, stage 3 → 1.0):
   the larger, more-metamorphosed maw reaches harder (canon's
