@@ -61,12 +61,12 @@ GUNPOWDER_ATTACK = 6         # firearm punch added to a gunpowder soldier at spa
 
 # T2d materials -> crafting (SPEC_TECH TE13): the kid drops raw materials; a house
 # with the enabling tech reshapes them into tools/weapons. Otherwise inert scrap.
-MATERIALS = ('toothpick', 'string', 'lego_log', 'copper_pipe', 'tacks')
+MATERIALS = ('toothpick', 'string', 'lincoln_log', 'copper_pipe', 'tacks')
 CRAFT_RECIPES = {          # (material, required tech) -> crafted item
     ('toothpick', 'metallurgy'): 'spear',
     ('toothpick', 'fire'):       'firespike',
     ('string', 'metallurgy'):    'bow',
-    ('lego_log', 'masonry'):     'bastion',
+    ('lincoln_log', 'masonry'):  'bastion',
     ('copper_pipe', 'metallurgy'): 'cannon',
 }
 CRAFTED_EFFECTS = {        # crafted item -> per-soldier spawn effect / tech grant

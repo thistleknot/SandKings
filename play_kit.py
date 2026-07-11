@@ -312,7 +312,7 @@ def dispatch(t: Terrarium, line: str) -> str:
         t.ignite()
     elif cmd == "flies":
         t.release("fly")
-    elif cmd in ("toothpick", "string", "lego_log", "copper_pipe", "tacks"):
+    elif cmd in ("toothpick", "string", "lincoln_log", "copper_pipe", "tacks"):
         t.material(cmd)
     elif cmd in ("rain", "water"):
         t.water(big=False)

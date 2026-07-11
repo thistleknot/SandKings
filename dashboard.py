@@ -647,7 +647,7 @@ button.act.breach{border-color:var(--breach);color:var(--breach)}
   <div class="grp"><span class="lab">Materials</span>
     <button class="act" onclick="mat('toothpick')">Toothpick</button>
     <button class="act" onclick="mat('string')">String</button>
-    <button class="act" onclick="mat('lego_log')">Lego Log</button>
+    <button class="act" onclick="mat('lincoln_log')">Lincoln Log</button>
     <button class="act" onclick="mat('copper_pipe')">Copper Pipe</button>
     <button class="act" onclick="mat('tacks')">Tacks</button></div>
   <div class="grp"><span class="lab">Wrath</span>

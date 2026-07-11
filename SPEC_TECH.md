@@ -121,7 +121,7 @@ gunpowder — it emerges from fire + metal).
 with the enabling native tech reshapes them (`_claim_material`), else inert scrap.
 `CRAFT_RECIPES` maps `(material, tech) → item`: toothpick+metallurgy → `spear`
 (+attack); toothpick+fire → `firespike` (+defense); string+metallurgy → `bow`
-(+attack); lego_log+masonry → `bastion` (+defense); copper_pipe+metallurgy →
+(+attack); lincoln_log+masonry → `bastion` (+defense); copper_pipe+metallurgy →
 `cannon` (which UNLOCKS the `catapult` siege tech — a shortcut past research).
 Crafted items (`colony.crafted`) buff the house's SOLDIERS at spawn via
 `CRAFTED_EFFECTS`. **Tacks are NOT crafted** — `keeper_material('tacks')` scatters
