@@ -78,12 +78,17 @@ and the mechanics in isolation, not the *enabled* economy under load.
    local-dominance test, so the mode actually leads to captures. Deferred here
    because it changes war-entry behavior and deserves a design decision.
 
-2. **Tech-licensing is unit-tested but never exercised in emergent play.** No colony
-   held a keeper foreign gift in the headless runs (`gifts={}`), so the license
-   market (WG6) never opened a contract organically. It works in `tests/test_wages.py`
-   (WGA-6). **Recommended:** a playtest seeded with breached, gift-holding colonies,
-   or letting the keeper dispense gifts during the run, to watch monopoly-rent
-   licensing emerge (the "weak civ rents the calculator" scenario).
+2. **Tech-licensing — CONFIRMED working when a gift-holder exists.** A targeted
+   playtest (`playtest_license.py`) seeded colony 0 with the `calculator` and let the
+   economy run: all three rivals opened LICENSE contracts renting the calculator from
+   colony 0 (`(0->1), (0->2), (0->3)`), paying a recurring grain fee, and the gift
+   NEVER transferred (non-rival access via the effective-gifts view). The monopolist
+   ended at **761 grains vs renters at 50–102** — the scarce keeper-gift cashed out as
+   monopoly rents. This is the user's "weak civ rents the calculator" scenario,
+   emergent and exactly on-design. The reason it did not appear in the general
+   playtest is simply that colonies rarely acquire a foreign gift in a headless run
+   (gifts come from the keeper ladder + breaching). No fix needed; the path is live —
+   it just needs a gift in the tank.
 
 3. **Grain scarcity is currently faked by the floor.** The honest fix is to make the
    CU currency actually fund an economy — tie grain income to production/population
