@@ -306,6 +306,7 @@ from tech import (
 TERMINAL_UNLOCK = 40         # pi operate-ticks before the terminal (K10)
 TERMINAL_MASTERY = 16        # successful commands before the breach
 BREAKOUT_FITNESS_BONUS = 8.0 # [prov:C feel=breakout-pacing] tinker-fitness reward per cumulative terminal use; 0.0 = identity (pre-fix, no gradient); higher => sooner organic breach
+TINKER_HYSTERESIS = 0.5      # [prov:A lit=Hysteretic Policy Optimization arXiv 2605.30201; hysteretic Q-learning, Matignon] hysteresis band width as a multiple of the running |u| scale; down-weight NEGATIVE keep/revert deltas so exploratory stepping-stones survive dips; 0.0 = identity (strict keep-if-improved)
 SPOKEN_MEMORY = 50           # steps the `speak` anchor stays lit (K12)
 CODEX_INTERVAL = 300         # steps between codex consultations (CX4)
 AUG_MAX = 4                  # max memory-augment level (AUG2)
@@ -424,6 +425,15 @@ PSIONIC_TURN_SENT = 0.2      # a Shade this hateful binds the keeper (PS4)
 
 FAUNA_SPAWN_P = 0.3          # incursion chance per MARAUDER_INTERVAL roll...
 FAUNA_SPAWN_P_DARK = 0.6     # ...doubled in Dust/Chill (monsters own winter)
+
+
+def _tinker_keep(u: float, baseline: float, scale: float, hysteresis: float) -> bool:
+    """Part E (HPO): keep-if-improved with a hysteretic hold on small dips.
+    margin = u - baseline; band = hysteresis * scale; keep iff margin >= -band.
+    At hysteresis==0.0 -> band 0 -> exact strict `u >= baseline` (identity)."""
+    margin = u - baseline
+    band = hysteresis * scale
+    return margin >= -band
 
 
 def breakout_progress(colony) -> Tuple[str, float, str]:
@@ -5962,7 +5972,13 @@ class SandKingsSimulation:
                         if controller._candidate is not None:
                             baseline = (controller.u_ema
                                         if controller.u_ema is not None else u)
-                            if u >= baseline:
+                            # BRK-E: A-HPO band scale = running EMA of |u|
+                            scale = getattr(controller, 'u_mag_ema', None)
+                            if scale is None:
+                                scale = abs(u)
+                            # BRK-E: hysteretic keep-if-improved (eager on gains,
+                            # reluctant on a small dip); identity at HYSTERESIS==0
+                            if _tinker_keep(u, baseline, scale, TINKER_HYSTERESIS):
                                 controller.last_outcome = "kept"
                             else:
                                 controller.program = controller._incumbent
@@ -5970,6 +5986,12 @@ class SandKingsSimulation:
                             controller._candidate = None
                         controller.u_ema = (u if controller.u_ema is None
                                             else 0.5 * controller.u_ema + 0.5 * u)
+                        # BRK-E: maintain the running |u| scale (A-HPO analog);
+                        # only enters the decision via band = HYSTERESIS*scale,
+                        # which is 0 at HYSTERESIS==0 -> identity-safe.
+                        controller.u_mag_ema = (
+                            abs(u) if getattr(controller, 'u_mag_ema', None) is None
+                            else 0.5 * controller.u_mag_ema + 0.5 * abs(u))
                         controller._incumbent = list(controller.program)
                         controller._candidate = self._tinkerer.propose(
                             controller.program)

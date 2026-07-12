@@ -86,6 +86,7 @@ class Controller:
         self.last_acts: List[Tuple[int, int]] = []
         # tinkerer state (T35)
         self.u_ema: Optional[float] = None
+        self.u_mag_ema: Optional[float] = None   # A-HPO running |u| band scale (Part E)
         self.reviews = 0
         self.last_outcome = "-"
         self._candidate: Optional[List[Instr]] = None

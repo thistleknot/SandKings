@@ -600,3 +600,93 @@ def _brk_d4_organic_terminal_use_across_seeds():
     # At least 1 of 3 seeds should breach organically
     assert reached >= 1, \
         f"at least 1 of 3 seeds should organically reach terminal, reached {reached}"
+
+
+# ============================================================================
+# BRK-E: Hysteretic keep-if-improved (Part E — stepping-stone preservation)
+# ============================================================================
+
+from sandkings import _tinker_keep, TINKER_HYSTERESIS
+
+
+def test_brk_e1_hysteresis_holds_stepping_stone():
+    """BRK-E1: hysteresis holds a stepping-stone that strict-mode reverts (core proof).
+
+    Helper-level: a small dip (margin just below 0) is held at h>0 but reverted at h=0.
+    Sim-level: last_outcome flips on the same dip as TINKER_HYSTERESIS changes.
+    """
+    # ---- helper-level core proof: a small dip (margin just below 0) ----
+    u, baseline, scale = 0.9, 1.0, 1.0        # margin = -0.1
+    assert _tinker_keep(u, baseline, scale, 0.5) is True    # band 0.5 -> held
+    assert _tinker_keep(u, baseline, scale, 0.0) is False   # band 0.0 -> strict revert
+
+    # ---- sim-level proof: last_outcome flips on the SAME dip ----
+    # Freeze the Part-D base term (bonus 0, P_W has no ACT port 7) so the only
+    # variable is the injected dip; pre-arm exactly one review.
+    for hysteresis, expected in ((0.5, "kept"), (0.0, "reverted")):
+        _orig_h = sandkings.TINKER_HYSTERESIS
+        _orig_b = sandkings.BREAKOUT_FITNESS_BONUS
+        sandkings.TINKER_HYSTERESIS = hysteresis
+        sandkings.BREAKOUT_FITNESS_BONUS = 0.0
+        try:
+            sim, colony, ctrl = _make_pi_colony(P_W)     # P_W = NOPs, no terminal use
+            base = colony.maw.food_stored + 15 * len(colony.units)
+            ctrl.u_ema = 1.0                             # baseline = 1.0
+            ctrl.u_mag_ema = 1.0                         # scale = 1.0
+            ctrl._candidate = [tuple(i) for i in P_W]    # a candidate is under review
+            ctrl._incumbent = [tuple(i) for i in P_T]    # revert target (distinguishable)
+            # make u = (base - _last_value)/PR == 0.9  (margin = -0.1 vs baseline 1.0)
+            ctrl._last_value = base - 0.9 * PROGRAM_REVIEW
+            sim.step_count = PROGRAM_REVIEW - 1
+            sim.step_count += 1
+            sim._machine_tick()                          # exactly one review fires
+            assert ctrl.last_outcome == expected         # held vs reverted  [BRK-E.R1]
+        finally:
+            sandkings.TINKER_HYSTERESIS = _orig_h
+            sandkings.BREAKOUT_FITNESS_BONUS = _orig_b
+
+
+def test_brk_e2_identity_at_zero_hysteresis():
+    """BRK-E2: identity at 0.0 across a (u vs baseline) x scale battery.
+    At TINKER_HYSTERESIS == 0.0 the decision equals the pre-Part-E strict rule
+    (u >= baseline) for any scale."""
+    cases = [   # (u, baseline, expected_keep_under_strict_rule)
+        (2.0,  1.0,  True),    # u > baseline  -> keep
+        (1.0,  1.0,  True),    # u == baseline -> keep
+        (0.5,  1.0,  False),   # u < baseline  -> revert
+        (-3.0, 1.0,  False),   # deep dip      -> revert
+        (0.0,  0.0,  True),    # equal at zero -> keep
+    ]
+    for u, baseline, expect in cases:
+        for scale in (0.0, 1.0, 5.0, 100.0):         # scale irrelevant at h==0
+            assert _tinker_keep(u, baseline, scale, 0.0) is expect   # [BRK-E.R2]
+
+
+def test_brk_e3_large_dip_reverts():
+    """BRK-E3: large dip still reverts (bounded band).
+    A candidate whose dip is far below baseline reverts even with TINKER_HYSTERESIS > 0."""
+    baseline, scale = 1.0, 1.0
+    big_dip_u = baseline - 10.0 * scale              # margin = -10*scale
+    for h in (0.25, 0.5, 1.0):
+        assert (big_dip_u - baseline) < -(h * scale) # sanity: outside the band
+        assert _tinker_keep(big_dip_u, baseline, scale, h) is False  # [BRK-E.R3]
+    # contrast: a within-band dip at the same h is held
+    small_dip_u = baseline - 0.1 * scale
+    assert _tinker_keep(small_dip_u, baseline, scale, 0.5) is True
+
+
+def test_brk_e4_band_is_monotone():
+    """BRK-E4: monotone dial (wider band = larger keep region).
+    A larger TINKER_HYSTERESIS widens the keep region: a dip that reverts at h1
+    is held at h2 > h1, and the decision is monotone non-decreasing."""
+    baseline, scale = 1.0, 1.0
+    dip_u = baseline - 0.4 * scale                   # margin = -0.4
+    assert _tinker_keep(dip_u, baseline, scale, 0.2) is False  # band 0.2 < 0.4 -> revert
+    assert _tinker_keep(dip_u, baseline, scale, 0.8) is True   # band 0.8 > 0.4 -> held  [BRK-E.R4]
+    # once kept, stays kept as h grows (monotone non-decreasing):
+    prev_kept = False
+    for h in (0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6):
+        kept = _tinker_keep(dip_u, baseline, scale, h)
+        if prev_kept:
+            assert kept is True
+        prev_kept = kept

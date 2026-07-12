@@ -1007,3 +1007,474 @@ determinism-shifting changes are confirmed against an otherwise-green tree in a
 single full-battery run. Sequence: constant (D1) -> one-line fitness edit (D2)
 -> BRK-D1/D2/D3 (deterministic, battery-resident) -> optional BRK-D4 (opt-in) ->
 full battery + re-baseline pass.
+
+---
+
+# PART E — Breakout efficacy II: a HYSTERETIC keep-if-improved rule
+
+## Root cause (complements Part D) — the harsh revert discards the stepping-stone
+
+Part D gives the port-7 program a **gradient** (`BREAKOUT_FITNESS_BONUS` adds a
+positive delta when `terminal_uses` rises). But the keep/revert branch at
+`sandkings.py:5946-5950` still reverts on **any** negative per-window delta:
+
+```
+if u >= baseline:                       # 5946
+    controller.last_outcome = "kept"
+else:                                   # 5948
+    controller.program = controller._incumbent
+    controller.last_outcome = "reverted"
+```
+
+The moment a candidate is *discovered* — the tick it first emits `ACT TERMINAL`
+(port 7) — it **costs** fitness before it can pay: port 7 burns one of only
+`VM_ACT_BUDGET == 2` act slots per tick that would otherwise have driven a
+food-growing actuator, and (until `terminal_uses` climbs enough for the Part-D
+bonus to dominate) the net per-window delta `u` dips **below** `baseline`
+(`u_ema`). Strict keep-if-improved reverts it on that first dip, **before**
+Part D's gradient can compound over subsequent windows. The stepping-stone is
+thrown away one tick after it appears.
+
+This is the same pathology **Hysteretic Policy Optimization** (HPO, arXiv
+2605.30201) addresses in sparse/deceptive-reward RL [empirical:cited]: early
+batches are dominated by **negative-advantage** samples that wash out the rare
+positive signal; standard symmetric weighting lets the negatives bury the
+signal. HPO **down-weights negative-advantage updates** — *eager on gains,
+reluctant on losses* (hysteresis) — so the rare positive signal survives and
+training stabilizes. Its adaptive variant, **A-HPO**, sets the hysteresis weight
+from batch advantage-sign / advantage-magnitude statistics rather than a
+hand-tuned constant. HPO is rooted in **hysteretic Q-learning** (Matignon et
+al.): asymmetric learning rates — large for positive TD error, small for
+negative — in decentralized/independent learners.
+
+Our GP tinker (`sandkings.py:5935-5959`) is a **keep-if-improved
+evolutionary hill-climber, not policy-gradient**, but the mapping is exact:
+
+| HPO / hysteretic Q-learning | GP tinker analog |
+|---|---|
+| advantage sign | `margin = u - baseline` (`u - u_ema`) |
+| negative-advantage update | a candidate whose window delta dipped below `u_ema` |
+| down-weight negatives | be **reluctant to revert** a small dip (widen the keep region below baseline) |
+| eager on positives | keep on any improvement, **unchanged** (`margin >= 0`) |
+| A-HPO adaptive weight from batch magnitude stats | band scaled by a per-controller running EMA of `|u|` |
+
+**The Part E fix:** make the revert decision hysteretic — hold an exploratory
+candidate through a **small** negative dip (a stepping-stone), revert only on a
+dip **deeper** than a tolerance band. This complements Part D (D supplies the
+gradient; E stops the harsh revert from discarding the stepping-stone before the
+gradient compounds) and partly compensates for the short pi lifespan (Council
+F2, deferred in Part D): fewer exploratory windows are wasted on transient dips.
+
+Part E changes **only** the revert *threshold* for small negative dips. It does
+NOT touch the improvement branch (`margin >= 0` keeps, exactly as today), does
+NOT touch the Part-D reward term, and does NOT touch the `u_ema` update.
+
+## Constants + Provenance (Part E addition)
+
+| Constant | Value | Location | Status | Meaning |
+|---|---|---|---|---|
+| `TINKER_HYSTERESIS` | `0.5` | `sandkings.py:309` (new, after `BREAKOUT_FITNESS_BONUS`) | **NEW (Part E)** | `[prov:A lit=Hysteretic Policy Optimization arXiv 2605.30201; hysteretic Q-learning, Matignon]` hysteresis band width as a multiple of the running `|u|` scale; down-weights NEGATIVE keep/revert deltas so exploratory stepping-stones survive dips. `0.0` = identity (strict keep-if-improved); larger = wider hold band (bounded by the running `|u|` scale, so catastrophic dips still revert). |
+
+**Semantics decision (stated, and corrected against the loose brief phrasing).**
+The dial is the **width of a tolerance band**, expressed as a multiple of the
+per-controller running `|u|` scale (below). It is **not** a literal "1.0 = never
+revert" switch: the band is **bounded by the running `|u|` scale**, so a
+catastrophic dip reverts at *every* `TINKER_HYSTERESIS` value (required by
+BRK-E3). The band formulation is the one that is simultaneously (a) identity at
+`0.0`, (b) a smooth **monotone** dial (BRK-E4), and (c) bounded so large dips
+still revert (BRK-E3). A pure "down-weight the negative delta magnitude" reading
+of HPO cannot give a graded keep/revert dial — down-weighting a negative
+scalar's *magnitude* never flips its *sign*, so it degenerates to a step
+function (revert on any dip for every `λ<1`, never revert at `λ==1`), which
+fails BRK-E3 **and** BRK-E4. The band is the faithful, testable analog:
+down-weighting the negative advantage == *tolerating* it up to the band before
+acting on it.
+
+**Default-value decision: default to a WORKING non-zero value `0.5`, NOT `0.0`**
+— same rationale as Part D's non-zero default. The operator's requirement is
+that stepping-stones actually survive; a `0.0` identity default would ship the
+mechanism with the dial nobody turned. `0.0` reproduces the pre-Part-E (Part-D)
+behavior **byte-identically** for triage (see identity guard). `0.5` means the
+hold band is half of the typical fluctuation magnitude — wide enough to hold a
+genuine small stepping-stone dip, narrow enough that a real collapse (≥ half the
+typical swing beyond trend) still reverts.
+
+### The scale: A-HPO adaptive band from a running `|u|` (why not `|u_ema|`)
+
+The band reference magnitude is a **per-controller running EMA of `|u|`**, a new
+field `controller.u_mag_ema`, updated with the same `0.5` factor as `u_ema`:
+
+```
+u_mag_ema <- |u|                     if u_mag_ema is None
+u_mag_ema <- 0.5*u_mag_ema + 0.5*|u| otherwise
+```
+
+`band = TINKER_HYSTERESIS * u_mag_ema`. This **is** the A-HPO analog: A-HPO sets
+its hysteresis weight from batch advantage-*magnitude* statistics; our
+per-controller running mean of `|u|` is the streaming, single-agent equivalent.
+No separate flag is needed — the adaptivity is inherent in the scale.
+
+**Why the EMA of `|u|` and NOT `|u_ema|` (the signed baseline).** `u_ema` is a
+**signed** EMA: window-to-window deltas of opposite sign cancel in the mean, so
+`|u_ema|` sits near zero **exactly** in the flat/oscillating-base regime where a
+stepping-stone dip most needs holding — it would collapse the band to ~0 at the
+worst time. The EMA of `|u|` measures the **typical fluctuation magnitude
+regardless of sign**, which is the dimensionally-correct reference for a
+symmetric tolerance band (both `margin` and `|u|` are per-window deltas of the
+Part-D fitness `food + 15*pop + bonus*uses`). So `u_ema` keeps its role (the
+signed "improve over trend" baseline) and `u_mag_ema` supplies the (unsigned)
+band scale; the two are deliberately **not** merged.
+
+## Structural (Part E)
+
+### E1. New constant — `sandkings.py`, immediately after line 308
+
+```
+BREAKOUT_FITNESS_BONUS = 8.0 # [prov:C feel=breakout-pacing] ...
+TINKER_HYSTERESIS = 0.5      # [prov:A lit=Hysteretic Policy Optimization arXiv 2605.30201; hysteretic Q-learning, Matignon] hysteresis band width as a multiple of the running |u| scale; down-weight NEGATIVE keep/revert deltas so exploratory stepping-stones survive dips; 0.0 = identity (strict keep-if-improved); larger = wider hold band (bounded by the running |u| scale, so catastrophic dips still revert)
+```
+
+`TINKER_HYSTERESIS` is a **module global** in `sandkings.py`, referenced by
+`_machine_tick` as a bare name (resolved against the module namespace at call
+time), so it is monkeypatchable via
+`monkeypatch.setattr(sandkings, "TINKER_HYSTERESIS", 0.0)` (used by BRK-E1/E2).
+
+### E2. New Controller field — `machines.py:88` (in `Controller.__init__`)
+
+Add `u_mag_ema` immediately after `u_ema` in the tinkerer-state block:
+
+```
+        # tinkerer state (T35)
+        self.u_ema: Optional[float] = None
+        self.u_mag_ema: Optional[float] = None   # BRK-E: running EMA of |u| (A-HPO band scale)
+        self.reviews = 0
+```
+
+Pickle/back-compat: the read site (E4) reads it via
+`getattr(controller, 'u_mag_ema', None)`, so a controller unpickled from a
+pre-Part-E snapshot (which lacks the field) starts the scale at `None` and
+initializes it on its next review — no migration needed.
+
+### E3. Pure decision helper — `sandkings.py` module scope (near `breakout_progress`)
+
+**Extract the keep/revert decision into a pure, RNG-free helper** so BRK-E1..E4
+test it directly, and the sim calls it (single source of truth, DRY):
+
+```
+def _tinker_keep(u: float, baseline: float, scale: float,
+                 hysteresis: float) -> bool:
+    """BRK-E: hysteretic keep-if-improved decision for the GP tinker.
+
+    HPO analog (arXiv 2605.30201; hysteretic Q-learning, Matignon et al.):
+    EAGER on gains, RELUCTANT on losses. Keep the candidate on any
+    improvement; HOLD it through a small dip inside a tolerance band; REVERT
+    only when the dip is deeper than the band.
+
+        margin = u - baseline            # >0 improvement, <0 dip
+        band   = hysteresis * scale      # tolerance; scale >= 0, hysteresis >= 0
+        keep  <=> margin >= -band
+
+    Returns True to KEEP the running candidate, False to REVERT to the
+    incumbent.
+
+    IDENTITY: at hysteresis == 0.0, band == 0.0 for ANY scale (including a
+    scale derived from u_mag_ema), so this reduces EXACTLY to `u >= baseline`
+    — the pre-Part-E strict keep-if-improved rule. Deterministic; no RNG.
+
+    Preconditions: scale >= 0 (an EMA of |u|); hysteresis >= 0.
+    Failure modes: none (pure arithmetic). Caller must not pass NaN.
+    """
+    margin = u - baseline
+    band = hysteresis * scale
+    return margin >= -band
+```
+
+Contract:
+- **Require**: `scale >= 0`; `hysteresis >= 0`.
+- **Guarantee**: returns `bool`; at `hysteresis == 0.0` returns `(u >= baseline)`
+  for any `scale`; **monotone non-decreasing in `hysteresis`** (a larger
+  `hysteresis` never turns a `keep` into a `revert`); **bounded** (a dip with
+  `margin < -hysteresis*scale` reverts).
+- **Maintain**: pure, deterministic, no side effects, no RNG.
+- **Assert** (test-side): `_tinker_keep(u, b, s, 0.0) == (u >= b)` across a
+  battery of `(u, b, s)`; `_tinker_keep(u, b, s, h1) <= _tinker_keep(u, b, s, h2)`
+  for `h1 <= h2` (booleans as 0/1).
+
+### E4. Hysteretic keep/revert + running-scale — `sandkings.py:5941-5953`
+
+Modify the review body. **BEFORE** (current, Part D shipped):
+
+```
+                    if last is not None:
+                        u = (value - last) / PROGRAM_REVIEW
+                        if controller._candidate is not None:
+                            baseline = (controller.u_ema
+                                        if controller.u_ema is not None else u)
+                            if u >= baseline:
+                                controller.last_outcome = "kept"
+                            else:
+                                controller.program = controller._incumbent
+                                controller.last_outcome = "reverted"
+                            controller._candidate = None
+                        controller.u_ema = (u if controller.u_ema is None
+                                            else 0.5 * controller.u_ema + 0.5 * u)
+                        controller._incumbent = list(controller.program)
+                        controller._candidate = self._tinkerer.propose(
+                            controller.program)
+                        controller.program = controller._candidate
+                        controller.reviews += 1
+                    controller._last_value = value
+```
+
+**AFTER** (Part E — three added constructs: read the scale, call the helper,
+maintain `u_mag_ema`; every other line byte-identical):
+
+```
+                    if last is not None:
+                        u = (value - last) / PROGRAM_REVIEW
+                        if controller._candidate is not None:
+                            baseline = (controller.u_ema
+                                        if controller.u_ema is not None else u)
+                            # BRK-E: A-HPO band scale = running EMA of |u|
+                            scale = getattr(controller, 'u_mag_ema', None)
+                            if scale is None:
+                                scale = abs(u)
+                            # BRK-E: hysteretic keep-if-improved (eager on gains,
+                            # reluctant on a small dip); identity at HYSTERESIS==0
+                            if _tinker_keep(u, baseline, scale, TINKER_HYSTERESIS):
+                                controller.last_outcome = "kept"
+                            else:
+                                controller.program = controller._incumbent
+                                controller.last_outcome = "reverted"
+                            controller._candidate = None
+                        controller.u_ema = (u if controller.u_ema is None
+                                            else 0.5 * controller.u_ema + 0.5 * u)
+                        # BRK-E: maintain the running |u| scale (A-HPO analog);
+                        # only enters the decision via band = HYSTERESIS*scale,
+                        # which is 0 at HYSTERESIS==0 -> identity-safe.
+                        controller.u_mag_ema = (
+                            abs(u) if getattr(controller, 'u_mag_ema', None) is None
+                            else 0.5 * controller.u_mag_ema + 0.5 * abs(u))
+                        controller._incumbent = list(controller.program)
+                        controller._candidate = self._tinkerer.propose(
+                            controller.program)
+                        controller.program = controller._candidate
+                        controller.reviews += 1
+                    controller._last_value = value
+```
+
+**Ordering (matches the existing `u_ema` discipline):** the decision reads the
+**previous** window's `u_mag_ema` (as `scale`), exactly as `baseline` reads the
+**previous** `u_ema`; both are then updated for the next window. On the very
+first candidate-evaluation window, `u_ema is None` forces `baseline = u` so
+`margin == 0` (keep) regardless of `scale` — the `scale = abs(u)` fallback is
+inert on that window.
+
+**Contract (the hysteretic keep rule):**
+- **Require**: `PROGRAM_REVIEW > 0`; `TINKER_HYSTERESIS >= 0`; `u_mag_ema` is
+  `None` or a non-negative float.
+- **Guarantee**: on `margin >= 0` the candidate is kept (unchanged from Part D);
+  on `-band <= margin < 0` it is **held** (`last_outcome == "kept"`) where
+  `band = TINKER_HYSTERESIS * u_mag_ema`; on `margin < -band` it reverts. The
+  Part-D reward term and the `u_ema` update are **unchanged**.
+- **Maintain (identity)**: at `TINKER_HYSTERESIS == 0.0`, `band == 0.0` for any
+  `scale`, so `_tinker_keep` returns `u >= baseline` and the branch is the
+  pre-Part-E `if u >= baseline: keep else: revert` — **byte-identical decision**.
+  The new `u_mag_ema` state is maintained unconditionally but enters the decision
+  ONLY through `band = 0.0 * scale`, so it cannot perturb the `HYSTERESIS == 0.0`
+  trajectory.
+
+### Identity-at-0.0 guard (stated explicitly)
+
+At `TINKER_HYSTERESIS == 0.0`:
+- `band = 0.0 * scale = 0.0` for every finite `scale` (`u_mag_ema` finite by
+  construction).
+- `_tinker_keep` returns `margin >= -0.0`, i.e. `(u - baseline) >= 0.0`, i.e.
+  `u >= baseline` — the exact pre-fix predicate at former line 5946.
+- The revert branch, `last_outcome` strings (`"kept"`/`"reverted"`), and all
+  surrounding assignments are unchanged.
+- Therefore the whole `_machine_tick` review path is **byte-identical** to the
+  Part-D-shipped behavior when `TINKER_HYSTERESIS == 0.0`, for any colony/seed.
+  BRK-E2 pins this on the helper; the sim inherits it by construction.
+
+## Behavioral (Part E)
+
+Review body, per controller, at `step_count % PROGRAM_REVIEW == 0`, `last is not
+None`, `_candidate is not None` (only the decision + scale differ from Part D):
+
+```
+u        <- (value - last) / PROGRAM_REVIEW        # reward-shaped (Part D)
+baseline <- u_ema if u_ema is not None else u       # signed trend
+scale    <- u_mag_ema if u_mag_ema is not None else |u|   # A-HPO |u| scale
+band     <- TINKER_HYSTERESIS * scale
+margin   <- u - baseline
+if margin >= -band:                                 # keep (eager) OR hold (small dip)
+    last_outcome <- "kept"
+else:                                               # dip deeper than band -> revert
+    program      <- _incumbent
+    last_outcome <- "reverted"
+# updates (unchanged u_ema; new u_mag_ema):
+u_ema     <- u if u_ema is None else 0.5*u_ema + 0.5*u
+u_mag_ema <- |u| if u_mag_ema is None else 0.5*u_mag_ema + 0.5*|u|
+```
+
+**Walk of the fix (the stepping-stone survives):** the window a mutation first
+emits `ACT TERMINAL` costs an act slot, so `u` dips a little below `u_ema`
+(`margin` slightly negative). Under Part D alone (`band == 0`) that reverts and
+the port-7 genome is lost. Under Part E, `margin >= -TINKER_HYSTERESIS*u_mag_ema`
+holds it as `_incumbent`; over the next windows Part D's `terminal_uses` bonus
+lifts `u` back to/above trend and the genome is kept outright. A genuinely
+catastrophic candidate (food collapse, `margin` far below `-band`) still reverts
+— the band is bounded by `u_mag_ema`, so exploration is preserved without
+holding disasters.
+
+## Requirements (BRK-E)
+
+- **BRK-E.R1** The keep/revert decision is hysteretic: keep on any improvement
+  (`margin >= 0`), **hold** a candidate whose window delta dips within
+  `band = TINKER_HYSTERESIS * u_mag_ema` of `baseline`, revert only on a deeper
+  dip. A small-dip case that reverts at `TINKER_HYSTERESIS == 0.0` is **held** at
+  `TINKER_HYSTERESIS > 0`. Acceptance: BRK-E1.
+- **BRK-E.R2** Identity at `0.0`: at `TINKER_HYSTERESIS == 0.0` the decision
+  equals the pre-Part-E strict rule (`u > baseline`->keep, `u == baseline`->keep,
+  `u < baseline`->revert) across a battery, **for any `scale`**. Acceptance:
+  BRK-E2.
+- **BRK-E.R3** Bounded band: a candidate whose dip is far below `baseline`
+  (`margin < -band`) reverts even with `TINKER_HYSTERESIS > 0` — catastrophic
+  candidates are not held. Acceptance: BRK-E3.
+- **BRK-E.R4** Monotone dial: a larger `TINKER_HYSTERESIS` widens the keep region
+  — a dip that reverts at `h1` is held at `h2 > h1`, and the decision is monotone
+  non-decreasing in `TINKER_HYSTERESIS`. Acceptance: BRK-E4.
+- **BRK-E.R5** Adaptive A-HPO scale: the band is scaled by a per-controller
+  running EMA of `|u|` (`u_mag_ema`), maintained deterministically with the same
+  `0.5` factor as `u_ema`; at `TINKER_HYSTERESIS == 0.0` the band is `0` for any
+  scale, so the running state cannot perturb the identity trajectory. Acceptance:
+  BRK-E2 (scale-invariance at 0) + BRK-E1 (band uses the scale).
+
+## Acceptance (BRK-E*) — add to `tests/test_breakout.py`
+
+Shared imports (extend the Part-D block in the same file):
+
+```
+import sandkings
+from sandkings import _tinker_keep, TINKER_HYSTERESIS
+# Part-D helpers reused: _make_pi_colony, _StubTinkerer, _drive_machine_ticks,
+# P_T, P_W, _uses_terminal ; from machines import PROGRAM_REVIEW
+```
+
+BRK-E1..E4 test the **pure helper** `_tinker_keep` directly (deterministic, no
+sim, no RNG). BRK-E1 additionally drives one sim review to confirm the sim path
+wires the helper into `last_outcome`.
+
+### BRK-E1 — hysteresis holds a stepping-stone that strict-mode reverts (core proof)
+
+```
+def test_brk_e1_hysteresis_holds_stepping_stone(monkeypatch):
+    # ---- helper-level core proof: a small dip (margin just below 0) ----
+    u, baseline, scale = 0.9, 1.0, 1.0        # margin = -0.1
+    assert _tinker_keep(u, baseline, scale, 0.5) is True    # band 0.5 -> held
+    assert _tinker_keep(u, baseline, scale, 0.0) is False   # band 0.0 -> strict revert
+
+    # ---- sim-level proof: last_outcome flips on the SAME dip ----
+    # Freeze the Part-D base term (bonus 0, P_W has no ACT port 7) so the only
+    # variable is the injected dip; pre-arm exactly one review.
+    for hysteresis, expected in ((0.5, "kept"), (0.0, "reverted")):
+        monkeypatch.setattr(sandkings, "TINKER_HYSTERESIS", hysteresis)
+        monkeypatch.setattr(sandkings, "BREAKOUT_FITNESS_BONUS", 0.0)
+        sim, colony, ctrl = _make_pi_colony(P_W)     # P_W = NOPs, no terminal use
+        base = colony.maw.food_stored + 15 * len(colony.units)
+        ctrl.u_ema = 1.0                             # baseline = 1.0
+        ctrl.u_mag_ema = 1.0                         # scale = 1.0
+        ctrl._candidate = [tuple(i) for i in P_W]    # a candidate is under review
+        ctrl._incumbent = [tuple(i) for i in P_T]    # revert target (distinguishable)
+        # make u = (base - _last_value)/PR == 0.9  (margin = -0.1 vs baseline 1.0)
+        ctrl._last_value = base - 0.9 * PROGRAM_REVIEW
+        sim.step_count = PROGRAM_REVIEW - 1
+        sim.step_count += 1
+        sim._machine_tick()                          # exactly one review fires
+        assert ctrl.last_outcome == expected         # held vs reverted  [BRK-E.R1]
+```
+
+Determinism note: `P_W` executes no `ACT` port 7, so `terminal_uses` stays `0`
+and (with `BREAKOUT_FITNESS_BONUS == 0`) `value == base` exactly; the drive runs
+no farming/births, so `base` is constant. Hence `u == 0.9` deterministically and
+the only difference between the two loop iterations is `TINKER_HYSTERESIS`.
+
+### BRK-E2 — identity at 0.0 across a (u vs baseline) x scale battery
+
+```
+def test_brk_e2_identity_at_zero_hysteresis():
+    cases = [   # (u, baseline, expected_keep_under_strict_rule)
+        (2.0,  1.0,  True),    # u > baseline  -> keep
+        (1.0,  1.0,  True),    # u == baseline -> keep
+        (0.5,  1.0,  False),   # u < baseline  -> revert
+        (-3.0, 1.0,  False),   # deep dip      -> revert
+        (0.0,  0.0,  True),    # equal at zero -> keep
+    ]
+    for u, baseline, expect in cases:
+        for scale in (0.0, 1.0, 5.0, 100.0):         # scale irrelevant at h==0
+            assert _tinker_keep(u, baseline, scale, 0.0) is expect   # [BRK-E.R2]
+```
+
+### BRK-E3 — large dip still reverts (bounded band)
+
+```
+def test_brk_e3_large_dip_reverts():
+    baseline, scale = 1.0, 1.0
+    big_dip_u = baseline - 10.0 * scale              # margin = -10*scale
+    for h in (0.25, 0.5, 1.0):
+        assert (big_dip_u - baseline) < -(h * scale) # sanity: outside the band
+        assert _tinker_keep(big_dip_u, baseline, scale, h) is False  # [BRK-E.R3]
+    # contrast: a within-band dip at the same h is held
+    small_dip_u = baseline - 0.1 * scale
+    assert _tinker_keep(small_dip_u, baseline, scale, 0.5) is True
+```
+
+### BRK-E4 — monotone dial (wider band = larger keep region)
+
+```
+def test_brk_e4_band_is_monotone():
+    baseline, scale = 1.0, 1.0
+    dip_u = baseline - 0.4 * scale                   # margin = -0.4
+    assert _tinker_keep(dip_u, baseline, scale, 0.2) is False  # band 0.2 < 0.4 -> revert
+    assert _tinker_keep(dip_u, baseline, scale, 0.8) is True   # band 0.8 > 0.4 -> held  [BRK-E.R4]
+    # once kept, stays kept as h grows (monotone non-decreasing):
+    prev_kept = False
+    for h in (0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6):
+        kept = _tinker_keep(dip_u, baseline, scale, h)
+        if prev_kept:
+            assert kept is True
+        prev_kept = kept
+```
+
+## Test reconciliation (Part E) — re-baseline flags
+
+Part E's non-zero default (`0.5`) **shifts evolved-VM determinism** again: the
+hysteretic hold changes which candidates survive, so seeded machine-arc
+trajectories diverge from the Part-D-shipped tree. Re-run the full battery once
+as the confirmatory check. Guidance is identical to Parts A/D:
+
+- **`TINKER_HYSTERESIS == 0.0` reproduces the Part-D battery byte-identically**
+  (identity guard above) — set it for triage / byte-diff comparison.
+- Highest-likelihood shifts: the same live-sim machine-arc suites flagged in
+  Parts A/D — `tests/test_machines.py::test_tinkerer_reverts_worse_programs`
+  (structural asserts; **expected green**, re-run),
+  `::test_machine_state_pickles` (now also round-trips the new `u_mag_ema`
+  field; **expected green**, re-run), and `tests/test_enlightenment.py` /
+  `tests/test_awareness.py` (any "never breaches / `terminal_uses` stays 0"
+  assertion on a pi-gifted colony may shift — that is the intended effect;
+  eyeball and re-baseline, documenting each).
+- New state note: `Controller.u_mag_ema` is added to `__init__`, so any test
+  that asserts the **exact** set of Controller attributes (none found in the
+  Part-A/D read of `test_machines.py`) would need the field added; a pure pickle
+  round-trip carries it automatically.
+
+## Implementation order (Part E relative to A/B/C/D)
+
+Do Part E **after** Part D (E's helper consumes the Part-D reward-shaped `u`) and
+**last** overall, folded into the same determinism-shift re-baseline run as A/D.
+Sequence: constant (E1) -> `Controller.u_mag_ema` field (E2) -> `_tinker_keep`
+helper (E3) -> hysteretic branch + running-scale (E4) -> BRK-E1..E4
+(deterministic, battery-resident) -> full battery + re-baseline pass. Set
+`TINKER_HYSTERESIS = 0.0` to confirm byte-identity to the Part-D tree before
+accepting the `0.5` re-baseline.
