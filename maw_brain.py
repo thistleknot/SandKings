@@ -34,6 +34,7 @@ MAW_DIRECTIVE_DIM = 6        # colony constants the spawn condition on
 MAW_HIDDEN = 32
 MAW_LR = 3e-3
 MAW_LOG_STD_INIT = -0.5      # exp(-0.5) ~ 0.61 initial exploration std
+MAW_UPDATE_EVERY = 16        # flush a batch-REINFORCE update every K batch-cycles
 
 
 class MawPolicy(nn.Module):
@@ -102,3 +103,53 @@ class MawPolicy(nn.Module):
 
     def make_optimizer(self, lr: float = MAW_LR) -> torch.optim.Optimizer:
         return torch.optim.Adam(self.parameters(), lr=lr)
+
+
+class ColonyMawRL:
+    """Per-colony wrapper around MawPolicy: the two-timescale bookkeeping.
+
+    Each batch-cycle the sim calls `observe_reward(r)` (the reward realized since the
+    LAST directive) then `act(obs)` (emit a new directive). Pairs (log_prob_t, reward_t)
+    accumulate in a rollout buffer that flushes a batch-REINFORCE update every
+    `update_every` cycles. Pickle-safe (MawPolicy + Adam + plain lists), so it rides the
+    whole-sim checkpoint; pending grad tensors are dropped on pickling via __getstate__.
+    """
+
+    def __init__(self, obs_dim: int, update_every: int = MAW_UPDATE_EVERY,
+                 directive_dim: int = MAW_DIRECTIVE_DIM):
+        self.policy = MawPolicy(obs_dim=obs_dim, directive_dim=directive_dim)
+        self.opt = self.policy.make_optimizer()
+        self.update_every = int(update_every)
+        self._log_probs = []          # per-episode log_prob tensors (grad) — transient
+        self._rewards = []            # per-episode scalar rewards
+        self._pending_lp = None       # log_prob of the action awaiting its reward
+        self.last_directive = None    # detached directive tensor (spawn read this)
+        self.last_loss = None
+        self.updates = 0
+
+    def act(self, obs: torch.Tensor) -> torch.Tensor:
+        """Emit a directive for this cycle; remember its log_prob for the next reward."""
+        directive, log_prob = self.policy.act(obs)
+        self._pending_lp = log_prob
+        self.last_directive = directive.detach()
+        return self.last_directive
+
+    def observe_reward(self, reward: float) -> None:
+        """Book the reward for the previous directive; flush an update every K cycles."""
+        if self._pending_lp is None:
+            return                    # first cycle: nothing acted yet
+        self._log_probs.append(self._pending_lp)
+        self._rewards.append(float(reward))
+        self._pending_lp = None
+        if len(self._rewards) >= self.update_every:
+            self.last_loss = self.policy.update(self._log_probs, self._rewards, self.opt)
+            self._log_probs, self._rewards = [], []
+            self.updates += 1
+
+    def __getstate__(self):
+        # Drop transient grad-carrying tensors so the checkpoint pickles cleanly.
+        s = self.__dict__.copy()
+        s["_log_probs"] = []
+        s["_rewards"] = []
+        s["_pending_lp"] = None
+        return s

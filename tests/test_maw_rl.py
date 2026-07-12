@@ -113,6 +113,44 @@ def test_policy_pickles():
     assert d.shape == (MAW_DIRECTIVE_DIM,)
 
 
+def test_colony_maw_rl_learns():
+    """The per-colony two-timescale wrapper learns over cycles (act/observe/update loop)."""
+    if not HAVE_TORCH:
+        return _skip()
+    from maw_brain import ColonyMawRL
+    torch.manual_seed(5)
+    rl = ColonyMawRL(obs_dim=4, update_every=8)
+    obs = torch.ones(4)
+    target = torch.full((MAW_DIRECTIVE_DIM,), 0.8)
+
+    def dist():
+        d, _ = rl.policy.act(obs, deterministic=True)
+        return float(torch.mean((d - target) ** 2))
+
+    start = dist()
+    reward = 0.0
+    for _ in range(8 * 60):                     # 480 cycles -> ~60 updates
+        rl.observe_reward(reward)
+        d = rl.act(obs)
+        reward = -float(torch.mean((d - target) ** 2))
+    end = dist()
+    assert rl.updates >= 50, f"expected ~60 updates, got {rl.updates}"
+    assert end < start * 0.5, f"colony maw RL failed to learn: {start:.4f}->{end:.4f}"
+
+
+def test_colony_maw_rl_pickles():
+    if not HAVE_TORCH:
+        return _skip()
+    import pickle
+    from maw_brain import ColonyMawRL
+    rl = ColonyMawRL(obs_dim=8, update_every=4)
+    rl.act(torch.randn(8))                      # creates a pending grad tensor
+    revived = pickle.loads(pickle.dumps(rl))    # __getstate__ must drop it cleanly
+    revived.observe_reward(1.0)
+    d = revived.act(torch.randn(8))
+    assert d.shape == (MAW_DIRECTIVE_DIM,)
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

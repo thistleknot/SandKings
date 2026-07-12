@@ -345,6 +345,7 @@ SPOKEN_MEMORY = 50           # steps the `speak` anchor stays lit (K12)
 CODEX_INTERVAL = 300         # steps between codex consultations (CX4)
 AUG_MAX = 4                  # max memory-augment level (AUG2)
 AUG_CACHE_STEP = 8           # cache_len added per augment level
+MAW_RL_ENABLED = False       # 85% tier: maw real-RL directive (identity-at-neutral gate)
 GRAIN_SCALE = 60.0           # forecast error normaliser (CU2)
 GRAIN_MINT = 5.0             # grains for a perfect forecast
 
@@ -2144,6 +2145,41 @@ class SandKingsSimulation:
         if self.dynamic_population:          # Phase 6: the pool breathes 2..MAX
             self._succession_tick()          # advance any live succession windows
             self._population_tick()           # fill-in when sparse, bud when crowded
+        self._maw_rl_tick()                  # 85% tier: maw real-RL directive (gated)
+
+    def _maw_rl_tick(self):
+        """85% tier - per-colony maw REAL-RL (batch-REINFORCE) directive, on the batch
+        clock (staggered per colony). Obs = the batched FROZEN-encoder aggregate
+        (_colony_encodings); reward = survival/dominance delta since the last directive.
+        Gated: MAW_RL_ENABLED default False => returns immediately, battery byte-identical.
+        Draws only torch RNG (not the python/numpy streams the sim determinism uses)."""
+        if not MAW_RL_ENABLED:
+            return
+        try:
+            from maw_brain import ColonyMawRL
+            import torch
+        except Exception:
+            return
+        for colony in self.colonies:
+            if not getattr(colony.maw, 'alive', False):
+                continue
+            if (self.step_count + colony.colony_id) % POP_TICK_INTERVAL != 0:
+                continue
+            enc = self._colony_encodings(colony)
+            if enc:
+                obs = torch.stack(list(enc.values())).mean(0)
+            else:
+                obs = torch.zeros(32, dtype=torch.float32)   # HiveMindBrain encoding_dim
+            rl = getattr(colony, 'maw_rl', None)
+            if rl is None:
+                rl = ColonyMawRL(obs_dim=int(obs.shape[0]))
+                colony.maw_rl = rl
+            snap = float(len(colony.units)) + (1.0 if colony.maw.alive else 0.0)
+            prev = getattr(colony, '_maw_rl_prev', None)
+            if prev is not None:
+                rl.observe_reward(snap - prev)   # reward for the LAST directive
+            colony._maw_rl_prev = snap
+            colony.maw_directive = rl.act(obs)   # emit this cycle's directive
 
     def _log_event(self, message: str):
         """Append to the drama feed (SPEC T9) and the chronicle (D4).
