@@ -1157,15 +1157,27 @@ class Colony:
     """Manages a Sand King colony"""
     
     # Colony colors for visualization
-    COLORS = [(255, 0, 0), (255, 255, 255), (0, 0, 0), (255, 165, 0)]  # Red, White, Black, Orange
-    
+    # >= MAX_COLONIES distinct house colors so the dynamic pool's houses never
+    # share a color (the first four are the novella's canon houses, CH1/CH2).
+    COLORS = [(255, 0, 0), (255, 255, 255), (0, 0, 0), (255, 165, 0),   # Red White Black Orange
+              (60, 180, 255), (200, 80, 220), (240, 230, 60), (60, 200, 120)]  # Azure Violet Gold Jade
+
+    @property
+    def color(self) -> Tuple[int, int, int]:
+        """This house's color, by slot, from the shared palette. Computed (not
+        stored) so extending COLORS recolors houses live — including a resumed
+        sim whose colonies were built under the old 4-color palette. Units are
+        drawn in this color, so each house's spawn matches its own banner."""
+        return self.COLORS[self.colony_id % len(self.COLORS)]
+
     def __init__(self, colony_id: int, maw_position: Tuple[int, int, int], genome: ColonyGenome):
         self.colony_id = colony_id
         self.maw = Maw(colony_id, maw_position, genome)
         self.units: List[SandKing] = []
         self.territory: Set[Tuple[int, int, int]] = {maw_position}
         self.genome = genome
-        self.color = self.COLORS[colony_id % len(self.COLORS)]
+        # color is a computed property (see below) — derived from colony_id so
+        # extending COLORS recolors even a resumed sim (no stored stale color)
         self.at_war = False  # food hoard > WAR_CHEST drives raids (SPEC T10)
         self.known_food: List[Tuple[int, int, int]] = []  # scout intel (SPEC T11)
         self.farming = False  # 60/30 hysteresis gate on the farm branch (T18)
