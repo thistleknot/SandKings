@@ -2191,6 +2191,14 @@ class SandKingsSimulation:
                 rl.observe_reward(snap - prev)   # reward for the LAST directive
             colony._maw_rl_prev = snap
             colony.maw_directive = rl.act(obs)   # emit this cycle's directive
+            # surface the maw's learning in the drama feed (throttled to each RL update)
+            if rl.updates and rl.updates != getattr(colony, '_maw_rl_logged', -1):
+                colony._maw_rl_logged = rl.updates
+                _d = colony.maw_directive
+                _loss = rl.last_loss if rl.last_loss is not None else 0.0
+                self._log_event(
+                    f"{self._house_name(colony)} maw learns: aggr={float(_d[0]):.2f} "
+                    f"mob={float(_d[1]):.2f} (upd {rl.updates}, loss {_loss:.2f})")
 
     def _log_event(self, message: str):
         """Append to the drama feed (SPEC T9) and the chronicle (D4).
