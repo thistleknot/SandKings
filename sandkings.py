@@ -7986,7 +7986,7 @@ def main():
     print("SAND KINGS SIMULATION")
     print("3D Voxel Terrarium with Cellular Automata")
     if not getattr(args, 'no_neural', False) and NEURAL_AVAILABLE:
-        print("🧠 NEURAL HIVE MINDS (baseline) - the hive thinks; probes learn")
+        print("[NEURAL] hive minds (baseline) - the hive thinks; probes learn")
     print("="*60)
     
     # Create or resume the simulation (SPEC T13). Persistence is ON by
@@ -8062,10 +8062,10 @@ def main():
                         and getattr(unit, 'brain_layer', None) is None):
                     unit.brain_layer = SoldierLayer()
                     unit.brain_layer.steps_alive = 0
-        print(f"✓ Neural hive minds active ({seeded} fresh brains seeded; "
+        print(f"[NEURAL] hive minds active ({seeded} fresh brains seeded; "
               "resumed brains kept)")
     elif getattr(args, 'no_neural', False):
-        print("• Rule-based minds (--no-neural): instincts, no learned concepts")
+        print("[RULE-BASED] minds (--no-neural): instincts, no learned concepts")
     
     if args.live:
         # When run as a script this module is '__main__'; alias it so
@@ -8116,8 +8116,8 @@ def main():
     
     # Final status
     print("\n" + sim.get_status())
-    print("\n✓ Saved sandkings_2d.gif (2D cross-section)")
-    print("✓ Saved sandkings_3d.gif (3D clustered view)")
+    print("\n[S] Saved sandkings_2d.gif (2D cross-section)")
+    print("[S] Saved sandkings_3d.gif (3D clustered view)")
 
     if args.persist:
         save_checkpoint(sim, args.persist)
