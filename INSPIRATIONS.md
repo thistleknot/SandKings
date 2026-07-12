@@ -58,6 +58,25 @@ This is the lineage, mapped to the specs and mechanics each one shaped.
 - **SimCity**: the economy-as-city framing — farms, mines, timber,
   granary doles, infrastructure (palisades, dams, channels) — a city
   simulator where the citizens are insects.
+- **Populous (the god game)**: the keeper as a hands-on deity who
+  sculpts the world his followers live in — raise and lower the land
+  and water, and unleash disasters on command. Ours literalizes it:
+  raising/lowering water and seeding the ground (the Hydro-Hand,
+  SPEC_HYDRO_HAND), the firecracker/flood/drought as god-view
+  DISASTERS the keeper unleashes (arena/wrath), and the top-down
+  god's-eye view itself. Providence with a cursor.
+- **Syndicate / Syndicate Wars**: dispatching a small team out from
+  home base into hostile ground on a MISSION — recon, tribute,
+  sabotage — and getting them back alive. The maw-as-handler envoy
+  loop is exactly this: physical tribute/gift envoys who can die en
+  route, and scouts sent to OBSERVE a rival's works to steal tech by
+  sight (the only way a mind-blind maw learns a neighbor's secrets).
+- **Hellas: Worlds of Sun and Stone (the RPG)**: the tabletop RPG the
+  user shared — its character/skirmish stat model shaped the
+  OnePageRules-style underling layer (`1pageskirmish.py`): spawn are
+  RPG-statted skirmishers whose abilities scale with the house's tech,
+  the warband beneath the mastermind maw (see also the mastermind/
+  underling split under Civilization).
 - **Tower defense (the genre)**: fauna incursions against your walls
   and gates; palisade rings, the siege-gate demo program, and the
   battering rams that answer them.
