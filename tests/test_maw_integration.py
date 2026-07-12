@@ -49,6 +49,8 @@ def test_gate_off_no_maw_rl_state():
     assert all(getattr(c, 'maw_directive', None) is None for c in sim.colonies), \
         "gate off: no directive should be produced"
     assert all(getattr(c, 'maw_rl', None) is None for c in sim.colonies)
+    assert all(getattr(c, 'spawn_rl', None) is None for c in sim.colonies), \
+        "gate off: no spawn residual should be created"
 
 
 def test_gate_on_sets_directive():
@@ -65,6 +67,9 @@ def test_gate_on_sets_directive():
         for c in got:
             assert tuple(c.maw_directive.shape) == (6,), c.maw_directive.shape
             assert getattr(c, 'maw_rl', None) is not None
+        # the spawn residual (15%) is created as soon as a neural soldier acts under the gate
+        assert any(getattr(c, 'spawn_rl', None) is not None for c in sim.colonies), \
+            "gate on: expected the spawn residual (15%) to be created"
     finally:
         sandkings.MAW_RL_ENABLED = prev
 

@@ -34,8 +34,26 @@ MAW_DIRECTIVE_DIM = 6        # colony constants the spawn condition on
 MAW_HIDDEN = 32
 MAW_LR = 3e-3
 MAW_LOG_STD_INIT = -0.5      # exp(-0.5) ~ 0.61 initial exploration std
-MAW_UPDATE_EVERY = 16        # flush a batch-REINFORCE update every K batch-cycles
+MAW_UPDATE_EVERY = 16        # flush a maw batch-REINFORCE update every K batch-cycles
+SPAWN_UPDATE_EVERY = 64      # flush a spawn-residual update every K accumulated spawn-steps
 MAW_DIRECTIVE_STRENGTH = 0.5  # bounds how far a directive can tilt an action (neutral at 0.5)
+MAW_RESIDUAL_CLIP = 0.15     # 15% tier "play": max |additive residual| on a spawn action logit
+
+
+def _reinforce_update(log_probs, rewards, optimizer) -> float:
+    """Batch-REINFORCE with a batch-mean baseline (whitened advantage). Shared by the maw
+    policy (85%) and the spawn residual policy (15%). Returns the loss value."""
+    lp = torch.stack(list(log_probs))
+    r = torch.tensor([float(x) for x in rewards], dtype=lp.dtype, device=lp.device)
+    adv = r - r.mean()
+    std = float(adv.std()) if adv.numel() > 1 else 0.0
+    if std > 1e-8:
+        adv = adv / (std + 1e-8)
+    loss = -(lp * adv).mean()
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+    return float(loss.detach())
 
 
 def apply_directive(action_probs, directive, strength: float = MAW_DIRECTIVE_STRENGTH):
@@ -109,17 +127,7 @@ class MawPolicy(nn.Module):
         rewards:   iterable of per-episode scalar rewards.
         Returns the loss value.
         """
-        lp = torch.stack(list(log_probs))
-        r = torch.tensor([float(x) for x in rewards], dtype=lp.dtype, device=lp.device)
-        adv = r - r.mean()
-        std = float(adv.std()) if adv.numel() > 1 else 0.0
-        if std > 1e-8:
-            adv = adv / (std + 1e-8)                # whiten -> stable step size
-        loss = -(lp * adv).mean()
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        return float(loss.detach())
+        return _reinforce_update(log_probs, rewards, optimizer)
 
     def make_optimizer(self, lr: float = MAW_LR) -> torch.optim.Optimizer:
         return torch.optim.Adam(self.parameters(), lr=lr)
@@ -172,4 +180,97 @@ class ColonyMawRL:
         s["_log_probs"] = []
         s["_rewards"] = []
         s["_pending_lp"] = None
+        return s
+
+
+def apply_residual(action_probs, residual):
+    """Add a spawn's bounded residual to the action LOGITS and renormalize. IDENTITY when
+    residual == 0 (the zero-init deterministic value). action_probs: (7,) or (B,7);
+    residual: same shape, each entry in ±MAW_RESIDUAL_CLIP."""
+    logits = torch.log(action_probs.clamp_min(1e-8)) + residual
+    return torch.softmax(logits, dim=-1)
+
+
+class SpawnResidualPolicy(nn.Module):
+    """The 15% tier: a SHARED (per-colony) spawn residual policy — a small Gaussian policy
+    mapping a spawn's frozen encoding -> a BOUNDED additive action-logit residual (±clip,
+    the "play"). Each spawn reacts to its own local state on top of the maw's directive.
+
+    Shared weights => batchable (distinction lives in the per-spawn encoding, NOT in weights),
+    consistent with the design rule. Trained by batch-REINFORCE on each spawn's LOCAL
+    performance (SoldierLayer.get_performance_score). The last layer inits to zero so the
+    deterministic residual starts at exactly identity — turning the 15% on does not jolt
+    behaviour until it has learned.
+    """
+
+    def __init__(self, enc_dim: int = 32, action_dim: int = 7, hidden: int = MAW_HIDDEN,
+                 clip: float = MAW_RESIDUAL_CLIP):
+        super().__init__()
+        self.action_dim = int(action_dim)
+        self.clip = float(clip)
+        self.net = nn.Sequential(
+            nn.Linear(int(enc_dim), hidden), nn.Tanh(),
+            nn.Linear(hidden, self.action_dim),
+        )
+        nn.init.zeros_(self.net[-1].weight)          # residual starts at 0 -> identity
+        nn.init.zeros_(self.net[-1].bias)
+        self.log_std = nn.Parameter(torch.full((self.action_dim,), -1.0))
+
+    def act(self, enc: torch.Tensor, deterministic: bool = False):
+        """Return (residual in ±clip, log_prob). deterministic => tanh(mean)*clip, 0 log_prob."""
+        mean = self.net(enc)
+        if deterministic:
+            return torch.tanh(mean) * self.clip, torch.zeros((), device=mean.device)
+        std = torch.exp(self.log_std)
+        dist = torch.distributions.Normal(mean, std)
+        raw = dist.sample()
+        log_prob = dist.log_prob(raw).sum(-1)
+        return torch.tanh(raw) * self.clip, log_prob    # tanh -> bounded to ±clip
+
+    def update(self, log_probs, rewards, optimizer) -> float:
+        return _reinforce_update(log_probs, rewards, optimizer)
+
+    def make_optimizer(self, lr: float = MAW_LR) -> torch.optim.Optimizer:
+        return torch.optim.Adam(self.parameters(), lr=lr)
+
+
+class ColonySpawnRL:
+    """Per-colony wrapper for the SHARED spawn residual (15%). Applies a bounded residual to
+    each spawn's action, books each spawn's LOCAL performance delta as its reward, and flushes
+    a batch-REINFORCE update every SPAWN_UPDATE_EVERY accumulated spawn-steps. One shared
+    policy for the whole colony (batchable; spawn individuated by their encoding). Pickle-safe
+    (transient grad tensors dropped in __getstate__)."""
+
+    def __init__(self, enc_dim: int = 32, update_every: int = SPAWN_UPDATE_EVERY):
+        self.policy = SpawnResidualPolicy(enc_dim=enc_dim)
+        self.opt = self.policy.make_optimizer()
+        self.update_every = int(update_every)
+        self._log_probs = []
+        self._rewards = []
+        self._pending = {}          # id(unit) -> (log_prob, perf_snapshot) awaiting its reward
+        self.updates = 0
+        self.last_loss = None
+
+    def act(self, unit, enc, perf: float):
+        """Return a bounded residual for this spawn; book the PREVIOUS action's reward
+        (this spawn's local performance delta since it last acted)."""
+        residual, log_prob = self.policy.act(enc)
+        prev = self._pending.get(id(unit))
+        if prev is not None:
+            plp, pperf = prev
+            self._log_probs.append(plp)
+            self._rewards.append(float(perf) - float(pperf))
+        self._pending[id(unit)] = (log_prob, float(perf))
+        if len(self._rewards) >= self.update_every:
+            self.last_loss = self.policy.update(self._log_probs, self._rewards, self.opt)
+            self._log_probs, self._rewards = [], []
+            self._pending = {}          # drop stale pending log_probs (params just stepped)
+            self.updates += 1
+        return residual
+
+    def __getstate__(self):
+        s = self.__dict__.copy()
+        s["_log_probs"] = []
+        s["_rewards"] = []
+        s["_pending"] = {}
         return s

@@ -169,6 +169,78 @@ def test_colony_maw_rl_pickles():
     assert d.shape == (MAW_DIRECTIVE_DIM,)
 
 
+def test_colony_spawn_rl_multi_update():
+    """Reproduces the cross-update stale-pending autograd bug: many units, many updates."""
+    if not HAVE_TORCH:
+        return _skip()
+    from maw_brain import ColonySpawnRL
+    torch.manual_seed(4)
+    srl = ColonySpawnRL(enc_dim=8, update_every=8)
+
+    class U:
+        pass
+
+    units = [U() for _ in range(5)]                  # distinct id() per unit
+    perf = {id(u): 0.0 for u in units}
+    for _ in range(200):
+        for u in units:
+            res = srl.act(u, torch.randn(8), perf[id(u)])   # must not raise
+            perf[id(u)] += 0.01
+            assert res.abs().max() <= srl.policy.clip + 1e-5
+    assert srl.updates >= 3, f"expected several updates, got {srl.updates}"
+
+
+def test_apply_residual_identity():
+    if not HAVE_TORCH:
+        return _skip()
+    from maw_brain import apply_residual
+    probs = torch.tensor([0.2, 0.1, 0.1, 0.2, 0.1, 0.1, 0.2])
+    out = apply_residual(probs, torch.zeros(7))
+    assert torch.allclose(out, probs, atol=1e-6), "zero residual must be identity"
+
+
+def test_spawn_residual_bounded_and_identity():
+    if not HAVE_TORCH:
+        return _skip()
+    from maw_brain import SpawnResidualPolicy
+    torch.manual_seed(2)
+    p = SpawnResidualPolicy(enc_dim=8)
+    res_det, lp = p.act(torch.randn(8), deterministic=True)
+    assert torch.allclose(res_det, torch.zeros(7), atol=1e-6), "zero-init deterministic = identity"
+    assert float(lp) == 0.0
+    res, _ = p.act(torch.randn(8))                       # sampled
+    assert torch.all(res.abs() <= p.clip + 1e-5), "residual must stay within +/-clip"
+
+
+def test_spawn_residual_learns():
+    """Shared spawn residual learns by batch-REINFORCE on a local reward."""
+    if not HAVE_TORCH:
+        return _skip()
+    from maw_brain import SpawnResidualPolicy
+    torch.manual_seed(9)
+    p = SpawnResidualPolicy(enc_dim=8)
+    opt = p.make_optimizer(lr=5e-2)
+    enc = torch.ones(8)
+
+    def det_r3():
+        res, _ = p.act(enc, deterministic=True)
+        return float(res[3])
+
+    start = det_r3()
+    K = 32
+    for _ in range(150):
+        lps, rs = [], []
+        for _ in range(K):
+            res, lp = p.act(enc)
+            rs.append(float(res[3]))                    # reward = residual on action 3
+            lps.append(lp)
+        p.update(lps, rs, opt)
+    end = det_r3()
+    assert end > start + 0.02, f"spawn residual failed to learn: {start:.3f}->{end:.3f}"
+    res, _ = p.act(enc)
+    assert torch.all(res.abs() <= p.clip + 1e-5), "residual stays bounded after training"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

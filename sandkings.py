@@ -7581,13 +7581,20 @@ class SandKingsSimulation:
                 with torch.no_grad():
                     action_probs = unit.brain_layer(encoding)
 
-                # Phase 2a: the maw's directive tilts this soldier's action (gated; identity
-                # when the gate is off OR the directive is neutral 0.5 -> byte-identical).
+                # Phase 2a/2b: maw directive (85%) tilts the action, then the spawn's own
+                # bounded RL residual (15%) plays on top. Gated => byte-identical when off.
                 if MAW_RL_ENABLED:
+                    from maw_brain import apply_directive, apply_residual, ColonySpawnRL
                     _dir = getattr(colony, 'maw_directive', None)
                     if _dir is not None:
-                        from maw_brain import apply_directive
                         action_probs = apply_directive(action_probs, _dir)
+                    srl = getattr(colony, 'spawn_rl', None)
+                    if srl is None:
+                        srl = ColonySpawnRL(enc_dim=int(encoding.reshape(-1).shape[0]))
+                        colony.spawn_rl = srl
+                    residual = srl.act(unit, encoding,
+                                       unit.brain_layer.get_performance_score())
+                    action_probs = apply_residual(action_probs, residual)
 
                 # HIVE MONITOR: decode this soldier's mind (SPEC_HIVE_MONITOR M2/M3)
                 if unit.brain_layer.hidden is not None:
