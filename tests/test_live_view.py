@@ -423,6 +423,21 @@ def test_legend_layout_never_cuts_off_vertically():
     assert len({x for x, _y in positions}) >= 2, "layout should use multiple columns"
 
 
+def test_castle_voxel_has_distinct_glyph_and_color():
+    """K5: a CASTLE voxel renders with its own glyph, legend name, and a color
+    distinct from the generic reinforced tunnel wall — so a castle is
+    recognizable, not indistinguishable brown wall."""
+    from live_view import GLYPHS, VOXEL_LEGEND, build_voxel_palette
+    from sandkings import VoxelType
+    assert VoxelType.CASTLE.value in GLYPHS, "castle needs a glyph"
+    assert VoxelType.CASTLE.value in VOXEL_LEGEND, "castle needs a legend name"
+    pal = build_voxel_palette()
+    castle_c = tuple(int(x) for x in pal[VoxelType.CASTLE.value])
+    wall_c = tuple(int(x) for x in pal[VoxelType.TUNNEL_WALL.value])
+    assert castle_c != (0, 0, 0), "castle needs a palette color"
+    assert castle_c != wall_c, "castle must look different from a tunnel wall"
+
+
 def test_manager_layout_never_cuts_off_vertically():
     """Regression (same class as the legend R34): the manager stat block
     column-wraps via legend_layout so NO row renders past area_h. The old

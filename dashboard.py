@@ -48,6 +48,7 @@ _PALETTE = {
     VoxelType.WOOD.value: (34, 139, 34),
     VoxelType.WOOD_WALL.value: (139, 105, 20),
     VoxelType.WEB.value: (210, 210, 220),
+    VoxelType.CASTLE.value: (200, 195, 210),   # pale stone monument (K5)
 }
 
 

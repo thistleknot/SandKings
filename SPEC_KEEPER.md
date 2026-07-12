@@ -83,12 +83,19 @@ named in the look panel ("a carving: ☀ - reverence") and the legend.
 The keeper reads the colony's soul off the terrarium floor.
 
 ## K5 — Castles (prosperity made visible)
-While a colony is REVERENT and rich (food > WAR_CHEST), workers may
-raise CASTLE walls: TUNNEL_WALL crenellations on the maw ring
-(alternating cells, the palisade mechanic's stone cousin, no rot).
-Milestone: "House X raises a castle to its god" (salience 8). The
-castle is the visible monument the user asked for; its crenellations
-also shelter (weather exposure unchanged — walls block floods per W1).
+A rich colony (food > WAR_CHEST) raises CASTLE walls when EITHER the
+keeper favors it (REVERENT) OR it is durably prosperous on its own —
+food held above WAR_CHEST for at least CASTLE_PROSPERITY_STEPS (500),
+tracked by `colony.prosperous_since` in the per-colony AI loop and
+gated by `_is_prosperous`. The autonomous path exists so castles arise
+in hands-off play (the reverent path alone almost never fires without a
+human keeper). Structure: `VoxelType.CASTLE` crenellations on the maw
+ring (alternating cells, the palisade mechanic's stone cousin, never
+rots; its own glyph `♜` and pale-stone color, distinct from a plain
+reinforced wall; smashable by a battering ram; gives combat cover).
+Milestone: "House X raises a castle" (salience 8). The castle is the
+visible monument the user asked for; its crenellations also shelter
+(weather exposure unchanged — walls block floods per W1).
 
 ## K6 — Surfacing (viewer surface R37)
 - Keeper keys (live viewer): `1` drop food at the look cursor (enters
@@ -275,8 +282,9 @@ zeroes the dole and restores; release bypasses the one-incursion rule;
 cat is keeper-only and never randomly rolled; attitude ladder NONE ->
 REVERENT -> (drought) WRATHFUL, never WRATHFUL without prior faith;
 wrath lowers the war-chest gate; carvings appear on the maw ring,
-match the state table, and purge when disturbed; castles rise only
-when reverent+rich; all state pickles; evolution sim inert.
+match the state table, and purge when disturbed; castles rise when
+rich AND (reverent OR durably prosperous); all state pickles;
+evolution sim inert.
 Also: auto-keeper script fires cat -> grief -> scorpions on slaying;
 gift ladder advances arc none -> known -> claimed -> pi-fueled;
 terminal commands fill known_food / carve the machine-glyph and

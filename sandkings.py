@@ -132,6 +132,10 @@ FELL_LENGTH = 3              # trunk voxels laid along the fall line
 ROT_INTERVAL = 100           # organic stores lose 1 per interval; ore never
 PALISADE_RING = 2            # wall ring radius around the maw (T43)
 WALL_ROT = 800               # steps before a palisade rots to sand
+CASTLE_PROSPERITY_STEPS = 500  # steps a house must hold food > WAR_CHEST before it
+#                                raises a castle on its own (K5: prosperity made visible)
+BUILD_LABOR_EVERY = 3          # 1/N workers (by unit_id) are designated builders that
+#                                prioritize the castle/palisade so a ring actually completes
 SPEAR_ATTACK = 4             # bonus attack while armed (T44)
 SPEAR_LIFE = 400             # steps before it splinters
 RAM_COST = 3                 # wood for a battering ram (T44b)
@@ -508,6 +512,7 @@ class VoxelType(Enum):
     WOOD = 14          # Palm/scrub trunk - choppable, flammable (T41)
     WOOD_WALL = 15     # Palisade - rots, burns; the poor colony's wall (T43)
     WEB = 16           # Spider silk - snares a step, burns (T48)
+    CASTLE = 17        # Stone castle crenellation - a prosperous house's monument (K5)
 
     def is_tunnelable(self):
         return self in (VoxelType.SAND, VoxelType.AIR)
@@ -516,7 +521,7 @@ class VoxelType(Enum):
         return self in (VoxelType.STONE, VoxelType.GLASS, VoxelType.TUNNEL_WALL,
                         VoxelType.COPPER_ORE, VoxelType.GOLD_ORE,
                         VoxelType.HULL, VoxelType.SALVAGE, VoxelType.WOOD,
-                        VoxelType.WOOD_WALL)
+                        VoxelType.WOOD_WALL, VoxelType.CASTLE)
 
 def box_blur(field: np.ndarray, passes: int = 2) -> np.ndarray:
     """Neighbor-mean smoothing via np.roll (wraps at edges); 2D or 3D fields."""
@@ -1421,6 +1426,8 @@ class Visualizer:
                     color = (194, 178, 128)
                 elif voxel == VoxelType.TUNNEL_WALL:
                     color = (139, 90, 43)
+                elif voxel == VoxelType.CASTLE:
+                    color = (200, 195, 210)
                 elif voxel == VoxelType.FOOD:
                     color = (0, 255, 0)
                 elif voxel == VoxelType.CORPSE:
@@ -2045,6 +2052,16 @@ class SandKingsSimulation:
                                      UnitType.SOLDIER if roll < 0.85 else UnitType.SCOUT)
                     colony.spawn_unit(unit_type, self.step_count)
             
+            # K5: track sustained prosperity for autonomous castle-building. A
+            # house durably richer than the war-chest raises a castle on its own
+            # (prosperity made visible) — no keeper reverence required. A brief
+            # spike doesn't qualify: prosperous_since marks when wealth began.
+            if colony.maw.food_stored > WAR_CHEST:
+                if getattr(colony, 'prosperous_since', -1) < 0:
+                    colony.prosperous_since = self.step_count
+            else:
+                colony.prosperous_since = -1
+
             # Unit AI (simplified)
             for unit in colony.units[:]:  # Copy list to allow removal
                 self._execute_unit_ai(unit, colony)
@@ -4343,9 +4360,38 @@ class SandKingsSimulation:
             self._log_event(f"House {hc}, newborn, already resents its"
                             f" parent House {self._house_name(weaker)}")
 
+    def _try_build(self, unit: SandKing, colony: Colony) -> bool:
+        """A designated builder raises the house's monument/defenses before doing
+        economy, so a ring actually completes instead of being starved by
+        farm/mine/timber. Castle when rich AND (reverent OR durably prosperous);
+        palisade only for a genuine defensive agenda (FORTIFY posture or at war) —
+        the default-defense case stays opportunistic in the late branch (6c).
+        Returns True if a build step was taken (the worker skips economy this tick).
+        No RNG unless a trigger holds, so neutral colonies are byte-unaffected."""
+        if (colony.maw.food_stored > WAR_CHEST
+                and (self.keeper_attitude(colony) == 'reverent'
+                     or self._is_prosperous(colony))
+                and self._castle_step(unit, colony)):
+            return True
+        if (getattr(colony, 'wood', 0) >= 1
+                and (self._posture(colony) == "FORTIFY"
+                     or getattr(colony, 'at_war', False))
+                and self._palisade_step(unit, colony)):
+            return True
+        return False
+
+    def _is_prosperous(self, colony: Colony) -> bool:
+        """K5: durably wealthy — food has stayed above WAR_CHEST for at least
+        CASTLE_PROSPERITY_STEPS. A brief spike does not qualify. This is the
+        autonomous castle trigger (prosperity made visible), independent of the
+        keeper's favor. prosperous_since is stamped in the per-colony AI loop."""
+        since = getattr(colony, 'prosperous_since', -1)
+        return since >= 0 and (self.step_count - since) >= CASTLE_PROSPERITY_STEPS
+
     def _castle_step(self, unit: SandKing, colony: Colony) -> bool:
-        """K5: crenellations - TUNNEL_WALL on alternating maw-ring cells.
-        Stone, not timber: castles honor the god and never rot."""
+        """K5: stone CASTLE crenellations on alternating maw-ring cells. Stone,
+        not timber: castles are a house's monument and never rot. Raised by a
+        REVERENT house (the keeper's favor) OR a durably PROSPEROUS one."""
         mx, my, mz = colony.maw.position
         r = PALISADE_RING + 1
         best, best_dist = None, None
@@ -4366,11 +4412,11 @@ class SandKingsSimulation:
             return False
         if max(abs(best[0] - ux), abs(best[1] - uy), abs(best[2] - uz)) <= 1:
             colony.maw.food_stored -= 2  # labor is fed
-            self.world.voxels[best] = VoxelType.TUNNEL_WALL.value
+            self.world.voxels[best] = VoxelType.CASTLE.value
             self.world.ownership[best] = colony.colony_id
             self._milestone(colony, 'castle',
                             f"House {self._house_name(colony)} raises"
-                            " a castle to its god", unit)
+                            " a castle", unit)
             return True
         return self._step_toward(unit, best, colony)
 
@@ -6839,6 +6885,13 @@ class SandKingsSimulation:
         if unit.unit_type == UnitType.WORKER:
             if getattr(unit, 'gift_to', -1) >= 0:
                 return  # envoys are single-minded; they move in 5b (P3)
+            # (0) Designated builders: a deterministic 1/N of a house's workers
+            # (by unit_id) raise its castle/palisade BEFORE economy when a build
+            # agenda holds, so a ring completes instead of being perpetually
+            # starved. No-op (no RNG) when there is nothing to build.
+            if unit.unit_id % BUILD_LABOR_EVERY == 0 and self._try_build(unit, colony):
+                return
+
             # (1) Radius-2 grab: wild food +15, ripe crops +40 -> TILLED
             neighbors = self.world.get_neighbors_3d(unit.position, radius=2)
             acted = False
@@ -6960,15 +7013,21 @@ class SandKingsSimulation:
             if not acted and getattr(colony, 'wood', 0) < 4:
                 acted = self._chop_step(unit, colony)
 
-            # (6c) Palisades (T43): fortifiers wall the maw with timber
+            # (6c) Palisades (T43): fortifiers wall the maw with timber. Threatened
+            # houses (an enemy in range, or at war) wall up even without a fortify
+            # lean; the default defense_investment (0.5) now qualifies (was a dead
+            # gate at strict > 0.5).
             if not acted and getattr(colony, 'wood', 0) >= 1 and (
                     self._posture(colony) == "FORTIFY"
-                    or getattr(colony.genome, 'defense_investment', 0.0) > 0.5):
+                    or getattr(colony.genome, 'defense_investment', 0.0) >= 0.5
+                    or getattr(colony, 'at_war', False)):
                 acted = self._palisade_step(unit, colony)
 
-            # (6d) Castles (K5): reverence made visible in stone
+            # (6d) Castles (K5): a house makes its standing visible in stone when
+            # the keeper favors it (reverent) OR when it is durably prosperous.
             if (not acted and colony.maw.food_stored > WAR_CHEST
-                    and self.keeper_attitude(colony) == 'reverent'):
+                    and (self.keeper_attitude(colony) == 'reverent'
+                         or self._is_prosperous(colony))):
                 acted = self._castle_step(unit, colony)
 
             # (7) No work known: random dig
@@ -7085,7 +7144,8 @@ class SandKingsSimulation:
                         if not foe:
                             continue
                         if ram_live and v in (VoxelType.WOOD_WALL.value,
-                                              VoxelType.TUNNEL_WALL.value):
+                                              VoxelType.TUNNEL_WALL.value,
+                                              VoxelType.CASTLE.value):
                             self.world.voxels[nx, ny, nz] = VoxelType.SAND.value
                             self._rot().pop((nx, ny, nz), None)
                             key = ('ram', colony.colony_id, owner)

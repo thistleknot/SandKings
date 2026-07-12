@@ -474,7 +474,8 @@ class EnhancedSandKingsSimulation(SandKingsSimulation):
                         for colony2, unit2 in occupants[i+1:]:
                             if colony1.colony_id != colony2.colony_id:
                                 terrain = self.world.get_voxel(*pos)
-                                cover = 1 if terrain == VoxelType.TUNNEL_WALL else 0
+                                cover = 1 if terrain in (VoxelType.TUNNEL_WALL,
+                                                         VoxelType.CASTLE) else 0
                                 
                                 ap1 = int(colony1.genome.aggression * 3)
                                 hit1 = np.random.randint(1, 7)

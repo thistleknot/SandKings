@@ -348,3 +348,70 @@ def test_gift_cadence_gc4_manual_and_auto_agree():
     # Auto path should not dispense before year 1
     sim2._keeper_tick()
     assert getattr(sim2, 'gifts_given', []) == [], "auto no-op before year 1"
+
+
+# ---- K5 autonomous castles & fortifications (structures made visible) --------
+
+def test_is_prosperous_requires_sustained_wealth():
+    """_is_prosperous is the autonomous castle gate: food > WAR_CHEST held for
+    at least CASTLE_PROSPERITY_STEPS. A brief spike must NOT qualify."""
+    from sandkings import CASTLE_PROSPERITY_STEPS
+    sim = make_sim()
+    colony = sim.colonies[0]
+    sim.step_count = 10_000
+    colony.prosperous_since = -1
+    assert not sim._is_prosperous(colony), "no wealth stamp -> not prosperous"
+    colony.prosperous_since = 10_000 - (CASTLE_PROSPERITY_STEPS - 50)  # too brief
+    assert not sim._is_prosperous(colony), "a brief spike must not qualify"
+    colony.prosperous_since = 10_000 - CASTLE_PROSPERITY_STEPS         # durable
+    assert sim._is_prosperous(colony), "sustained wealth must qualify"
+
+
+def test_prosperity_stamp_sets_and_resets_with_food():
+    """The per-colony AI loop stamps prosperous_since when food crosses
+    WAR_CHEST and clears it when wealth falls back."""
+    from sandkings import WAR_CHEST
+    sim = make_sim()
+    colony = sim.colonies[0]
+    colony.maw.food_stored = WAR_CHEST + 300
+    sim.step()
+    assert getattr(colony, 'prosperous_since', -1) >= 0, "wealth stamps the clock"
+    colony.maw.food_stored = 5
+    sim.step()
+    assert colony.prosperous_since == -1, "poverty clears the clock"
+
+
+def test_castle_step_places_castle_voxel_without_keeper():
+    """A castle is raised in stone (VoxelType.CASTLE) with NO keeper favor —
+    _castle_step lays crenellations on the maw ring."""
+    from sandkings import VoxelType, UnitType
+    sim = make_sim()
+    colony = sim.colonies[0]
+    assert sim.keeper_attitude(colony) != 'reverent', "no keeper favor in this test"
+    colony.maw.food_stored = 600
+    if not colony.units:
+        colony.spawn_unit(UnitType.WORKER)
+    worker = colony.units[0]
+    before = int((sim.world.voxels == VoxelType.CASTLE.value).sum())
+    for _ in range(60):                 # worker walks the ring and lays stone
+        sim._castle_step(worker, colony)
+    after = int((sim.world.voxels == VoxelType.CASTLE.value).sum())
+    assert after > before, "castle step must place at least one CASTLE voxel"
+
+
+def test_palisade_gate_fires_at_default_defense():
+    """Regression: the palisade gate was `defense_investment > 0.5` with a 0.5
+    default, so it never fired. It now qualifies at the default (>= 0.5)."""
+    from sandkings import VoxelType, UnitType
+    sim = make_sim()
+    colony = sim.colonies[0]
+    colony.genome.defense_investment = 0.5          # the default
+    colony.wood = 20
+    if not colony.units:
+        colony.spawn_unit(UnitType.WORKER)
+    worker = colony.units[0]
+    before = int((sim.world.voxels == VoxelType.WOOD_WALL.value).sum())
+    for _ in range(60):
+        sim._palisade_step(worker, colony)
+    after = int((sim.world.voxels == VoxelType.WOOD_WALL.value).sum())
+    assert after > before, "a default-defense house must be able to wall up"
