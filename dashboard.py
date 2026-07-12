@@ -969,17 +969,16 @@ def main():
     parser.add_argument("--colonies", type=int, default=4)
     parser.add_argument("--canon", action="store_true",
                         help="seat the novella's four houses (CH1)")
-    parser.add_argument("--dynamic", action="store_true",
-                        help="dynamic population + Spartan succession (count breathes 2..8)")
-    parser.add_argument("--hydro", action="store_true",
-                        help="water engineering: oasis springs, water flows/pools, colonies "
-                             "dig rivers/reservoirs/dikes, boats cross water (SPEC_HYDRO)")
+    parser.add_argument("--no-dynamic", action="store_true",
+                        help="disable dynamic population + succession (baseline: ON)")
+    parser.add_argument("--no-hydro", action="store_true",
+                        help="disable water engineering (baseline: ON)")
     args = parser.parse_args()
 
-    if getattr(args, 'hydro', False):
+    if not getattr(args, 'no_hydro', False):     # water engineering is baseline
         import sandkings as _sk
         _sk.HYDRO_SOURCES_ENABLED = True
-        print("[keeper] HYDRO enabled - the oasis springs and water engineering is live")
+        print("[keeper] HYDRO - the oasis springs; water engineering is live")
 
     sim = None
     if args.persist and not args.fresh:
@@ -990,7 +989,7 @@ def main():
         sim = SandKingsSimulation(width=args.width, height=args.height,
                                   depth=args.depth, num_colonies=args.colonies,
                                   canon=args.canon,
-                                  dynamic_population=getattr(args, 'dynamic', False))
+                                  dynamic_population=not getattr(args, 'no_dynamic', False))
     runner = TerrariumRunner(sim, sps=args.sps,
                              save_path=None if args.fresh else args.persist)
     app = create_app(runner)

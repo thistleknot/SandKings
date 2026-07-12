@@ -7938,10 +7938,10 @@ def main():
                         help='Skip the 2-year dole ramp: full seasonal scarcity '
                         'from step 0 (T17)')
     parser.add_argument('--num-colonies', type=int, default=0, help='Number of colonies (0=random 3-5)')
-    parser.add_argument('--dynamic', action='store_true',
-                        help='Dynamic population + succession: the colony count breathes '
-                             '2..8 (founding/budding), and a dead queen triggers a Spartan '
-                             'succession drama (heir reclaims the line, or the house falls).')
+    parser.add_argument('--no-dynamic', action='store_true',
+                        help='Disable dynamic population + succession (baseline: ON — the '
+                             'colony count breathes 2..8, a dead queen triggers a Spartan '
+                             'succession drama).')
     parser.add_argument('--canon', action='store_true',
                         help="Seat the novella's four houses: Crimson (creative), "
                              "Pale (favored), Sable (wise), Amber (underdog)")
@@ -7973,11 +7973,10 @@ def main():
                              'chooses annihilate / subjugate / wage by net '
                              'extraction, driving capture and the wage market '
                              '(SPEC_BARGAIN; supersedes --subjugation and --wages)')
-    parser.add_argument('--hydro', action='store_true',
-                        help='Enable water engineering: the oasis springs, water flows '
-                             'and pools, and colonies that learn the hydro tree dig '
-                             'rivers/reservoirs and irrigation dikes; boats cross water '
-                             '(SPEC_HYDRO)')
+    parser.add_argument('--no-hydro', action='store_true',
+                        help='Disable water engineering (baseline: ON — the oasis springs, '
+                             'water flows and pools, colonies dig rivers/reservoirs/dikes, '
+                             'boats cross water).')
     args = parser.parse_args()
     
     print("="*60)
@@ -8003,7 +8002,7 @@ def main():
         sim = SandKingsSimulation(width=args.width, height=args.height,
                                  depth=args.depth, num_colonies=args.num_colonies,
                                  canon=getattr(args, 'canon', False),
-                                 dynamic_population=getattr(args, 'dynamic', False))
+                                 dynamic_population=not getattr(args, 'no_dynamic', False))
     sim.harsh = args.harsh  # T17 ramp control (applies to resumed sims too)
 
     # --subjugation: turn the capture economy ON for this run only. The module
@@ -8036,15 +8035,13 @@ def main():
               "subjugate/wage by net extraction; wages win when force merely leaks "
               "(SPEC_BARGAIN)")
 
-    # --hydro: turn on the water-engineering system for this run only. The module
-    # default HYDRO_SOURCES_ENABLED stays False (regression battery byte-identical);
-    # here we flip the live global so the oasis springs, water flows and pools, and
-    # colonies that learn the hydro tree build rivers/reservoirs/dikes.
-    if getattr(args, 'hydro', False):
+    # Water engineering is BASELINE (on unless --no-hydro). The module default
+    # HYDRO_SOURCES_ENABLED stays False only so the regression battery can isolate a
+    # controlled world; the actual game flips it on here.
+    if not getattr(args, 'no_hydro', False):
         globals()['HYDRO_SOURCES_ENABLED'] = True
-        print("[CHAIN] HYDRO ENABLED - the oasis springs; water flows, pools, and "
-              "irrigates; colonies dig rivers/reservoirs and boats cross the water "
-              "(SPEC_HYDRO)")
+        print("[CHAIN] HYDRO - the oasis springs; water flows, pools, and irrigates; "
+              "colonies dig rivers/reservoirs and boats cross the water (SPEC_HYDRO)")
 
     # Enable neural mode if requested (fresh sims only - resumed sims keep
     # their evolved brains)
