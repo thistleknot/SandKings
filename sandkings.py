@@ -7580,7 +7580,15 @@ class SandKingsSimulation:
                             encode_soldier_state(unit, colony, self.world, ep))
                 with torch.no_grad():
                     action_probs = unit.brain_layer(encoding)
-                
+
+                # Phase 2a: the maw's directive tilts this soldier's action (gated; identity
+                # when the gate is off OR the directive is neutral 0.5 -> byte-identical).
+                if MAW_RL_ENABLED:
+                    _dir = getattr(colony, 'maw_directive', None)
+                    if _dir is not None:
+                        from maw_brain import apply_directive
+                        action_probs = apply_directive(action_probs, _dir)
+
                 # HIVE MONITOR: decode this soldier's mind (SPEC_HIVE_MONITOR M2/M3)
                 if unit.brain_layer.hidden is not None:
                     hidden_vec = unit.brain_layer.hidden.squeeze(0).numpy()

@@ -113,6 +113,24 @@ def test_policy_pickles():
     assert d.shape == (MAW_DIRECTIVE_DIM,)
 
 
+def test_apply_directive_identity_and_tilt():
+    if not HAVE_TORCH:
+        return _skip()
+    from maw_brain import apply_directive
+    probs = torch.tensor([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.4])   # 7 actions, sums to 1
+    neutral = torch.full((MAW_DIRECTIVE_DIM,), 0.5)
+    out = apply_directive(probs, neutral)
+    assert torch.allclose(out, probs, atol=1e-6), "directive 0.5 must be identity"
+    aggr = neutral.clone(); aggr[0] = 0.95
+    out2 = apply_directive(probs, aggr)
+    assert out2[6] > probs[6], "high aggression must raise the attack prob"
+    assert abs(float(out2.sum()) - 1.0) < 1e-5, "stays a distribution"
+    # batched
+    pb = probs.unsqueeze(0).repeat(3, 1)
+    ob = apply_directive(pb, aggr)
+    assert ob.shape == (3, 7) and torch.allclose(ob.sum(-1), torch.ones(3), atol=1e-5)
+
+
 def test_colony_maw_rl_learns():
     """The per-colony two-timescale wrapper learns over cycles (act/observe/update loop)."""
     if not HAVE_TORCH:

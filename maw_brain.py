@@ -35,6 +35,26 @@ MAW_HIDDEN = 32
 MAW_LR = 3e-3
 MAW_LOG_STD_INIT = -0.5      # exp(-0.5) ~ 0.61 initial exploration std
 MAW_UPDATE_EVERY = 16        # flush a batch-REINFORCE update every K batch-cycles
+MAW_DIRECTIVE_STRENGTH = 0.5  # bounds how far a directive can tilt an action (neutral at 0.5)
+
+
+def apply_directive(action_probs, directive, strength: float = MAW_DIRECTIVE_STRENGTH):
+    """Tilt a soldier's action distribution by the colony directive (the 85% tier's output).
+
+    IDENTITY at directive==0.5 — the neutral value the untrained policy centers on — so
+    turning the maw on does not jolt behaviour until it has learned. directive[0]
+    ('aggression') multiplies the ATTACK action (index 6) by exp(strength*2*(d0-0.5)) and
+    renormalizes; bounded and reversible. action_probs: (7,) or (B,7); directive: (>=1,).
+    (Later directive dims map to more behaviours; this is the loop-closing first cut.)
+    """
+    probs = action_probs.clone()
+    d0 = directive.reshape(-1)[0]
+    factor = torch.exp(strength * 2.0 * (d0 - 0.5))
+    if probs.dim() == 1:
+        probs[6] = probs[6] * factor
+        return probs / probs.sum()
+    probs[:, 6] = probs[:, 6] * factor
+    return probs / probs.sum(-1, keepdim=True)
 
 
 class MawPolicy(nn.Module):
