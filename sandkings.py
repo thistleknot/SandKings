@@ -332,6 +332,10 @@ from tech import (
     CATAPULT_SPLASH, GUNPOWDER_ATTACK,
     MATERIALS, CRAFT_RECIPES, CRAFTED_EFFECTS,
     CALTROP_COUNT, CALTROP_DAMAGE,
+    HYDRO_SOURCES_ENABLED, HYDRO_TICK, HYDRO_CAP, HYDRO_FLOW_RATE,
+    HYDRO_SETTLE_MIN, HYDRO_SOURCE_LEVEL, HYDRO_EVAP_RATE, HYDRO_IRRIG_GROWTH,
+    HYDRO_CHANNEL_LEN, HYDRO_RESERVOIR_RADIUS, HYDRO_RESERVOIR_DEPTH,
+    HYDRO_RESERVOIR_ABSORB,
 )
 TERMINAL_UNLOCK = 40         # pi operate-ticks before the terminal (K10)
 TERMINAL_MASTERY = 16        # successful commands before the breach
@@ -515,6 +519,10 @@ class VoxelType(Enum):
     WOOD_WALL = 15     # Palisade - rots, burns; the poor colony's wall (T43)
     WEB = 16           # Spider silk - snares a step, burns (T48)
     CASTLE = 17        # Stone castle crenellation - a prosperous house's monument (K5)
+    WATER = 18         # Standing water - the flow-sim's rendered surface (HYDRO). A
+    #                    depth field is the source of truth; this voxel mirrors cells at
+    #                    depth >= HYDRO_SETTLE_MIN. Non-solid + non-tunnelable, so it
+    #                    blocks gravity, tunnel(), and walking (boats cross it).
 
     def is_tunnelable(self):
         return self in (VoxelType.SAND, VoxelType.AIR)
@@ -859,6 +867,15 @@ class VoxelWorld:
         """Highest non-AIR z in a column (glass floor guarantees >= 0)."""
         nonair = np.nonzero(self.voxels[x, y, :] != VoxelType.AIR.value)[0]
         return int(nonair[-1]) if len(nonair) else 0
+
+    def terrain_z(self, x: int, y: int) -> int:
+        """Highest non-AIR, non-WATER z in a column — the solid ground height,
+        ignoring standing water (HYDRO). Equals surface_z when there is no water;
+        used where a query means 'the land' (crop burial, the flood dam rule)."""
+        col = self.voxels[x, y, :]
+        ground = np.nonzero((col != VoxelType.AIR.value)
+                            & (col != VoxelType.WATER.value))[0]
+        return int(ground[-1]) if len(ground) else 0
 
     def in_bounds(self, x, y, z):
         """Check if coordinates are within world bounds"""
@@ -1831,6 +1848,11 @@ class SandKingsSimulation:
         # weather that emerges from the reservoir + sun the keeper sets
         self._biome_tick()
 
+        # 3c-f. HYDRO FLOW SIM (SPEC_HYDRO): standing water flows, settles, drains.
+        # No-op (early-return) until water exists, so a neutral run is untouched.
+        if self.step_count % HYDRO_TICK == 0:
+            self._hydro_tick()
+
         # 3c-w. DESERT WEATHER (SPEC_WEATHER W1-W3): flood, hail, frost
         self._weather_tick(season)
 
@@ -2236,6 +2258,75 @@ class SandKingsSimulation:
             if (mx - cx) ** 2 + (my - cy) ** 2 <= (OASIS_RADIUS + 2) ** 2:
                 return colony.colony_id
         return None
+
+    # ---- HYDRO: persistent water flow simulation (SPEC_HYDRO) ----------------
+    def _water_field(self):
+        """The persistent water-DEPTH field (w,h,d float32) — the flow sim's single
+        source of truth. Lazily allocated (None until water first appears), so a
+        neutral run never touches it and checkpoints stay byte-identical."""
+        return getattr(self, 'water', None)
+
+    def _ensure_water_field(self):
+        """Allocate the water field on first use; returns it."""
+        f = getattr(self, 'water', None)
+        if f is None:
+            f = np.zeros(self.world.voxels.shape, dtype=np.float32)
+            self.water = f
+        return f
+
+    def _add_water(self, x: int, y: int, z: int, amount: float):
+        """Introduce water at a cell (the test injector / sources). Allocates."""
+        f = self._ensure_water_field()
+        f[x, y, z] = min(HYDRO_CAP, f[x, y, z] + amount)
+        return f
+
+    def _hydro_passable(self) -> np.ndarray:
+        """(w,h,d) bool: cells water may occupy — AIR or already WATER (never
+        solid/sand/crop/wall). AIR + WATER are the flow medium."""
+        v = self.world.voxels
+        return (v == VoxelType.AIR.value) | (v == VoxelType.WATER.value)
+
+    def _hydro_tick(self):
+        """Conservative cellular water update: gravity, lateral pressure
+        equalization, edge drain, then mirror to WATER voxels. Pure numpy, ZERO
+        RNG — cannot perturb the global stream. Sources/evaporation (which change
+        total volume) are Phase 2, gated by HYDRO_SOURCES_ENABLED. Early-returns
+        with no water, so a neutral run is untouched and this costs nothing until
+        water exists."""
+        f = getattr(self, 'water', None)
+        if f is None or not f.any():
+            return
+        w, h, d = self.world.dimensions
+        passable = self._hydro_passable()
+        zidx = np.arange(d, dtype=np.float32)[None, None, :]
+        # (1) GRAVITY: water falls into the passable cell below, capped by HYDRO_CAP.
+        for z in range(1, d):
+            room = np.maximum(0.0, HYDRO_CAP - f[:, :, z - 1])
+            move = np.minimum(f[:, :, z], room) * passable[:, :, z - 1]
+            f[:, :, z] -= move
+            f[:, :, z - 1] += move
+        # (2) LATERAL EQUALIZATION: move water from higher to lower hydraulic head
+        # (floor z + depth) into passable ±x/±y neighbours. Symmetric transfer via
+        # np.roll conserves total volume exactly. head recomputed per pass.
+        for axis, shift in ((0, 1), (0, -1), (1, 1), (1, -1)):
+            head = zidx + f
+            nbr_head = np.roll(head, -shift, axis=axis)
+            nbr_pass = np.roll(passable, -shift, axis=axis)
+            flow = np.clip(HYDRO_FLOW_RATE * (head - nbr_head) * 0.5, 0.0, None)
+            flow = np.minimum(flow, f) * nbr_pass       # bounded by what's here; nbr passable
+            f -= flow
+            f += np.roll(flow, shift, axis=axis)
+        np.minimum(f, HYDRO_CAP, out=f)
+        # (3) EDGE SINKS: water at the map boundary drains (the outfall; also
+        # absorbs any np.roll wrap-around at the edges).
+        f[0, :, :] = 0.0; f[-1, :, :] = 0.0
+        f[:, 0, :] = 0.0; f[:, -1, :] = 0.0
+        # (4) VOXEL MIRROR: AIR<->WATER by the settle threshold; never overwrite
+        # SAND/solid/crop/wall (only AIR becomes WATER, only WATER reverts to AIR).
+        v = self.world.voxels
+        wet = f >= HYDRO_SETTLE_MIN
+        v[wet & (v == VoxelType.AIR.value)] = VoxelType.WATER.value
+        v[(~wet) & (v == VoxelType.WATER.value)] = VoxelType.AIR.value
 
     def _crops(self) -> Dict[Tuple[int, int, int], int]:
         """Sparse crop registry pos -> grow ticks (T19); checkpoint-guarded."""

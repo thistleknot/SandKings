@@ -17,7 +17,8 @@ dropped material should craft into it.
 # Adding a row is the only step to introduce a technology.
 TECH_FOREIGN = ('abacus', 'watch', 'calculator', 'pi')
 TECH_NATIVE = ('fire', 'farming', 'metallurgy', 'plow', 'masonry',
-               'gunpowder', 'catapult')
+               'gunpowder', 'catapult',
+               'irrigation', 'aqueduct', 'reservoir')  # HYDRO water-engineering tree
 TECH_REGISTRY = {
     'abacus':     {'kind': 'foreign', 'desc': 'counting and quantity'},
     'watch':      {'kind': 'foreign', 'desc': 'time and periodicity'},
@@ -33,6 +34,14 @@ TECH_REGISTRY = {
                    'prereq': ('metallurgy', 'fire')},
     'catapult':   {'kind': 'native', 'desc': 'the engine that hurls shot',
                    'prereq': ('masonry', 'gunpowder')},
+    # HYDRO water-engineering tree (prereqs RESEARCHED once known - TE11; also
+    # learned faster by DOING via _practice inside the dig behaviors)
+    'irrigation': {'kind': 'native', 'desc': 'ditches and dikes for the field',
+                   'prereq': ('farming',)},
+    'aqueduct':   {'kind': 'native', 'desc': 'channels that carry water across the land',
+                   'prereq': ('irrigation',)},
+    'reservoir':  {'kind': 'native', 'desc': 'the held lake - water stored against drought',
+                   'prereq': ('aqueduct',)},
 }
 # T2a acquisition (SPEC_TECH TE7-TE9): practice + observe + grains -> proficiency
 TECH_TICK = 20               # cadence of the observe/grains pass
@@ -50,6 +59,23 @@ METAL_WEAPON_BONUS = 0.6     # metallurgy: spear/weapon attack scaling
 METAL_PICK_BONUS = 0.5       # metallurgy: mining speed (picks)
 PLOW_COST_BONUS = 0.4        # plow: cheaper seed / faster sowing
 MASON_WALL_BONUS = 1.0       # masonry: wall durability
+
+# HYDRO water-engineering (flow sim + tech tree). DEFAULT-NEUTRAL: no colony knows
+# these at start and the flow field is lazily allocated, so a neutral run never
+# touches water. Sources/evaporation are additionally gated by HYDRO_SOURCES_ENABLED
+# so the regression battery stays byte-identical until deliberately turned on.
+HYDRO_SOURCES_ENABLED = False # master gate for oasis sources + evaporation (Phase 2/8)
+HYDRO_TICK = 5               # steps between flow-sim updates (aligned with gravity)
+HYDRO_CAP = 1.0             # max water depth a cell holds (float volume units)
+HYDRO_FLOW_RATE = 0.25      # fraction of head-difference moved laterally per tick
+HYDRO_SETTLE_MIN = 0.10     # min depth to render/mirror a cell as a WATER voxel
+HYDRO_SOURCE_LEVEL = 0.9    # depth a source cell (oasis) is topped up to (Phase 2)
+HYDRO_EVAP_RATE = 0.01      # fraction evaporated per tick, scaled by dryness (Phase 2)
+HYDRO_IRRIG_GROWTH = 2      # extra crop growth-units for a CROP cell next to water (P5)
+HYDRO_CHANNEL_LEN = 10      # base channel length; scales with aqueduct proficiency (P4)
+HYDRO_RESERVOIR_RADIUS = 2  # base basin radius; scales with reservoir proficiency (P4)
+HYDRO_RESERVOIR_DEPTH = 3   # base basin depth in voxels (P4)
+HYDRO_RESERVOIR_ABSORB = 0.5  # flood volume a basin can absorb per cell (P6)
 
 # T2c upper tree (SPEC_TECH TE11): gunpowder, the catapult, the shot across the board
 TECH_RESEARCH_XP = 0.015     # xp/tick toward a tech whose prereqs are known

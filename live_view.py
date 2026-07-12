@@ -69,6 +69,7 @@ GLYPHS = {                 # DF-style terrain glyphs (spec R18/R22)
     VoxelType.WOOD_WALL.value: "|",
     VoxelType.WEB.value: "x",
     VoxelType.CASTLE.value: "♜",       # stone castle crenellation (K5)
+    VoxelType.WATER.value: "≈",        # standing water (HYDRO flow sim)
 }
 FIRE_GLYPH = "^"                    # burning-cell overlay (T46)
 FIRE_COLOR = (255, 120, 0)
@@ -200,6 +201,7 @@ def build_voxel_palette() -> np.ndarray:
     palette[VoxelType.WOOD_WALL.value] = (139, 105, 20)
     palette[VoxelType.WEB.value] = (210, 210, 220)
     palette[VoxelType.CASTLE.value] = (200, 195, 210)   # pale stone monument (K5)
+    palette[VoxelType.WATER.value] = (40, 90, 200)      # standing water (HYDRO)
     return palette
 
 
@@ -602,6 +604,7 @@ VOXEL_LEGEND = {  # R34: every non-AIR GLYPHS row gets a name
     VoxelType.WOOD_WALL.value: "palisade (rots, burns)",
     VoxelType.WEB.value: "spider silk (snares)",
     VoxelType.CASTLE.value: "castle (prosperity, never rots)",
+    VoxelType.WATER.value: "standing water (rivers, reservoirs)",
 }
 
 
