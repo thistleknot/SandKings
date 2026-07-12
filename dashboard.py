@@ -231,7 +231,11 @@ def render_frame_png(sim: SandKingsSimulation, scale: int = 640) -> bytes:
     # surface projection, else the warren is invisible. Columns with a tunnel
     # get a dim ghost of the digging house's color.
     air = VoxelType.AIR.value
-    tunnel3d = (vox == air) & (world.ownership >= 0)
+    # a genuine subsurface tunnel = owned carved AIR with SOLID ground above it
+    _solid = (vox != air) & (vox != VoxelType.WATER.value)
+    _solid_above = np.zeros_like(_solid)
+    _solid_above[:, :, :-1] = np.cumsum(_solid[:, :, ::-1], axis=2)[:, :, ::-1][:, :, 1:] > 0
+    tunnel3d = (vox == air) & (world.ownership >= 0) & _solid_above
     has_tunnel = tunnel3d.any(axis=2)
     if has_tunnel.any():
         z_top = (d - 1) - np.argmax(tunnel3d[:, :, ::-1], axis=2)   # topmost tunnel z
@@ -239,8 +243,8 @@ def render_frame_png(sim: SandKingsSimulation, scale: int = 640) -> bytes:
         for colony in sim.colonies:
             m = has_tunnel & (owner == colony.colony_id)
             if m.any():
-                ghost = np.array(colony.color, dtype=np.float32) * 0.5
-                img[m] = (0.62 * img[m] + 0.38 * ghost).astype(np.uint8)
+                ghost = np.array(colony.color, dtype=np.float32)   # clear, not faint
+                img[m] = (0.45 * img[m] + 0.55 * ghost).astype(np.uint8)
     # overlays (drawn at cell resolution, upscaled after)
     for (x, y) in getattr(sim, 'flood_cells', None) or ():
         if 0 <= x < w and 0 <= y < h:

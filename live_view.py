@@ -303,7 +303,13 @@ def topdown_color_array(world: VoxelWorld, colonies: List[Colony], z_level: int)
     # X-RAY: reveal subsurface tunnels (owned carved AIR below the surface) as a
     # dim ghost of the digging house's color, so the warren shows from above.
     vox = world.voxels
-    tunnel3d = (vox == VoxelType.AIR.value) & (world.ownership >= 0)
+    # a genuine subsurface tunnel = owned carved AIR with SOLID ground above it
+    # (excludes surface-owned air over the nest, so the X-ray shows warrens, not
+    # territory).
+    _solid = (vox != VoxelType.AIR.value) & (vox != VoxelType.WATER.value)
+    _solid_above = np.zeros_like(_solid)
+    _solid_above[:, :, :-1] = np.cumsum(_solid[:, :, ::-1], axis=2)[:, :, ::-1][:, :, 1:] > 0
+    tunnel3d = (vox == VoxelType.AIR.value) & (world.ownership >= 0) & _solid_above
     has_tunnel = tunnel3d.any(axis=2)
     if has_tunnel.any():
         d = world.depth
@@ -312,8 +318,10 @@ def topdown_color_array(world: VoxelWorld, colonies: List[Colony], z_level: int)
         for colony in colonies:
             m = has_tunnel & (owner == colony.colony_id) & has_terrain
             if m.any():
-                ghost = np.array(colony.color, dtype=np.float32) * 0.5
-                colors[m] = 0.65 * colors[m] + 0.35 * ghost
+                # a clearly visible colony-tinted overlay over a column with a warren
+                # beneath it (X-ray from above), not a faint ghost.
+                ghost = np.array(colony.color, dtype=np.float32)
+                colors[m] = 0.45 * colors[m] + 0.55 * ghost
 
     colors[~has_terrain] = VOID_COLOR
     return oasis_blend(world, colors.astype(np.uint8))
