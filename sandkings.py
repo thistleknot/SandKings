@@ -7948,7 +7948,10 @@ def main():
     parser.add_argument('--width', type=int, default=80, help='World width')
     parser.add_argument('--height', type=int, default=40, help='World height')
     parser.add_argument('--depth', type=int, default=20, help='World depth')
-    parser.add_argument('--use-neural', action='store_true', help='Use neural hive minds (requires PyTorch)')
+    parser.add_argument('--no-neural', action='store_true',
+                        help='Disable neural hive minds (baseline: ON when PyTorch is '
+                             'present — colonies think, concept probes learn; ~2-3x slower). '
+                             'Falls back to rule-based instincts.')
     # U5: the web chat/keeper console attaches to the SAME sim as the live
     # window (one tank, one step counter). On by default; --no-web for a
     # desktop-only run that imports no fastapi/uvicorn.
@@ -7982,9 +7985,8 @@ def main():
     print("="*60)
     print("SAND KINGS SIMULATION")
     print("3D Voxel Terrarium with Cellular Automata")
-    if args.use_neural and NEURAL_AVAILABLE:
-        print("🧠 NEURAL HIVE MINDS ENABLED")
-        print("   Maw brain + soldier layers with mating/folding/pruning")
+    if not getattr(args, 'no_neural', False) and NEURAL_AVAILABLE:
+        print("🧠 NEURAL HIVE MINDS (baseline) - the hive thinks; probes learn")
     print("="*60)
     
     # Create or resume the simulation (SPEC T13). Persistence is ON by
@@ -8043,21 +8045,27 @@ def main():
         print("[CHAIN] HYDRO - the oasis springs; water flows, pools, and irrigates; "
               "colonies dig rivers/reservoirs and boats cross the water (SPEC_HYDRO)")
 
-    # Enable neural mode if requested (fresh sims only - resumed sims keep
-    # their evolved brains)
-    if args.use_neural and fresh:
-        if NEURAL_AVAILABLE:
-            for colony in sim.colonies:
-                colony.genome.use_neural = True
+    # Neural hive minds are BASELINE (on unless --no-neural). Fresh colonies and
+    # resumed colonies that LACK a brain get one; resumed neural sims keep their
+    # evolved brains. The hive thinks — concept probes learn from the hidden state
+    # (rule-based leaves every probe at 50%). Only the runnable game turns this on;
+    # the genome default use_neural=False keeps the test battery rule-based.
+    if not getattr(args, 'no_neural', False) and NEURAL_AVAILABLE:
+        seeded = 0
+        for colony in sim.colonies:
+            colony.genome.use_neural = True
+            if colony.genome.brain is None:
                 colony.genome.brain = HiveMindBrain()
-                # Assign neural layers to existing units
-                for unit in colony.units:
-                    if unit.unit_type == UnitType.SOLDIER:
-                        unit.brain_layer = SoldierLayer()
-                        unit.brain_layer.steps_alive = 0
-            print("✓ Neural hive minds initialized for all colonies")
-        else:
-            print("⚠ Neural mode requested but PyTorch not available. Using rule-based AI.")
+                seeded += 1
+            for unit in colony.units:
+                if (unit.unit_type == UnitType.SOLDIER
+                        and getattr(unit, 'brain_layer', None) is None):
+                    unit.brain_layer = SoldierLayer()
+                    unit.brain_layer.steps_alive = 0
+        print(f"✓ Neural hive minds active ({seeded} fresh brains seeded; "
+              "resumed brains kept)")
+    elif getattr(args, 'no_neural', False):
+        print("• Rule-based minds (--no-neural): instincts, no learned concepts")
     
     if args.live:
         # When run as a script this module is '__main__'; alias it so

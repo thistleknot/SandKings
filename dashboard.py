@@ -977,6 +977,8 @@ def main():
                         help="disable dynamic population + succession (baseline: ON)")
     parser.add_argument("--no-hydro", action="store_true",
                         help="disable water engineering (baseline: ON)")
+    parser.add_argument("--no-neural", action="store_true",
+                        help="disable neural hive minds (baseline: ON with PyTorch)")
     args = parser.parse_args()
 
     if not getattr(args, 'no_hydro', False):     # water engineering is baseline
@@ -994,6 +996,22 @@ def main():
                                   depth=args.depth, num_colonies=args.colonies,
                                   canon=args.canon,
                                   dynamic_population=not getattr(args, 'no_dynamic', False))
+    # Neural hive minds are baseline (on unless --no-neural). Seed brains for fresh
+    # + resumed-without-brains colonies so the hive thinks and concept probes learn.
+    import sandkings as _sk
+    if not getattr(args, 'no_neural', False) and _sk.NEURAL_AVAILABLE:
+        from neural_hive import HiveMindBrain, SoldierLayer
+        from sandkings import UnitType
+        for colony in sim.colonies:
+            colony.genome.use_neural = True
+            if colony.genome.brain is None:
+                colony.genome.brain = HiveMindBrain()
+            for unit in colony.units:
+                if (unit.unit_type == UnitType.SOLDIER
+                        and getattr(unit, 'brain_layer', None) is None):
+                    unit.brain_layer = SoldierLayer(); unit.brain_layer.steps_alive = 0
+        print("[keeper] NEURAL hive minds active - the hive thinks; probes learn")
+
     runner = TerrariumRunner(sim, sps=args.sps,
                              save_path=None if args.fresh else args.persist)
     app = create_app(runner)
