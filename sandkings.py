@@ -2167,12 +2167,20 @@ class SandKingsSimulation:
                 continue
             enc = self._colony_encodings(colony)
             if enc:
-                obs = torch.stack(list(enc.values())).mean(0)
+                base = torch.stack(list(enc.values())).mean(0)
             else:
-                obs = torch.zeros(32, dtype=torch.float32)   # HiveMindBrain encoding_dim
+                base = torch.zeros(32, dtype=torch.float32)   # HiveMindBrain encoding_dim
+            # append colony STATE so the directive is state-responsive (not blind to
+            # starvation/crowding/territory). Always the same dim (35) for a stable policy.
+            stats = torch.tensor([
+                min(len(colony.units) / 20.0, 2.0),                       # population
+                min(colony.maw.food_stored / 100.0, 3.0),                 # food stores
+                min(len(getattr(colony, 'territory', ())) / 200.0, 3.0),  # territory
+            ], dtype=torch.float32)
+            obs = torch.cat([base, stats])
             rl = getattr(colony, 'maw_rl', None)
-            if rl is None:
-                rl = ColonyMawRL(obs_dim=int(obs.shape[0]))
+            if rl is None or rl.policy.obs_dim != int(obs.shape[0]):
+                rl = ColonyMawRL(obs_dim=int(obs.shape[0]))   # (re)create on first use / dim change
                 colony.maw_rl = rl
             snap = (float(len(colony.units))                       # population
                     + colony.maw.food_stored / 50.0                # stores
