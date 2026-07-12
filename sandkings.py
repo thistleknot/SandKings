@@ -61,6 +61,24 @@ MAW_MAX_HEALTH = 500
 MAW_REGEN = 0.5              # HP per step while unbesieged
 RESPAWN_DELAY = 300          # steps a fallen colony slot stays empty
 RESPAWN_FOOD = 50            # starting food for an arriving colony
+
+# Dynamic Population & Succession (SPEC_POPULATION.md)
+MAX_COLONIES = 8                        # fixed slot-pool cap (bounded pool)   [prov:C]
+DYNAMIC_POPULATION = False              # master flag; OFF reproduces today    [prov:C]
+# pop_state lifecycle values (string constants; no Enum dependency, pickle-trivial)
+POP_ACTIVE     = "ACTIVE"               # a live, participating slot         [prov:C]
+POP_SUCCESSION = "SUCCESSION"           # reserved: Phase-1+ succession       [prov:C]
+POP_DORMANT    = "DORMANT"              # reserved: Phase-1+ empty slot       [prov:C]
+POP_STATES = frozenset({POP_ACTIVE, POP_SUCCESSION, POP_DORMANT})
+MIN_ACTIVE_COLONIES = 2                  # liveness FLOOR: below this, founding fills in (Phase 6) [prov:C]
+# Succession (SPEC_SUCCESSION / decision 2026-07-11): a queen's death is a drama,
+# not an automatic respawn. A Spartan heir (high colony loyalty) resists the psionic
+# collapse and reclaims the line — SAME house continues, boosted. Below the gate the
+# house goes mad → extinct (Phase 2 disgrace). All inert while DYNAMIC_POPULATION=False.
+SPARTAN_LOYALTY  = 0.7                    # colony-genome loyalty gate for an heir to rise [prov:C]
+SPARTAN_BOOST    = 1.3                    # augmented-net / boosted-stat multiplier on the rise [prov:C]
+SUCCESSION_WINDOW = 800                   # half-year live-transition window (reserved: live aspirant) [prov:C]
+
 WAR_CHEST = 400              # food hoard that sends a colony to war (SPEC T10)
 SCOUT_ALARM_RANGE = 5        # Manhattan distance that triggers a scout alarm (SPEC T11)
 KNOWN_FOOD_CAP = 8           # shared food-intel entries per colony (SPEC T11)
@@ -1167,7 +1185,8 @@ class Colony:
         self.techs = set()             # technologies this house knows (TE1)
         self.tech_xp = {}              # per-tech proficiency 0..1 (DF skill, TE1)
         self.crafted = set()           # items crafted from gifted materials (TE13)
-        
+        self.pop_state = POP_ACTIVE    # lifecycle slot state; inert in Phase 0     [prov:C]
+
     def spawn_unit(self, unit_type: UnitType, step: int = 0):
         """Spawn new unit from Maw; copper armors, timber arms (T25/T44).
 
@@ -1564,6 +1583,7 @@ class SandKingsSimulation:
         elif num_colonies is None or num_colonies == 0:
             num_colonies = random.randint(3, 5)
         self.pheromones = PheromoneLayer(self.world.dimensions, num_colonies)
+        self.num_colonies = num_colonies   # resolved seed count (≤ MAX_COLONIES); read by the bounded pool (Phase 6)
         self.automata = CellularAutomata()
         self.colonies: List[Colony] = []
         self.step_count = 0
@@ -1578,7 +1598,8 @@ class SandKingsSimulation:
         self.sun_ema_mean = SUN_HOURS_DEFAULT   # SP10: rolling mean of realized daylight (observer)
         self.sun_ema_sd = 0.0                   # SP10: rolling |deviation| ~ sigma (observer)
         self._storm_wind = (1, 0)              # per-storm prevailing direction
-        
+        self.dynamic_population = DYNAMIC_POPULATION   # instance override hook; Phase 0 = False
+
         # Initialize colonies with random count (3-5) and positions
         self._spawn_colonies(num_colonies)
     
@@ -1859,7 +1880,8 @@ class SandKingsSimulation:
                                   ('confidence', 0.5),  # DP1
                                   ('favoritism', 0.0),  # DP1
                                   ('agitation', 0.0),  # DP1
-                                  ('last_victory_step', -10**9)):  # DP1
+                                  ('last_victory_step', -10**9),  # DP1
+                                  ('pop_state', POP_ACTIVE)):  # POP: lifecycle slot state
                 if not hasattr(colony, attr):
                     setattr(colony, attr, default)
             # TE1: mutable tech state (per-colony fresh objects, not shared)
@@ -6289,6 +6311,19 @@ class SandKingsSimulation:
             self._house_epithets()[house] = epithet
             self._log_event(f"House {house} will be remembered as {epithet}")
 
+            # SUCCESSION prelude (inert while DYNAMIC_POPULATION=False): the psionic
+            # network collapses with the queen. A high-loyalty house holds together —
+            # an heir stirs, the line will be reclaimed. A low-loyalty house shatters:
+            # its spawn go mad, the house falls in DISGRACE, a gravestone warning to the
+            # rest. The actual reclamation vs fresh-house identity is decided in
+            # _respawn_colony; here we only chronicle the divergence.
+            if getattr(self, 'dynamic_population', False):
+                if getattr(colony.genome, 'loyalty', 0.0) >= SPARTAN_LOYALTY:
+                    self._log_event(f"House {house} endures the collapse — a Spartan heir stirs")
+                else:
+                    self._log_event(f"House {house} has fallen in disgrace — its spawn go mad,"
+                                    f" its name a warning to the rest")
+
             self.pending_respawns[colony.colony_id] = self.step_count + RESPAWN_DELAY
             self._log_event(f"Colony {colony.colony_id} has fallen!")
             print(f"[x] Colony {colony.colony_id} has fallen! A new colony arrives in {RESPAWN_DELAY} steps")
@@ -6418,12 +6453,52 @@ class SandKingsSimulation:
             colony.favoritism = 0.0
             colony.agitation = 0.0
             colony.last_victory_step = -10**9
+        # SUCCESSION (SPEC_SUCCESSION; inert while DYNAMIC_POPULATION=False): a Spartan
+        # heir of a high-loyalty house resists the psionic collapse and RECLAIMS the
+        # line — the SAME house continues (Starks reclaiming Winterfell) rather than the
+        # slot passing to a random survivor's cadet. The rise is a terminal molt with an
+        # augmented neural net + boosted stats. Below the gate the house is left to the
+        # normal (cadet/fresh) path and, in Phase 2, to madness + disgrace.
+        colony.reclaimed = False
+        if getattr(self, 'dynamic_population', False):
+            old = self.colonies[index]                        # dead colony, still resident
+            if (getattr(old, 'house', None) is not None
+                    and getattr(old.genome, 'loyalty', 0.0) >= SPARTAN_LOYALTY):
+                self._house_name(old)                         # ensure the base dynasty is founded
+                colony.house = old.house                      # the SAME line, reclaimed
+                colony.generation = getattr(old, 'generation', 1) + 1
+                colony.breached = getattr(old, 'breached', False)
+                colony.worshipped = getattr(old, 'worshipped', False)
+                colony.stage = getattr(old, 'stage', 1)       # MT1: molt in blood
+                colony.keeper_sentiment = getattr(old, 'keeper_sentiment', 0.5)
+                colony.enlightened = getattr(old, 'enlightened', False)
+                colony.techs = set(getattr(old, 'techs', set()))
+                colony.tech_xp = dict(getattr(old, 'tech_xp', {}))
+                colony.crafted = set(getattr(old, 'crafted', set()))
+                colony.confidence = getattr(old, 'confidence', 0.5)
+                colony.revelation = colony.breached
+                # inherit the bloodline's temperament, then Spartan-boost the mind
+                for _f in ('aggression', 'tunnel_preference', 'expansion_rate',
+                           'resilience', 'patience', 'plasticity'):
+                    if hasattr(old.genome, _f):
+                        setattr(colony.genome, _f, getattr(old.genome, _f))
+                colony.genome.loyalty = min(1.0, getattr(old.genome, 'loyalty', 0.7) * SPARTAN_BOOST)
+                colony.genome.brain_hidden = int(getattr(old.genome, 'brain_hidden', 8) * SPARTAN_BOOST)
+                colony.genome.use_neural = True               # the augmented neural net
+                colony.memory_augment = max(getattr(old, 'memory_augment', 0), 1)  # AUG: the hive extends
+                colony.reclaimed = True
         colony.founded_step = self.step_count
         self.colonies[index] = colony
         self._kin_epoch = getattr(self, '_kin_epoch', 0) + 1  # kin map stale
-        self._log_event(f"House {self._house_name(colony)} rises"
-                        f" (generation {getattr(colony, 'generation', 1)})"
-                        f" as Colony {colony_id}")
+        if getattr(colony, 'reclaimed', False):
+            self._log_event(f"House {self._house_name(colony)} RESTORED — a Spartan heir"
+                            f" resisted the collapse and reclaimed the line"
+                            f" (generation {getattr(colony, 'generation', 1)})"
+                            f" as Colony {colony_id}")
+        else:
+            self._log_event(f"House {self._house_name(colony)} rises"
+                            f" (generation {getattr(colony, 'generation', 1)})"
+                            f" as Colony {colony_id}")
         # EV5/CS: a maw born of two bloodlines - courtship, jealousy, and
         # the newborn's threat to its own parent (insect supersedure)
         if crossed is not None:
@@ -6438,6 +6513,79 @@ class SandKingsSimulation:
             colony.spawn_unit(UnitType.WORKER)
         self._log_event(f"A new colony {colony_id} arrives")
         print(f"[+] A new colony {colony_id} has arrived!")
+
+    def _active_colony_count(self) -> int:
+        """Phase 1 (SPEC_TERRARIUM_LIVENESS T5'/T6'): live, ACTIVE slot count.
+        Liveness FLOOR is MIN_ACTIVE_COLONIES; below it, dynamic_population
+        founding (Phase 6) fills in. Pure read; inert at flag-off (nothing acts on
+        it until Phase 6). Legacy fixed-slot respawn keeps this at num_colonies."""
+        return sum(1 for c in self.colonies
+                   if getattr(c, 'pop_state', POP_ACTIVE) == POP_ACTIVE
+                   and c.is_alive())
+
+    def _deactivate_slot(self, cid: int) -> None:
+        """Slot-scrub choke point: clear all per-colony state for a given slot.
+
+        This is the unified clearance used by later phases for DORMANT/founding
+        transitions. Phase 0 defines it but does NOT wire it (legacy respawn
+        keeps the folk-memory shadow). See SPEC_POPULATION §3.1-§3.2.
+        """
+        # Require
+        colony = self._colony_by_id(cid)
+        assert colony is not None, f"_deactivate_slot: unknown colony id {cid}"
+
+        # (1) pheromone channel
+        self.pheromones.trails[:, :, :, cid, :] = 0.0
+        # (2) ownership voxels
+        self.world.ownership[self.world.ownership == cid] = -1
+
+        # (3–6) politics: total slot clear (BOTH directions — no folk-memory shadow)
+        d = getattr(self, 'diplomacy', None) or self._diplomacy()
+        for (a, b) in list(d.relations.keys()):          # 3 + 3b: both directions
+            if a == cid or b == cid:
+                del d.relations[(a, b)]
+        for key in [k for k in d.truce_until   if cid in k]: del d.truce_until[key]
+        for key in [k for k in d.allied        if cid in k]: del d.allied[key]
+        for key in [k for k in d.rejected_at   if cid in k]: del d.rejected_at[key]
+        d.war_target.pop(cid, None)                       # 5
+        for other_id, target in list(d.war_target.items()):
+            if target == cid:
+                d.war_target[other_id] = None
+        d.last_betrayal.pop(cid, None)                    # 6
+        if d.hegemon == cid:
+            d.hegemon = None
+
+        # (7,8) cross-colony unit references: thralls held by cid, gifts bound for cid
+        for other in self.colonies:
+            if other.colony_id == cid:
+                continue
+            for unit in other.units:
+                if getattr(unit, 'laboring_for', -1) == cid:
+                    unit.laboring_for = -1
+                    unit.defiance = 0.0
+                if getattr(unit, 'gift_to', -1) == cid:
+                    unit.gift_to = -1
+
+        # (9,10,11) sim-level per-colony dicts
+        if hasattr(self, 'monitors'):        self.monitors.pop(cid, None)
+        if hasattr(self, 'learners'):        self.learners.pop(cid, None)
+        if hasattr(self, 'pending_respawns'): self.pending_respawns.pop(cid, None)
+
+        # (12) this slot's own units vanish
+        colony.units.clear()
+
+        # (13) disposition -> neutral
+        colony.favoritism = 0.0
+        colony.agitation = 0.0
+        colony.confidence = 0.5
+
+        # state + kin cache
+        colony.pop_state = POP_DORMANT
+        self._kin_epoch = getattr(self, '_kin_epoch', 0) + 1   # 14
+
+        # Assert (Guarantee)
+        assert not (self.world.ownership == cid).any()
+        assert not self.pheromones.trails[:, :, :, cid, :].any()
 
     def _unit_label(self, unit: SandKing) -> str:
         """Display identity for decision logs and rosters."""

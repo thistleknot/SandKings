@@ -53,6 +53,8 @@ Governing scope record: `docs/decisions/2026-07-09-intercolony-relations-spectru
 - **SPEC_POLITICS.md** — the political world: trust, gifts, truces, coalitions, betrayal.
 - **SPEC_DYNASTIES.md** (D1–D12) — dynasties & the salience-scored chronicle; house names, epithets, saga.
 - **SPEC_CANON_HOUSES.md** (CH1–CH4) — the canonical houses (Round B / Canon).
+- **SPEC_MADNESS.md** (MAD-1–MAD-6) — madness & extinction: a house can go extinct (fresh unrelated house at respawn, name kept as a disgraced gravestone) via the `colony.madness` sustained-neglect accumulator (shameful "the Mad") or conflict (honorable, deferred); extinction changes only the respawn IDENTITY — the T5/T6 slot-refill liveness spine is untouched.
+- **SPEC_POPULATION.md** (POP-1–POP-4) — dynamic population & succession, **Phase 0** (inert scaffolding): a fixed pool of `MAX_COLONIES=8` slots each carrying a lifecycle `pop_state` (ACTIVE/SUCCESSION/DORMANT, inert at flag-off), the default-off `dynamic_population` flag (byte-identical to today), and the slot-scrub choke point `_deactivate_slot(cid)` (defined + tested, unwired) that centralizes all stale per-colony teardown (pheromones/ownership/politics/thralls/gifts/disposition). Emergent 2..8 population is later phases. NOTE: its governing decision record `docs/decisions/2026-07-11-dynamic-population-and-succession.md` is not yet committed.
 
 ## Interface, tooling & harness
 - **SPEC_DASHBOARD.md** (DB1–DB8) — the Keeper's Console (web dashboard / API).
@@ -60,4 +62,3 @@ Governing scope record: `docs/decisions/2026-07-09-intercolony-relations-spectru
 - **SPEC_PLAY_KIT.md** (PK1–PK6) — a headless client to drive & test the terrarium.
 - **SPEC_SANDBOX.md** (SB1–SB5) — the sandking sandbox (the escaped-maw play space beyond the glass).
 - **SPEC_FIT_CONSTANTS.md** (FC1–FC12) — learned demonstrator `fit_constants.py`: keep-if-improved search of the four semi-permeable knobs (`SUN_JITTER_SD`, `SUN_OSC_AMP`, `CAPTURE_TEMP`, `BARGAIN_TEMP`) against a healthy-ecology objective (liveness + mode-diversity + weather-variance); REPORTS fitted-vs-inert, never edits sandkings.py; sqlite load-if-exists checkpoint; Tier-2 grounding demonstrator.
-</content>
