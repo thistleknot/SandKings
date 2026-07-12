@@ -298,6 +298,21 @@ def topdown_color_array(world: VoxelWorld, colonies: List[Colony], z_level: int)
             tint = np.array(colony.color, dtype=np.float32)
             colors[mask] = (1 - TERRITORY_TINT) * colors[mask] + TERRITORY_TINT * tint
 
+    # X-RAY: reveal subsurface tunnels (owned carved AIR below the surface) as a
+    # dim ghost of the digging house's color, so the warren shows from above.
+    vox = world.voxels
+    tunnel3d = (vox == VoxelType.AIR.value) & (world.ownership >= 0)
+    has_tunnel = tunnel3d.any(axis=2)
+    if has_tunnel.any():
+        d = world.depth
+        z_top = (d - 1) - np.argmax(tunnel3d[:, :, ::-1], axis=2)
+        owner = np.take_along_axis(world.ownership, z_top[:, :, None], axis=2)[:, :, 0]
+        for colony in colonies:
+            m = has_tunnel & (owner == colony.colony_id) & has_terrain
+            if m.any():
+                ghost = np.array(colony.color, dtype=np.float32) * 0.5
+                colors[m] = 0.65 * colors[m] + 0.35 * ghost
+
     colors[~has_terrain] = VOID_COLOR
     return oasis_blend(world, colors.astype(np.uint8))
 
@@ -1531,7 +1546,10 @@ class LiveViewer:
                 fill = tuple(int(c * depth_shade(depth)) for c in fill)
                 if glyph_mode:
                     char = UNIT_GLYPHS.get(unit.unit_type, "?")
-                    if getattr(unit, 'gift_to', -1) >= 0:  # envoy caravan (P13)
+                    if getattr(unit, 'rafted', False):     # afloat on a raft (boats)
+                        char = "≈"
+                        color = (170, 110, 50)
+                    elif getattr(unit, 'gift_to', -1) >= 0:  # envoy caravan (P13)
                         color = (255, 200, 60)
                     elif unit.retreating:
                         color = border

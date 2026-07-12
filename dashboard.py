@@ -226,6 +226,20 @@ def render_frame_png(sim: SandKingsSimulation, scale: int = 640) -> bytes:
         cmask = own == colony.colony_id
         col = np.array(colony.color, dtype=np.float32)
         img[cmask] = (0.55 * img[cmask] + 0.45 * col).astype(np.uint8)
+    # X-RAY: reveal subsurface tunnels (owned carved AIR) from this top-down
+    # surface projection, else the warren is invisible. Columns with a tunnel
+    # get a dim ghost of the digging house's color.
+    air = VoxelType.AIR.value
+    tunnel3d = (vox == air) & (world.ownership >= 0)
+    has_tunnel = tunnel3d.any(axis=2)
+    if has_tunnel.any():
+        z_top = (d - 1) - np.argmax(tunnel3d[:, :, ::-1], axis=2)   # topmost tunnel z
+        owner = np.take_along_axis(world.ownership, z_top[:, :, None], axis=2)[:, :, 0]
+        for colony in sim.colonies:
+            m = has_tunnel & (owner == colony.colony_id)
+            if m.any():
+                ghost = np.array(colony.color, dtype=np.float32) * 0.5
+                img[m] = (0.62 * img[m] + 0.38 * ghost).astype(np.uint8)
     # overlays (drawn at cell resolution, upscaled after)
     for (x, y) in getattr(sim, 'flood_cells', None) or ():
         if 0 <= x < w and 0 <= y < h:
@@ -240,7 +254,8 @@ def render_frame_png(sim: SandKingsSimulation, scale: int = 640) -> bytes:
         for unit in colony.units:
             ux, uy = unit.position[0], unit.position[1]
             if 0 <= ux < w and 0 <= uy < h:
-                img[ux, uy] = colony.color
+                img[ux, uy] = ((170, 110, 50) if getattr(unit, 'rafted', False)
+                               else colony.color)   # rafted units ride a wood raft
         if colony.is_alive():
             mx, my = colony.maw.position[0], colony.maw.position[1]
             for dx in (-1, 0, 1):

@@ -136,6 +136,8 @@ CASTLE_PROSPERITY_STEPS = 500  # steps a house must hold food > WAR_CHEST before
 #                                raises a castle on its own (K5: prosperity made visible)
 BUILD_LABOR_EVERY = 3          # 1/N workers (by unit_id) are designated builders that
 #                                prioritize the castle/palisade so a ring actually completes
+LEVEE_RANGE = 18               # a nest within this of the oasis raises SAND dikes/dams
+#                                on its water-facing arc (the flood sim honors raised sand)
 SPEAR_ATTACK = 4             # bonus attack while armed (T44)
 SPEAR_LIFE = 400             # steps before it splinters
 RAM_COST = 3                 # wood for a battering ram (T44b)
@@ -1209,6 +1211,8 @@ class Colony:
         self.tech_xp = {}              # per-tech proficiency 0..1 (DF skill, TE1)
         self.crafted = set()           # items crafted from gifted materials (TE13)
         self.pop_state = POP_ACTIVE    # lifecycle slot state; inert in Phase 0     [prov:C]
+        self._build_rotor = 0          # per-colony spawn counter -> deterministic
+        #                                designated-builder slots (NOT the global unit_id)
 
     def spawn_unit(self, unit_type: UnitType, step: int = 0):
         """Spawn new unit from Maw; copper armors, timber arms (T25/T44).
@@ -1219,6 +1223,10 @@ class Colony:
         """
         unit = self.maw.spawn_unit(unit_type)
         if unit:
+            # per-colony builder slot (seeded spawn order -> deterministic across
+            # sim instances, unlike the process-global unit_id)
+            unit.build_slot = getattr(self, '_build_rotor', 0)
+            self._build_rotor = getattr(self, '_build_rotor', 0) + 1
             if unit.unit_type == UnitType.SOLDIER:
                 if getattr(self, 'ore', {}).get('copper', 0) >= 1:
                     self.ore['copper'] -= 1
@@ -4179,6 +4187,16 @@ class SandKingsSimulation:
                 for unit in colony.units[:]:
                     if (unit.position[:2] in cells
                             and self._exposed(unit)):
+                        # BOATS: a unit with timber lashes a raft and rides the
+                        # flood instead of drowning (a raft costs one wood).
+                        if not getattr(unit, 'rafted', False) and getattr(colony, 'wood', 0) >= 1:
+                            colony.wood -= 1
+                            unit.rafted = True
+                            self._milestone(colony, 'raft',
+                                            f"House {self._house_name(colony)} takes"
+                                            " to rafts on the floodwater", unit)
+                        if getattr(unit, 'rafted', False):
+                            continue  # afloat — the water does not take it
                         self._weather_kill(unit, colony, FLOOD_DAMAGE)
             if random.random() < 0.02:  # the water takes what it finds
                 for (x, y) in list(cells)[:40]:
@@ -4188,6 +4206,10 @@ class SandKingsSimulation:
                         self.world.voxels[x, y, z] = VoxelType.AIR.value
             if getattr(self, 'flood_until', 0) == step + 1:
                 self.flood_cells = set()
+                for _c in self.colonies:       # rafts beach when the water is gone
+                    for _u in _c.units:
+                        if getattr(_u, 'rafted', False):
+                            _u.rafted = False
                 self._log_event("The floodwaters recede, leaving black silt")
 
     # ---- Sentience Arc helpers (SPEC_SENTIENCE.md) ----
@@ -4360,6 +4382,80 @@ class SandKingsSimulation:
             self._log_event(f"House {hc}, newborn, already resents its"
                             f" parent House {self._house_name(weaker)}")
 
+    def _levee_step(self, unit: SandKing, colony: Colony) -> bool:
+        """Raise a SAND levee (dike/dam) on the oasis-facing arc of the maw ring.
+        The flood sim (W1) parts around higher columns, so a raised bank shelters
+        the nest — terraforming as flood control. Only for nests near the water;
+        a no-op (no RNG) otherwise, so inland colonies are unaffected."""
+        cx, cy = self.world.width // 2, self.world.height // 2
+        mx, my, mz = colony.maw.position
+        if (mx - cx) ** 2 + (my - cy) ** 2 > LEVEE_RANGE ** 2:
+            return False
+        tox = int(np.sign(cx - mx)); toy = int(np.sign(cy - my))
+        r = PALISADE_RING + 1
+        best, best_d = None, None
+        ux, uy, _uz = unit.position
+        for dx in range(-r, r + 1):
+            for dy in range(-r, r + 1):
+                if max(abs(dx), abs(dy)) != r or (dx * tox + dy * toy) <= 0:
+                    continue  # only the oasis-facing arc
+                sx, sy = mx + dx, my + dy
+                if not self.world.in_bounds(sx, sy, 0):
+                    continue
+                top = self.world.surface_z(sx, sy) + 1
+                if top >= self.world.depth or self.world.voxels[sx, sy, top] != VoxelType.AIR.value:
+                    continue  # already raised / no headroom
+                dist = abs(sx - ux) + abs(sy - uy)
+                if best_d is None or dist < best_d:
+                    best, best_d = (sx, sy, top), dist
+        if best is None:
+            return False
+        if max(abs(best[0] - ux), abs(best[1] - uy)) <= 1:
+            self.world.voxels[best] = VoxelType.SAND.value   # raise the bank
+            self.world.ownership[best] = colony.colony_id
+            self._milestone(colony, 'levee',
+                            f"House {self._house_name(colony)} raises a levee"
+                            " against the water", unit)
+            return True
+        return self._step_toward(unit, best, colony)
+
+    def _bridge_step(self, unit: SandKing, colony: Colony) -> bool:
+        """Lay a WOOD causeway from the shore out over the oasis water — a bridge.
+        Only shoreline colonies with timber; a no-op (no RNG) otherwise."""
+        if getattr(colony, 'wood', 0) < 1:
+            return False
+        cx, cy = self.world.width // 2, self.world.height // 2
+        mx, my, mz = colony.maw.position
+        d2 = (mx - cx) ** 2 + (my - cy) ** 2
+        if d2 > (OASIS_RADIUS + 8) ** 2:
+            return False  # only near the oasis
+        steps = max(abs(cx - mx), abs(cy - my))
+        if steps == 0:
+            return False
+        best = None
+        for i in range(1, steps + 1):            # walk the ray maw -> oasis center
+            bx = mx + int(round((cx - mx) * i / steps))
+            by = my + int(round((cy - my) * i / steps))
+            if not self.world.in_bounds(bx, by, 0):
+                break
+            if (bx - cx) ** 2 + (by - cy) ** 2 > OASIS_RADIUS ** 2:
+                continue                          # not out over the water yet
+            sz = self.world.surface_z(bx, by) + 1
+            if sz < self.world.depth and self.world.voxels[bx, by, sz] == VoxelType.AIR.value:
+                best = (bx, by, sz)
+                break
+        if best is None:
+            return False
+        ux, uy, _uz = unit.position
+        if max(abs(best[0] - ux), abs(best[1] - uy)) <= 1:
+            self.world.voxels[best] = VoxelType.WOOD.value    # a plank of the span
+            self.world.ownership[best] = colony.colony_id
+            colony.wood = max(0, getattr(colony, 'wood', 0) - 1)
+            self._milestone(colony, 'bridge',
+                            f"House {self._house_name(colony)} bridges the water", unit)
+            return True
+        return self._step_toward(unit, best, colony)
+
     def _try_build(self, unit: SandKing, colony: Colony) -> bool:
         """A designated builder raises the house's monument/defenses before doing
         economy, so a ring actually completes instead of being starved by
@@ -4368,6 +4464,14 @@ class SandKingsSimulation:
         the default-defense case stays opportunistic in the late branch (6c).
         Returns True if a build step was taken (the worker skips economy this tick).
         No RNG unless a trigger holds, so neutral colonies are byte-unaffected."""
+        # A nest by the water tends its flood defenses & crossings FIRST — dikes/dams
+        # and causeways. Both no-op (no RNG) inland, and self-limit once the arc/span
+        # is complete, after which the monument proceeds. (Ordering matters: a
+        # prosperous colony's castle would otherwise monopolize every builder.)
+        if self._levee_step(unit, colony):
+            return True
+        if self._bridge_step(unit, colony):
+            return True
         if (colony.maw.food_stored > WAR_CHEST
                 and (self.keeper_attitude(colony) == 'reverent'
                      or self._is_prosperous(colony))
@@ -6889,7 +6993,8 @@ class SandKingsSimulation:
             # (by unit_id) raise its castle/palisade BEFORE economy when a build
             # agenda holds, so a ring completes instead of being perpetually
             # starved. No-op (no RNG) when there is nothing to build.
-            if unit.unit_id % BUILD_LABOR_EVERY == 0 and self._try_build(unit, colony):
+            if (getattr(unit, 'build_slot', -1) % BUILD_LABOR_EVERY == 0
+                    and self._try_build(unit, colony)):
                 return
 
             # (1) Radius-2 grab: wild food +15, ripe crops +40 -> TILLED
@@ -7030,9 +7135,18 @@ class SandKingsSimulation:
                          or self._is_prosperous(colony))):
                 acted = self._castle_step(unit, colony)
 
-            # (7) No work known: random dig
+            # (7) No work known: DIG a real warren. The RNG draws are IDENTICAL to
+            # the original (one random.random, one random.choice over the SAME six
+            # directions) so the global stream — and every trajectory-pinned test —
+            # is undisturbed. The depth-bias is a purely DETERMINISTIC post-draw
+            # flip: a colony still above its preferred depth turns an 'up' or lateral
+            # roll downward, so a subterranean network forms instead of a surface scratch.
             if not acted and random.random() < colony.genome.tunnel_preference:
                 direction = random.choice([(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)])
+                surf = self.world.surface_z(x, y)
+                target_depth = int(surf - 1 - colony.genome.tunnel_preference * (surf - 1))
+                if z > target_depth and direction[2] >= 0:   # deterministic: dig down
+                    direction = (direction[0], direction[1], -1) if (direction[0] or direction[1]) else (0, 0, -1)
                 if self.world.tunnel(unit.position, direction, colony.colony_id):
                     unit.move((x + direction[0], y + direction[1], z + direction[2]))
                     # Leave territory pheromone
