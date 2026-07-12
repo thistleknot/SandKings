@@ -131,6 +131,77 @@ the first colony to touch it learns:
 The auto-keeper dispenses the ladder in order, one gift per
 KEEPER_GIFT_INTERVAL (1600) while any colony stays reverent.
 Manual key `5` dispenses the next gift in sequence at the cursor.
+(Cadence re-timed by K9a below — the year gate is now authoritative
+over the raw step interval.)
+
+## K9a — The gift cadence (year-gated, doubling schedule)
+Re-times K9's dispensing. The rungs of GIFT_LADDER are unchanged
+('abacus','watch','calculator','pi'); only WHEN each becomes
+available changes. A tech gift becomes available starting YEAR 1, at
+most once per year, and the interval to the NEXT rung DOUBLES each
+time — the rungs unlock at years 1, 3, 7, 15.
+
+- `year()` = `step_count // YEAR_LENGTH` (0-based; YEAR_LENGTH=1600
+  steps = 4 seasons). `gifts_given` is the per-sim (global) list of
+  dispensed rungs (already build_state-serialized).
+- SCHEDULE (derived, not a table): the rung at ladder index `n`
+  (n=0..3) unlocks at year `2**(n+1) - 1`. Equivalently, the NEXT
+  sequential gift (given `len(gifts_given)` already dispensed) is
+  available when `year() >= 2**(len(gifts_given)+1) - 1`.
+  Verify: 0 given → year≥1 (abacus); 1 given → year≥3 (watch);
+  2 given → year≥7 (calculator); 3 given → year≥15 (pi). No
+  GIFT_UNLOCK_YEARS constant is introduced — the formula is inlined
+  with a comment; if a maintainer later adds `GIFT_UNLOCK_YEARS =
+  (1,3,7,15)` for readability, tag it `[prov:C feel=gift-pacing]`
+  and it MUST equal `tuple(2**(n+1)-1 for n in range(len(GIFT_LADDER)))`.
+
+- GATE LOCATION (unifies all three paths): the cadence gate lives
+  INSIDE `keeper_gift` (sandkings.py:2850), so the manual key `5`,
+  the dashboard button, and the auto `_keeper_tick` path are all
+  governed identically. Previously only `_keeper_tick` gated on
+  timing and the manual key was ungated — that divergence is closed.
+
+- GATE ORDER (after `_hand_stayed()`), for a call `keeper_gift(kind,
+  pos)`:
+  1. Resolve the target rung and its index `n`:
+     - `kind is None` (sequential): `n = len(gifts_given)`; if
+       `n >= len(GIFT_LADDER)` → return (ladder exhausted);
+       else `kind = GIFT_LADDER[n]`.
+     - `kind` given (explicit, e.g. dashboard picks a rung): if
+       `kind not in GIFT_LADDER` → return; if `kind in gifts_given`
+       → return (already given); else `n = GIFT_LADDER.index(kind)`.
+  2. YEAR-UNLOCK: if `year() < 2**(n+1) - 1` → return (rung not yet
+     unlocked this year).
+  3. ONCE-PER-YEAR: if `getattr(self,'last_gift_year',-1) == year()`
+     → return (a rung was already dispensed this year).
+  4. DISPENSE: append to `gifts_given`, set
+     `self.last_gift_year = self.year()`, then place the artifact
+     exactly as today (unchanged surface-placement + event line).
+
+- EXPLICIT-KIND DECISION (stated): an explicit `kind=` still HONORS
+  the year-unlock for THAT rung — you cannot gift 'pi' before year 15.
+  The keeper (or dashboard) may pick any UNLOCKED, not-yet-given rung,
+  but the year gate and the once-per-year gate both still apply. A
+  manual override flag that bypasses the cadence is OUT OF SCOPE.
+
+- `_keeper_tick` RECONCILIATION (sandkings.py:3011-3017): because
+  `keeper_gift` now self-gates on the year cadence AND once-per-year,
+  the auto path's `step - last_gift_step > KEEPER_GIFT_INTERVAL`
+  check is redundant and is REMOVED. The auto block simplifies to:
+  reverent AND no gift on the ground AND ladder not exhausted →
+  call `keeper_gift()`, and let `keeper_gift` enforce the year gate.
+  `last_gift_step` is no longer read or written by this block. The
+  once-per-year gate makes the auto path safe even when `gift`
+  becomes None mid-tick (a gift claimed earlier in the same
+  `_keeper_tick`): the re-entrant `keeper_gift()` no-ops because
+  `last_gift_year == year()`, so no double-dispense can occur.
+
+- DASHBOARD STATE (W5, separate concern — no new state): a UI that
+  wants to show "next rung + the year it unlocks" needs only what
+  build_state already serializes — `gifts_given` and `year`. The
+  next-unlock year is `2**(len(gifts_given)+1) - 1` and the next rung
+  is `GIFT_LADDER[len(gifts_given)]` (or "ladder exhausted"). No
+  additional sim state is required.
 
 ## K10 — The Breach (beyond the terrarium)
 User: "if the sandkings can break beyond their terrarium... something
@@ -217,6 +288,47 @@ Soak: 4 harsh years, keeper_auto on, one manna drop scripted early:
 worship, the cat, wrath, and at least one gift all observed in the
 chronicle; liveness holds.
 
+### K9a — Gift-cadence acceptance (GC1–GC5)
+Add to tests/test_keeper.py (or a new tests/test_gift_cadence.py);
+mirror test_keeper idioms — construct sim via `make_sim()`, set
+`sim.step_count` to hit a target year (`step_count = YEAR_LENGTH * Y`
+puts the sim in year `Y`), call `keeper_gift`, assert on
+`sim.gifts_given`. Between rungs clear `sim.gift = None` (so no
+artifact is on the ground) and advance the year past the prior gift's
+`last_gift_year`.
+
+- GC1 (year-1 start): at year 0 (`step_count < YEAR_LENGTH`),
+  `keeper_gift()` gives NOTHING (`gifts_given` stays `[]`). At year 1
+  (`step_count = YEAR_LENGTH`), `keeper_gift()` gives `'abacus'`
+  (`gifts_given == ['abacus']`).
+- GC2 (doubling schedule): for each rung, at the year JUST BEFORE its
+  unlock year `keeper_gift()` is a no-op, and AT its unlock year it
+  dispenses. watch at year≥3, calculator at year≥7, pi at year≥15.
+  Drive by setting `sim.step_count = YEAR_LENGTH * Y`, clearing
+  `sim.gift`, and advancing the year so `last_gift_year` no longer
+  equals `year()`.
+- GC3 (once per year): two `keeper_gift()` calls in the SAME year
+  dispense only ONE rung — the second no-ops because
+  `last_gift_year == year()`. (E.g. at year 1, first call gives
+  abacus; second call in year 1 leaves `gifts_given == ['abacus']`.)
+- GC4 (manual + auto agree): the manual `keeper_gift()` and the
+  `_keeper_tick` auto path both honor the same year gate — no rung is
+  dispensed before its unlock year via either path. (Assert that
+  before an unlock year neither a direct `keeper_gift()` nor a
+  reverent `_keeper_tick()` appends a rung.)
+- GC5 (reconcile existing): `test_gift_ladder_advances_the_arc`
+  (tests/test_keeper.py:110-133) currently calls `keeper_gift(kind,
+  ...)` and `keeper_gift()` expecting IMMEDIATE dispensing; under the
+  year gate those calls before the unlock year now no-op. FIX
+  (minimal, explicit-kind still honors the year gate): before each
+  rung set `sim.step_count` to that rung's unlock year —
+  watch → `YEAR_LENGTH*3`, calculator → `YEAR_LENGTH*7`,
+  pi → `YEAR_LENGTH*15`; and in the `sim2` sequential block set
+  `sim2.step_count = YEAR_LENGTH*1` before abacus and
+  `YEAR_LENGTH*3` before watch (bump past `last_gift_year` between
+  the two). Rungs unchanged; only the year is advanced. This keeps
+  the existing ladder/arc coverage green.
+
 > Cross-ref (inbound): the keeper verbs (`keeper_drop_food`/`keeper_gift`/
 > `keeper_drought`/`keeper_release_cat`/`keeper_temperature`/`keeper_ignite`) now
 > also feed the DISPOSITION layer — a per-colony signed `favoritism` + boldness
@@ -240,6 +352,14 @@ chronicle; liveness holds.
     @100, gift @1601, castle @2555, cat @3200, drought+wrath @3252,
     grieving scorpions @3600, rains return @4452); 21.7 sps; liveness
     held; 12/12 test suites green incl. tests/test_keeper.py (10).
+- K9a (gift cadence) drafted 2026-07-11. Re-times K9 dispensing to a
+  year-gated doubling schedule (rungs unlock at years 1/3/7/15 via
+  `2**(n+1)-1`); rungs themselves UNCHANGED. Gate moved inside
+  `keeper_gift` so manual/dashboard/auto agree; `_keeper_tick` step
+  throttle removed in favor of the authoritative year gate; new
+  per-sim `last_gift_year` field enforces once-per-year. Existing
+  `test_gift_ladder_advances_the_arc` MUST get the year-advance edit
+  (GC5) or it regresses — flagged. No new constant; formula inlined.
 
 ## Sandbox stance (binding safety boundary)
 The fiction is "the sandkings break into the computer." The
@@ -252,4 +372,3 @@ real networking, and real internet access for the agents are OUT OF
 SCOPE by design; adding them would be a security regression, not a
 feature. A human-facing dashboard, if built, publishes state
 READ-ONLY and the sim remains a pure function of its own state.
-</content>

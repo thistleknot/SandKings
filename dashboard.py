@@ -402,6 +402,9 @@ def create_app(runner: TerrariumRunner):
     class StepBody(BaseModel):
         n: int = 1
 
+    class EconomyBody(BaseModel):
+        on: bool
+
     @app.get("/", response_class=HTMLResponse)
     def index():
         return CONSOLE_HTML
@@ -471,10 +474,10 @@ def create_app(runner: TerrariumRunner):
             return build_state(runner.sim)
 
     @app.post("/api/keeper/gift")
-    def gift():
+    def gift(kind: Optional[str] = None):
         with runner.lock:
             _disarm_auto()
-            runner.sim.keeper_gift()
+            runner.sim.keeper_gift(kind=kind)
             return build_state(runner.sim)
 
     @app.post("/api/keeper/opendoor")
@@ -491,6 +494,22 @@ def create_app(runner: TerrariumRunner):
         with runner.lock:
             _disarm_auto()
             runner.sim.keeper_drought(body.on)
+            return build_state(runner.sim)
+
+    @app.post("/api/keeper/economy")
+    def economy(body: EconomyBody):
+        import sandkings
+        with runner.lock:
+            if body.on:
+                sandkings.BARGAIN_ENABLED = True
+                sandkings.WAGE_ENABLED = True
+                sandkings.CAPTURE_CHANCE = sandkings.BARGAIN_CAPTURE_CHANCE
+                runner.sim.bargain_enabled = True
+            else:
+                sandkings.BARGAIN_ENABLED = False
+                sandkings.WAGE_ENABLED = False
+                sandkings.CAPTURE_CHANCE = 0.0
+                runner.sim.bargain_enabled = False
             return build_state(runner.sim)
 
     @app.post("/api/keeper/temp")
@@ -700,7 +719,11 @@ button.act.breach{border-color:var(--breach);color:var(--breach)}
     <button class="act" onclick="release('ant')">Ants</button>
     <button class="act" onclick="release('small_spider')">Small Spider</button>
     <button class="act" onclick="release('fly')">Flies</button>
-    <button class="act gold" onclick="post('/api/keeper/gift')">Tech Gift</button></div>
+    <span class="lab">Tech Gift</span>
+    <button class="act gold" id="giftAbacus" onclick="post('/api/keeper/gift?kind=abacus')">Abacus</button>
+    <button class="act gold" id="giftWatch" onclick="post('/api/keeper/gift?kind=watch')">Watch</button>
+    <button class="act gold" id="giftCalculator" onclick="post('/api/keeper/gift?kind=calculator')">Calculator</button>
+    <button class="act gold" id="giftPi" onclick="post('/api/keeper/gift?kind=pi')">Raspberry Pi</button></div>
   <div class="grp"><span class="lab">Materials</span>
     <button class="act" onclick="mat('toothpick')">Toothpick</button>
     <button class="act" onclick="mat('string')">String</button>
@@ -713,6 +736,7 @@ button.act.breach{border-color:var(--breach);color:var(--breach)}
     <button class="act wrath" onclick="release('spider')">Big Spider</button>
     <button class="act wrath" onclick="release('scorpion')">Scorpion</button>
     <button class="act wrath" onclick="release('snake')">Snake</button>
+    <button class="act wrath" onclick="release('hornets')">Hornets</button>
     <button class="act wrath" onclick="temp('heat')">Heat</button>
     <button class="act wrath" onclick="temp('cold')">Cold</button>
     <button class="act wrath" id="droughtBtn" onclick="toggleDrought()">Withhold</button>
@@ -728,6 +752,8 @@ button.act.breach{border-color:var(--breach);color:var(--breach)}
     <button class="act" onclick="panel('water',0.1)">Water +</button>
     <button class="act" onclick="panel('sun',-2)">Sun −</button>
     <button class="act" onclick="panel('sun',2)">Sun +</button></div>
+  <div class="grp"><span class="lab">Economy</span>
+    <button class="act" id="econBtn" onclick="toggleEconomy()">Economy: Off</button></div>
   <div class="grp" style="margin-left:auto">
     <button class="act" id="mirrorBtn" onclick="toggleMirror()">Mirror View</button>
     <button class="act" id="pauseBtn" onclick="togglePause()">Pause</button></div>
@@ -752,6 +778,7 @@ function panel(which,delta){if(!state)return;
   const cur=which==='water'?state.water_target:state.sun_hours;
   post('/api/keeper/panel',{[which]:cur+delta});}
 function toggleDrought(){drought=!drought;post('/api/keeper/drought',{on:drought});}
+function toggleEconomy(){post('/api/keeper/economy',{on:!(state&&state.economy_on)});}
 function togglePause(){paused=!paused;fetch('/api/control',{method:'POST',
   headers:{'Content-Type':'application/json'},body:JSON.stringify({paused})});
   document.getElementById('pauseBtn').textContent=paused?'Resume':'Pause';}
@@ -784,6 +811,19 @@ function sentColor(s){return s<0.33?'#e0554e':s>0.66?'#f2c14e':'#9aa0ac';}
 function render(){
   if(!state)return; drought=state.drought;
   document.getElementById('droughtBtn').textContent=drought?'Relent':'Withhold';
+  document.getElementById('econBtn').textContent=(state.economy_on?'Economy: On':'Economy: Off');
+  const _given = (state.keeper&&state.keeper.gifts_given)||[];
+  const _ladder = ['abacus','watch','calculator','pi'];
+  const _ids = {abacus:'giftAbacus',watch:'giftWatch',calculator:'giftCalculator',pi:'giftPi'};
+  const _unlock = {abacus:1,watch:3,calculator:7,pi:15};
+  _ladder.forEach(function(k){
+    const b = document.getElementById(_ids[k]); if(!b) return;
+    const claimed = _given.indexOf(k)>=0;
+    const locked = (state.year||0) < _unlock[k];
+    b.disabled = claimed;
+    b.title = claimed ? 'already given' : (locked ? ('unlocks year '+_unlock[k]) : 'available');
+    b.style.opacity = (claimed||locked) ? 0.5 : 1.0;
+  });
   const c=document.getElementById('chips');
   c.innerHTML=`<span class="chip"><b>Year ${state.year}</b> · ${state.season}</span>`+
     `<span class="chip">dole <b>${state.dole_pct}%</b></span>`+

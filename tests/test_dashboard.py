@@ -100,6 +100,7 @@ def test_keeper_drought_gift_cat():
     client, _ = client_for(sim)
     client.post("/api/keeper/drought", json={"on": True})
     assert sim.drought and sim.dole_factor() == 0.0
+    sim.step_count = 1700  # W4 (K9a): abacus unlocks at year 1
     client.post("/api/keeper/gift")
     assert sim.gifts_given == ["abacus"]  # TE3: abacus is the first rung
     client.post("/api/keeper/cat")
@@ -196,6 +197,127 @@ def test_keeper_opendoor_endpoint_breaches():
     col_state = state["colonies"][0]
     assert col_state["breached"] is True
     assert col_state["breach_phase"] == "breached"
+
+
+def test_economy_toggle_on_off_roundtrip():
+    """EC1: POST /api/keeper/economy {on: true|false} round-trip."""
+    import sandkings
+    # Snapshot the initial state (sanity check: should be OFF by default)
+    initial_bargain = sandkings.BARGAIN_ENABLED
+    initial_wage = sandkings.WAGE_ENABLED
+    initial_capture = sandkings.CAPTURE_CHANCE
+
+    try:
+        sim = make_sim()
+        client, runner = client_for(sim)
+
+        # Turn ON
+        r = client.post("/api/keeper/economy", json={"on": True})
+        assert r.status_code == 200
+        state = r.json()
+        assert state["economy_on"] is True
+        assert runner.sim.bargain_enabled is True
+        assert sandkings.BARGAIN_ENABLED is True
+        assert sandkings.WAGE_ENABLED is True
+        assert sandkings.CAPTURE_CHANCE == sandkings.BARGAIN_CAPTURE_CHANCE
+
+        # Turn OFF
+        r = client.post("/api/keeper/economy", json={"on": False})
+        assert r.status_code == 200
+        state = r.json()
+        assert state["economy_on"] is False
+        assert runner.sim.bargain_enabled is False
+        assert sandkings.BARGAIN_ENABLED is False
+        assert sandkings.WAGE_ENABLED is False
+        assert sandkings.CAPTURE_CHANCE == 0.0
+    finally:
+        # Restore the original state
+        sandkings.BARGAIN_ENABLED = initial_bargain
+        sandkings.WAGE_ENABLED = initial_wage
+        sandkings.CAPTURE_CHANCE = initial_capture
+
+
+def test_economy_toggle_idempotent():
+    """EC2: POST /api/keeper/economy {on: true} twice converges (no flip)."""
+    import sandkings
+    initial_bargain = sandkings.BARGAIN_ENABLED
+    initial_wage = sandkings.WAGE_ENABLED
+    initial_capture = sandkings.CAPTURE_CHANCE
+
+    try:
+        sim = make_sim()
+        client, _ = client_for(sim)
+
+        # Turn ON twice
+        r1 = client.post("/api/keeper/economy", json={"on": True})
+        assert r1.status_code == 200
+        state1 = r1.json()
+        assert state1["economy_on"] is True
+
+        r2 = client.post("/api/keeper/economy", json={"on": True})
+        assert r2.status_code == 200
+        state2 = r2.json()
+        assert state2["economy_on"] is True, "idempotent set converges, not flips"
+    finally:
+        sandkings.BARGAIN_ENABLED = initial_bargain
+        sandkings.WAGE_ENABLED = initial_wage
+        sandkings.CAPTURE_CHANCE = initial_capture
+
+
+def test_economy_toggle_state_hygiene():
+    """EC3 (MANDATORY): state hygiene — snapshot and restore module globals."""
+    import sandkings
+    # Snapshot all four module-global state variables
+    initial_bargain = sandkings.BARGAIN_ENABLED
+    initial_wage = sandkings.WAGE_ENABLED
+    initial_capture = sandkings.CAPTURE_CHANCE
+
+    try:
+        sim = make_sim()
+        client, runner = client_for(sim)
+        initial_sim_flag = getattr(runner.sim, 'bargain_enabled', False)
+
+        # Mutate the state (turn economy ON)
+        r = client.post("/api/keeper/economy", json={"on": True})
+        assert r.status_code == 200
+
+        # Verify it's ON
+        assert sandkings.BARGAIN_ENABLED is True
+        assert sandkings.WAGE_ENABLED is True
+
+        # Turn it back OFF
+        r = client.post("/api/keeper/economy", json={"on": False})
+        assert r.status_code == 200
+
+        # Verify the OFF triple is restored by VALUE (not by deletion)
+        assert sandkings.BARGAIN_ENABLED is False
+        assert sandkings.WAGE_ENABLED is False
+        assert sandkings.CAPTURE_CHANCE == 0.0
+    finally:
+        # RESTORE: the mandatory finally that protects the battery
+        sandkings.BARGAIN_ENABLED = initial_bargain
+        sandkings.WAGE_ENABLED = initial_wage
+        sandkings.CAPTURE_CHANCE = initial_capture
+
+
+def test_keeper_gift_with_kind_parameter():
+    """Test POST /api/keeper/gift?kind=abacus at a year >= 1."""
+    sim = make_sim()
+    # W4 (K9a): abacus unlocks at sim.year() >= 1, i.e. step_count >= YEAR_LENGTH
+    # (1600). build_state's "year" is 1-based display; the gate uses 0-based sim.year().
+    sim.step_count = 1700  # sim.year() == 1
+
+    client, _ = client_for(sim)
+    state = build_state(sim)
+    assert state["year"] >= 2  # display year 2 == sim.year() 1
+
+    # Call the gift endpoint with kind=abacus
+    r = client.post("/api/keeper/gift", params={"kind": "abacus"})
+    assert r.status_code == 200
+    result_state = r.json()
+
+    # Verify the endpoint succeeded and gifts_given includes abacus
+    assert "abacus" in result_state["keeper"]["gifts_given"]
 
 
 if __name__ == "__main__":

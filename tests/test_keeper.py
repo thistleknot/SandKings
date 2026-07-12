@@ -17,7 +17,7 @@ import numpy as np
 
 from sandkings import (
     FAUNA, GIFT_LADDER, KEEPER_MEMORY, SandKing, SandKingsSimulation,
-    TERMINAL_MASTERY, TERMINAL_UNLOCK, UnitType, VoxelType,
+    TERMINAL_MASTERY, TERMINAL_UNLOCK, UnitType, VoxelType, YEAR_LENGTH,
 )
 
 
@@ -113,8 +113,11 @@ def test_gift_ladder_advances_the_arc():
     mx, my, mz = colony.maw.position
     worker = SandKing(colony.colony_id, (mx + 1, my, mz), UnitType.WORKER)
     colony.units.append(worker)
+    unlock_year = {'watch': 3, 'calculator': 7, 'pi': 15}
     for kind, arc in (('watch', 'known'), ('calculator', 'claimed'),
                       ('pi', 'claimed')):
+        # Advance to the unlock year for this rung
+        sim.step_count = YEAR_LENGTH * unlock_year[kind]
         sim.keeper_gift(kind, pos=(worker.position[0], worker.position[1]))
         gx, gy, gz = sim.gift[0]
         worker.position = (gx, gy, gz)
@@ -126,9 +129,11 @@ def test_gift_ladder_advances_the_arc():
     assert colony.controllers[-1].fuel_cap == PI_FUEL > VM_FUEL
     # default ladder order with no kind given (TE3: abacus first)
     sim2 = make_sim()
+    sim2.step_count = YEAR_LENGTH * 1
     sim2.keeper_gift()
     assert sim2.gifts_given == ['abacus']
     sim2.gift = None
+    sim2.step_count = YEAR_LENGTH * 3
     sim2.keeper_gift()
     assert sim2.gifts_given == ['abacus', 'watch']
 
@@ -245,3 +250,101 @@ if __name__ == "__main__":
             fn()
             print(f"PASS {name}")
     print("all keeper tests passed")
+
+
+def test_gift_cadence_gc1_year_1_start():
+    """GC1: at year 0 no-op; at year 1 dispense 'abacus'."""
+    # Year 0: step_count < YEAR_LENGTH
+    sim = make_sim()
+    sim.step_count = 0
+    sim.keeper_gift()
+    assert sim.gifts_given == [], "no gift at year 0"
+
+    # Year 1: step_count = YEAR_LENGTH
+    sim.step_count = YEAR_LENGTH
+    sim.keeper_gift()
+    assert sim.gifts_given == ['abacus'], "abacus given at year 1"
+
+
+def test_gift_cadence_gc2_doubling_schedule():
+    """GC2: each rung dispenses at its unlock year (1, 3, 7, 15) and NOT before.
+    The next rung is gated on year() >= 2**(n+1)-1; a rung already past its
+    unlock year dispenses immediately (abacus at year>=1)."""
+    sim = make_sim()
+    # Year 0: abacus (unlock year 1) not yet available
+    sim.step_count = 0
+    sim.keeper_gift()
+    assert sim.gifts_given == [], "nothing before abacus's year-1 unlock"
+
+    # Year 1: abacus
+    sim.step_count = YEAR_LENGTH * 1
+    sim.keeper_gift()
+    assert sim.gifts_given == ['abacus'], "abacus at year 1"
+
+    # Year 2: watch (unlock year 3) not yet
+    sim.gift = None
+    sim.step_count = YEAR_LENGTH * 2
+    sim.keeper_gift()
+    assert sim.gifts_given == ['abacus'], "watch not before year 3"
+
+    # Year 3: watch
+    sim.gift = None
+    sim.step_count = YEAR_LENGTH * 3
+    sim.keeper_gift()
+    assert sim.gifts_given == ['abacus', 'watch'], "watch at year 3"
+
+    # Year 6: calculator (unlock year 7) not yet
+    sim.gift = None
+    sim.step_count = YEAR_LENGTH * 6
+    sim.keeper_gift()
+    assert sim.gifts_given == ['abacus', 'watch'], "calculator not before year 7"
+
+    # Year 7: calculator
+    sim.gift = None
+    sim.step_count = YEAR_LENGTH * 7
+    sim.keeper_gift()
+    assert sim.gifts_given == ['abacus', 'watch', 'calculator'], "calculator at year 7"
+
+    # Year 14: pi (unlock year 15) not yet
+    sim.gift = None
+    sim.step_count = YEAR_LENGTH * 14
+    sim.keeper_gift()
+    assert sim.gifts_given == ['abacus', 'watch', 'calculator'], "pi not before year 15"
+
+    # Year 15: pi
+    sim.gift = None
+    sim.step_count = YEAR_LENGTH * 15
+    sim.keeper_gift()
+    assert sim.gifts_given == ['abacus', 'watch', 'calculator', 'pi'], "pi at year 15"
+
+
+def test_gift_cadence_gc3_once_per_year():
+    """GC3: two calls in same year dispense only one rung."""
+    sim = make_sim()
+    sim.step_count = YEAR_LENGTH * 1
+    sim.keeper_gift()
+    assert sim.gifts_given == ['abacus'], "first call gives abacus"
+
+    # Second call in year 1 should no-op
+    sim.keeper_gift()
+    assert sim.gifts_given == ['abacus'], "second call in same year no-ops"
+
+
+def test_gift_cadence_gc4_manual_and_auto_agree():
+    """GC4: manual keeper_gift() and auto _keeper_tick() honor same year gate."""
+    # Before year 1, manual keeper_gift() no-ops
+    sim = make_sim()
+    sim.step_count = YEAR_LENGTH * 0  # year 0
+    sim.keeper_gift()
+    assert getattr(sim, 'gifts_given', []) == [], "manual no-op before year 1"
+
+    # Also test that auto path (reverent + no gift + ladder) no-ops before year 1
+    sim2 = make_sim()
+    sim2.step_count = YEAR_LENGTH * 0
+    colony = sim2.colonies[0]
+    # Mark as reverent: need a keeper_fed_step in recent past
+    colony.keeper_fed_step = sim2.step_count
+    assert sim2.keeper_attitude(colony) == 'reverent'
+    # Auto path should not dispense before year 1
+    sim2._keeper_tick()
+    assert getattr(sim2, 'gifts_given', []) == [], "auto no-op before year 1"

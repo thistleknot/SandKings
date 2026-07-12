@@ -2849,18 +2849,39 @@ class SandKingsSimulation:
 
     def keeper_gift(self, kind: Optional[str] = None,
                     pos: Optional[Tuple[int, int]] = None):
-        """K9: the technology ladder - watch, calculator, raspberry pi."""
+        """K9a: the technology ladder - year-gated at 2**(n+1)-1 for rung n."""
         if self._hand_stayed():  # PS5: the bound god cannot gift
             return
-        given = getattr(self, 'gifts_given', [])
-        if kind is None:
-            remaining = [g for g in GIFT_LADDER if g not in given]
-            if not remaining:
-                return
-            kind = remaining[0]
         if not hasattr(self, 'gifts_given'):
             self.gifts_given = []
+        given = self.gifts_given
+
+        # Resolve the target rung and its index n
+        if kind is None:
+            # Sequential: take the next unclaimed rung
+            n = len(given)
+            if n >= len(GIFT_LADDER):
+                return  # ladder exhausted
+            kind = GIFT_LADDER[n]
+        else:
+            # Explicit kind: validate it's in GIFT_LADDER and not already given
+            if kind not in GIFT_LADDER:
+                return
+            if kind in given:
+                return  # already given
+            n = GIFT_LADDER.index(kind)
+
+        # Year-unlock gate: rung n unlocks at year 2**(n+1)-1
+        if self.year() < 2**(n+1) - 1:
+            return
+
+        # Once-per-year gate: only one gift per year
+        if getattr(self, 'last_gift_year', -1) == self.year():
+            return
+
+        # Dispense: append to gifts_given and place artifact
         self.gifts_given.append(kind)
+        self.last_gift_year = self.year()
         w, h = self.world.width, self.world.height
         x, y = pos if pos is not None else (
             random.randint(w // 4, 3 * w // 4),
@@ -3008,12 +3029,10 @@ class SandKingsSimulation:
             self.keeper_drop_food(mx, my)  # the relenting miracle
         # AW5: a FLOURISHING (recently-fed) colony draws the operator's hand -
         # gated on fortune, not on pre-breach worship (which no longer exists)
+        # K9a: year gate enforced inside keeper_gift
         if (self.keeper_attitude_any('reverent')
-                and step - getattr(self, 'last_gift_step', 0)
-                > KEEPER_GIFT_INTERVAL
-                and len(getattr(self, 'gifts_given', [])) < len(GIFT_LADDER)
-                and getattr(self, 'gift', None) is None):
-            self.last_gift_step = step
+                and getattr(self, 'gift', None) is None
+                and len(getattr(self, 'gifts_given', [])) < len(GIFT_LADDER)):
             self.keeper_gift()
 
     def keeper_attitude_any(self, wanted: str) -> bool:

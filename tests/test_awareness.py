@@ -94,11 +94,14 @@ def test_gift_ladder_fires_for_a_flourishing_unbreached_colony():
     sim.keeper_auto = True
     c = sim.colonies[0]
     assert not c.breached
-    c.keeper_fed_step = sim.step_count  # flourishing = recently fed
     sim.gifts_given = []
     sim.last_gift_step = -10 ** 9
     sim.gift = None
-    sim.step_count = 100  # not the cat step, not a carve tick
+    # W4 (K9a): the first gift (abacus) unlocks at year 1; use a step past
+    # YEAR_LENGTH (1600) that is not a cat/carve periodic tick. Set fed-step
+    # AFTER advancing the clock so the colony reads as recently fed (flourishing).
+    sim.step_count = 1700  # year 1
+    c.keeper_fed_step = sim.step_count  # flourishing = recently fed (at year 1)
     sim._keeper_tick()
     assert sim.gift is not None, "a thriving un-breached colony draws the gift"
 

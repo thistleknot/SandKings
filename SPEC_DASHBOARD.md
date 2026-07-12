@@ -1,4 +1,4 @@
-# SPEC: The Keeper's Console (Round 9) — DB1–DB8
+# SPEC: The Keeper's Console (Round 9) — DB1–DB9
 
 Intent: a human-facing web view of the terrarium — "the biodome
 supported by proper technology" — that delivers real interaction
@@ -102,6 +102,130 @@ the app sets the CSP header and binds localhost in the launch path;
 no endpoint imports subprocess/socket/eval. build_state and
 render_frame_png are pure and importable headless.
 
+## DB9 — Economy runtime toggle (`POST /api/keeper/economy`) — EC1–EC3
+Intent: the bargain/wage economy ships OFF (byte-identical regression
+battery). Before this section the ONLY way to enable it was the
+`--bargain` launch flag, so the console renders "Economy — off —" with
+no control. DB9 adds a runtime toggle that flips the SAME gates
+`--bargain` flips, at runtime, in both directions.
+
+### DB9.1 — What `--bargain` sets (ground truth, sandkings.py:7136-7140)
+The `--bargain` handler sets EXACTLY these four, no more:
+```
+sandkings.BARGAIN_ENABLED = True                    # module global (default False, :387)
+sandkings.WAGE_ENABLED    = True                    # module global (default False, :352)
+sandkings.CAPTURE_CHANCE  = BARGAIN_CAPTURE_CHANCE  # = 0.4 (default 0.0, :333/:388)
+sim.bargain_enabled       = True                    # sim instance flag
+```
+OFF is the module-default triple plus the cleared sim flag:
+`BARGAIN_ENABLED=False`, `WAGE_ENABLED=False`, `CAPTURE_CHANCE=0.0`,
+`sim.bargain_enabled=False`.
+- Require: toggle-ON sets the ON list verbatim; toggle-OFF restores the
+  OFF triple and clears the sim flag.
+- Maintain: module globals are mutated via attribute assignment on the
+  imported module object (`import sandkings; sandkings.X = ...`) — NOT a
+  local `from sandkings import X` rebind, which leaves the real module
+  global untouched and would silently no-op the gate.
+- Assert (OFF): restore `CAPTURE_CHANCE = 0.0` and `WAGE_ENABLED = False`
+  by VALUE, not by deleting the attribute — other systems read these
+  live globals; a missing attribute is a different failure than the OFF
+  value.
+
+### DB9.2 — Why the toggle alone lights the panel (no new state key)
+`build_state` computes
+`economy_on = bool(getattr(sim,'bargain_enabled',False)) or WAGE_ENABLED`
+(dashboard.py:160) and re-imports `from sandkings import WAGE_ENABLED`
+FRESH on every call (dashboard.py:65). Therefore:
+- Setting `sim.bargain_enabled=True` alone flips `economy_on` True on the
+  next state (short-circuit left operand).
+- Setting `sandkings.WAGE_ENABLED=True` is also picked up (no stale
+  binding), keeping `economy_on` parity with the `--bargain` launch.
+The existing `economy_on` key already gates the client Economy panel
+(dashboard.py:839) between "— off —" and the bargains/contracts render.
+Guarantee: no change to `build_state`, no new state key.
+
+### DB9.3 — The endpoint (mirror DB5 keeper POSTs, dashboard.py:448-494)
+- Body model, beside the other `*Body` classes (dashboard.py:356-403):
+  ```
+  class EconomyBody(BaseModel):
+      on: bool
+  ```
+  Explicit idempotent SET (`{on: true|false}`), NOT a blind server-side
+  flip — the client sends the intended state, so double-clicks and
+  reconnects converge instead of racing to the opposite state.
+- Handler, beside gift/opendoor/drought:
+  ```
+  @app.post("/api/keeper/economy")
+  def economy(body: EconomyBody):
+      import sandkings
+      with runner.lock:
+          if body.on:
+              sandkings.BARGAIN_ENABLED = True
+              sandkings.WAGE_ENABLED    = True
+              sandkings.CAPTURE_CHANCE  = sandkings.BARGAIN_CAPTURE_CHANCE
+              runner.sim.bargain_enabled = True
+          else:
+              sandkings.BARGAIN_ENABLED = False
+              sandkings.WAGE_ENABLED    = False
+              sandkings.CAPTURE_CHANCE  = 0.0
+              runner.sim.bargain_enabled = False
+          return build_state(runner.sim)
+  ```
+- `_disarm_auto()`: DO NOT call it here — deliberate divergence from the
+  other keeper POSTs. Rationale: `_disarm_auto` encodes "the human took
+  the wand" over keeper WELFARE automation (food/gift/door/drought are
+  direct hand interventions on colony fate). The economy toggle is a
+  world-RULE mode switch orthogonal to welfare; its launch-flag
+  equivalent (`--bargain`, sandkings.py:7136-7143) never touches
+  `keeper_auto`. Silently disarming auto-keeper because the operator
+  enabled wages would be a surprising side effect. The parent asked this
+  be stated explicitly: choice = no disarm.
+
+### DB9.4 — The button + JS (mirror droughtBtn, dashboard.py:718/754/786)
+- Action-bar button near the Panel group (dashboard.py:726-730),
+  state-driven label, initial text "Economy: Off":
+  ```
+  <button class="act" id="econBtn" onclick="toggleEconomy()">Economy: Off</button>
+  ```
+- JS helper beside `toggleDrought` (dashboard.py:754); sends the OPPOSITE
+  of the server's current truth, guarding a null first-render state:
+  ```
+  function toggleEconomy(){post('/api/keeper/economy',{on:!(state&&state.economy_on)});}
+  ```
+- In `render()` beside the droughtBtn line (dashboard.py:786), reflect
+  server state (NOT a client latch), so a reconnecting client shows the
+  real economy state:
+  ```
+  document.getElementById('econBtn').textContent=
+    (state.economy_on?'Economy: On':'Economy: Off');
+  ```
+
+## DB9 Acceptance — EC1–EC3 (tests/test_dashboard.py, TestClient)
+Mirror the existing keeper-endpoint TestClient idioms (POST JSON, assert
+200 + returned-state shape). `import sandkings` in the test to read/write
+the module gates directly.
+
+- EC1 — set/clear round-trip.
+  `POST /api/keeper/economy {"on": true}` -> 200; returned state
+  `economy_on is True`; `runner.sim.bargain_enabled is True`;
+  `sandkings.BARGAIN_ENABLED is True`; `sandkings.WAGE_ENABLED is True`;
+  `sandkings.CAPTURE_CHANCE == sandkings.BARGAIN_CAPTURE_CHANCE` (0.4).
+  Then `{"on": false}` -> 200; `economy_on is False`;
+  `sim.bargain_enabled is False`; `BARGAIN_ENABLED` and `WAGE_ENABLED`
+  both `False`; `CAPTURE_CHANCE == 0.0`.
+- EC2 — idempotent set. `{"on": true}` twice -> both 200, no error,
+  final `economy_on is True` (explicit set, not a flip, so a repeat
+  converges rather than toggling back off).
+- EC3 — state hygiene (MANDATORY, single-process battery). These are
+  MODULE globals; a test that flips them ON and leaks the ON values
+  poisons every sibling suite that assumes the OFF default (same class of
+  bug as the SPEC_FIT_CONSTANTS state-hygiene lesson). The test MUST
+  snapshot `sandkings.BARGAIN_ENABLED`, `sandkings.WAGE_ENABLED`,
+  `sandkings.CAPTURE_CHANCE`, and `sim.bargain_enabled` at entry and
+  restore all four in a `finally` (or a fixture teardown) regardless of
+  assertion outcome. Assert the OFF path restores the exact OFF triple
+  (`0.0`, `False`, `False`) so no leak survives even on the happy path.
+
 ## Status / Reconciliation
 - Drafted + implemented 2026-07-09 (same session). Delta:
   - build_state coerces every numeric field to native Python
@@ -115,3 +239,10 @@ render_frame_png are pure and importable headless.
     /api/frame.png (valid PNG); keeper POSTs mutate + disarm auto.
     13/13 test suites green incl. tests/test_dashboard.py (9).
   - Deps: fastapi, uvicorn, pillow (numpy already present). No pygame.
+- DB9 drafted 2026-07-11. Economy runtime toggle mirrors the exact
+  `--bargain` set-list (sandkings.py:7136-7140). NOT yet implemented —
+  awaiting haiku_worker. Notable design calls: (a) `{on: bool}` idempotent
+  set over blind flip; (b) NO `_disarm_auto` (economy is a world-rule
+  switch, not a welfare wand); (c) OFF restores CAPTURE_CHANCE=0.0 by
+  value; (d) EC3 finally-restore is mandatory to protect the shared
+  single-process test battery.
