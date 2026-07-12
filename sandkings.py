@@ -2174,7 +2174,10 @@ class SandKingsSimulation:
             if rl is None:
                 rl = ColonyMawRL(obs_dim=int(obs.shape[0]))
                 colony.maw_rl = rl
-            snap = float(len(colony.units)) + (1.0 if colony.maw.alive else 0.0)
+            snap = (float(len(colony.units))                       # population
+                    + colony.maw.food_stored / 50.0                # stores
+                    + len(getattr(colony, 'territory', ())) / 100.0  # dominance/territory
+                    + (2.0 if colony.maw.alive else 0.0))          # survival
             prev = getattr(colony, '_maw_rl_prev', None)
             if prev is not None:
                 rl.observe_reward(snap - prev)   # reward for the LAST directive
@@ -8065,6 +8068,10 @@ def main():
                         help='Disable water engineering (baseline: ON — the oasis springs, '
                              'water flows and pools, colonies dig rivers/reservoirs/dikes, '
                              'boats cross water).')
+    parser.add_argument('--no-maw-rl', action='store_true',
+                        help='Disable the 85:15 real-RL brain (baseline: ON — the maw learns a '
+                             'colony directive (85%%), the spawn learn a bounded local residual '
+                             '(15%%); needs neural).')
     args = parser.parse_args()
     
     print("="*60)
@@ -8151,7 +8158,16 @@ def main():
               "resumed brains kept)")
     elif getattr(args, 'no_neural', False):
         print("[RULE-BASED] minds (--no-neural): instincts, no learned concepts")
-    
+
+    # The 85:15 real-RL brain is BASELINE (on unless --no-maw-rl), and only with neural on —
+    # it needs the frozen encoder for its observation. Module default MAW_RL_ENABLED stays
+    # False so the regression battery is byte-identical; the game flips it on here.
+    if (not getattr(args, 'no_maw_rl', False) and not getattr(args, 'no_neural', False)
+            and NEURAL_AVAILABLE):
+        globals()['MAW_RL_ENABLED'] = True
+        print("[MAW-RL] 85:15 real-RL active - the maw directs (85%), the spawn play (15%); "
+              "both learn from survival (--no-maw-rl to disable)")
+
     if args.live:
         # When run as a script this module is '__main__'; alias it so
         # live_view's `from sandkings import ...` binds to these same

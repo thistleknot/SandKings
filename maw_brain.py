@@ -34,8 +34,8 @@ MAW_DIRECTIVE_DIM = 6        # colony constants the spawn condition on
 MAW_HIDDEN = 32
 MAW_LR = 3e-3
 MAW_LOG_STD_INIT = -0.5      # exp(-0.5) ~ 0.61 initial exploration std
-MAW_UPDATE_EVERY = 16        # flush a maw batch-REINFORCE update every K batch-cycles
-SPAWN_UPDATE_EVERY = 64      # flush a spawn-residual update every K accumulated spawn-steps
+MAW_UPDATE_EVERY = 8         # flush a maw batch-REINFORCE update every K batch-cycles
+SPAWN_UPDATE_EVERY = 32      # flush a spawn-residual update every K accumulated spawn-steps
 MAW_DIRECTIVE_STRENGTH = 0.5  # bounds how far a directive can tilt an action (neutral at 0.5)
 MAW_RESIDUAL_CLIP = 0.15     # 15% tier "play": max |additive residual| on a spawn action logit
 
@@ -66,12 +66,15 @@ def apply_directive(action_probs, directive, strength: float = MAW_DIRECTIVE_STR
     (Later directive dims map to more behaviours; this is the loop-closing first cut.)
     """
     probs = action_probs.clone()
-    d0 = directive.reshape(-1)[0]
-    factor = torch.exp(strength * 2.0 * (d0 - 0.5))
-    if probs.dim() == 1:
-        probs[6] = probs[6] * factor
+    d = directive.reshape(-1)
+    f_attack = torch.exp(strength * 2.0 * (d[0] - 0.5))                    # d0 aggression -> attack
+    f_move = torch.exp(strength * 2.0 * (d[1] - 0.5)) if d.numel() > 1 else torch.ones(())
+    if probs.dim() == 1:                                                   # d1 mobility -> moves 0..5
+        probs[6] = probs[6] * f_attack
+        probs[:6] = probs[:6] * f_move
         return probs / probs.sum()
-    probs[:, 6] = probs[:, 6] * factor
+    probs[:, 6] = probs[:, 6] * f_attack
+    probs[:, :6] = probs[:, :6] * f_move
     return probs / probs.sum(-1, keepdim=True)
 
 
