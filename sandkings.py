@@ -4571,6 +4571,107 @@ class SandKingsSimulation:
             return True
         return self._step_toward(unit, best, colony)
 
+    # ---- HYDRO water-engineering builders (tech-gated; SPEC_HYDRO) -----------
+    def _reservoir_step(self, unit: SandKing, colony: Colony) -> bool:
+        """'reservoir' tech: carve a basin near the maw that the flow sim fills into
+        a held lake (radius scales with proficiency). Gated on the water system +
+        the tech, so a no-op / no-RNG until both are on."""
+        if not (HYDRO_SOURCES_ENABLED and 'reservoir' in getattr(colony, 'techs', ())):
+            return False
+        mx, my, mz = colony.maw.position
+        r = HYDRO_RESERVOIR_RADIUS + int(round(self._prof(colony, 'reservoir')
+                                               * HYDRO_RESERVOIR_RADIUS))
+        bcx, bcy = mx + (r + 2), my                  # a basin on the maw's flank
+        best, best_d = None, None
+        ux, uy, _uz = unit.position
+        for dx in range(-r, r + 1):
+            for dy in range(-r, r + 1):
+                if dx * dx + dy * dy > r * r:
+                    continue
+                x, y = bcx + dx, bcy + dy
+                if not self.world.in_bounds(x, y, 0):
+                    continue
+                sz = self.world.surface_z(x, y)
+                if sz > 0 and self.world.voxels[x, y, sz] == VoxelType.SAND.value:
+                    d = abs(x - ux) + abs(y - uy)
+                    if best_d is None or d < best_d:
+                        best, best_d = (x, y, sz), d
+        if best is None:
+            return False
+        if max(abs(best[0] - ux), abs(best[1] - uy)) <= 1:
+            self.world.voxels[best] = VoxelType.AIR.value        # deepen the basin
+            self.world.ownership[best] = colony.colony_id
+            self._practice(colony, 'reservoir')
+            self._milestone(colony, 'reservoir',
+                            f"House {self._house_name(colony)} digs a reservoir", unit)
+            return True
+        return self._step_toward(unit, best, colony)
+
+    def _channel_step(self, unit: SandKing, colony: Colony) -> bool:
+        """'aqueduct'/'irrigation' tech: carve a SAND->AIR channel from the oasis
+        toward the nest; the flow sim routes water along the lowered trench. Gated."""
+        techs = getattr(colony, 'techs', ())
+        if not (HYDRO_SOURCES_ENABLED and ('aqueduct' in techs or 'irrigation' in techs)):
+            return False
+        cx, cy = self.world.width // 2, self.world.height // 2
+        mx, my, mz = colony.maw.position
+        steps = max(abs(mx - cx), abs(my - cy))
+        if steps == 0:
+            return False
+        best = None
+        for i in range(1, steps + 1):                # ray oasis-centre -> maw
+            bx = cx + int(round((mx - cx) * i / steps))
+            by = cy + int(round((my - cy) * i / steps))
+            if not self.world.in_bounds(bx, by, 0):
+                break
+            sz = self.world.surface_z(bx, by)
+            if sz > 0 and self.world.voxels[bx, by, sz] == VoxelType.SAND.value:
+                best = (bx, by, sz)                  # lower this column -> the trench
+                break
+        if best is None:
+            return False
+        ux, uy, _uz = unit.position
+        if max(abs(best[0] - ux), abs(best[1] - uy)) <= 1:
+            self.world.voxels[best] = VoxelType.AIR.value
+            self.world.ownership[best] = colony.colony_id
+            self._practice(colony, 'aqueduct' if 'aqueduct' in techs else 'irrigation')
+            self._milestone(colony, 'channel',
+                            f"House {self._house_name(colony)} digs a channel", unit)
+            return True
+        return self._step_toward(unit, best, colony)
+
+    def _dike_step(self, unit: SandKing, colony: Colony) -> bool:
+        """'irrigation' tech: raise a SAND dike ring to pond irrigation water for the
+        fields. Gated."""
+        if not (HYDRO_SOURCES_ENABLED and 'irrigation' in getattr(colony, 'techs', ())):
+            return False
+        mx, my, mz = colony.maw.position
+        r = PALISADE_RING + 2
+        best, best_d = None, None
+        ux, uy, _uz = unit.position
+        for dx in range(-r, r + 1):
+            for dy in range(-r, r + 1):
+                if max(abs(dx), abs(dy)) != r:
+                    continue
+                x, y = mx + dx, my + dy
+                if not self.world.in_bounds(x, y, 0):
+                    continue
+                top = self.world.terrain_z(x, y) + 1
+                if top < self.world.depth and self.world.voxels[x, y, top] == VoxelType.AIR.value:
+                    d = abs(x - ux) + abs(y - uy)
+                    if best_d is None or d < best_d:
+                        best, best_d = (x, y, top), d
+        if best is None:
+            return False
+        if max(abs(best[0] - ux), abs(best[1] - uy)) <= 1:
+            self.world.voxels[best] = VoxelType.SAND.value       # raise the bank
+            self.world.ownership[best] = colony.colony_id
+            self._practice(colony, 'irrigation')
+            self._milestone(colony, 'dike',
+                            f"House {self._house_name(colony)} raises an irrigation dike", unit)
+            return True
+        return self._step_toward(unit, best, colony)
+
     def _try_build(self, unit: SandKing, colony: Colony) -> bool:
         """A designated builder raises the house's monument/defenses before doing
         economy, so a ring actually completes instead of being starved by
@@ -4586,6 +4687,16 @@ class SandKingsSimulation:
         if self._levee_step(unit, colony):
             return True
         if self._bridge_step(unit, colony):
+            return True
+        # Water engineering (HYDRO): a house that has learned the craft digs a
+        # reservoir, routes a channel from the oasis, and rings its fields with
+        # irrigation dikes. All no-op / no-RNG unless the water system is on AND the
+        # tech is known (so neutral runs are byte-unaffected).
+        if self._reservoir_step(unit, colony):
+            return True
+        if self._channel_step(unit, colony):
+            return True
+        if self._dike_step(unit, colony):
             return True
         if (colony.maw.food_stored > WAR_CHEST
                 and (self.keeper_attitude(colony) == 'reverent'

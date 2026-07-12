@@ -125,6 +125,33 @@ def test_hydro_oasis_spring_fills_when_enabled():
         sandkings.HYDRO_SOURCES_ENABLED = old
 
 
+def test_hydro_reservoir_dig_gated_and_active():
+    """P4: reservoir digging is a no-op without the water system; with the system
+    on AND the tech known, a colony carves a basin and practices the tech."""
+    import sandkings
+    from sandkings import UnitType
+    sim = make_sim()
+    c = sim.colonies[0]
+    c.techs = set(getattr(c, 'techs', set())) | {'reservoir'}
+    c.maw.food_stored = 200
+    worker = c.spawn_unit(UnitType.WORKER) or c.units[0]
+    assert sim._reservoir_step(worker, c) is False, "no-op while the water system is off"
+
+    old = sandkings.HYDRO_SOURCES_ENABLED
+    sandkings.HYDRO_SOURCES_ENABLED = True
+    try:
+        air0 = int((sim.world.voxels == VoxelType.AIR.value).sum())
+        acted = False
+        for _ in range(90):
+            if sim._reservoir_step(worker, c):
+                acted = True
+        air1 = int((sim.world.voxels == VoxelType.AIR.value).sum())
+        assert acted and air1 > air0, "a reservoir-tech colony must carve a basin when enabled"
+        assert sim._prof(c, 'reservoir') > 0.0, "digging practices the tech"
+    finally:
+        sandkings.HYDRO_SOURCES_ENABLED = old
+
+
 def test_hydro_water_renders():
     """WATER has a glyph + palette entry, and the web PNG renders with water present."""
     from live_view import GLYPHS, VOXEL_LEGEND, build_voxel_palette
