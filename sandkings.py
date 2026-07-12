@@ -2303,6 +2303,21 @@ class SandKingsSimulation:
         v = self.world.voxels
         return (v == VoxelType.AIR.value) | (v == VoxelType.WATER.value)
 
+    def _water_adjacent(self, pos: Tuple[int, int, int]) -> bool:
+        """HYDRO P5: is a WATER voxel 6-adjacent to pos (crop irrigation check)?
+        Always False when no water exists, so neutral crop growth is unchanged."""
+        if getattr(self, 'water', None) is None:
+            return False
+        x, y, z = pos
+        v = self.world.voxels
+        for dx, dy, dz in ((1, 0, 0), (-1, 0, 0), (0, 1, 0),
+                           (0, -1, 0), (0, 0, 1), (0, 0, -1)):
+            nx, ny, nz = x + dx, y + dy, z + dz
+            if (self.world.in_bounds(nx, ny, nz)
+                    and v[nx, ny, nz] == VoxelType.WATER.value):
+                return True
+        return False
+
     def _hydro_tick(self):
         """Conservative cellular water update: gravity, lateral pressure
         equalization, edge drain, then mirror to WATER voxels. Pure numpy, ZERO
@@ -2368,9 +2383,11 @@ class SandKingsSimulation:
             if self.world.voxels[pos] != VoxelType.CROP.value:
                 del crops[pos]
                 continue
-            if z + 1 < self.world.depth and self.world.voxels[x, y, z + 1] != VoxelType.AIR.value:
+            if (z + 1 < self.world.depth
+                    and self.world.voxels[x, y, z + 1] not in
+                    (VoxelType.AIR.value, VoxelType.WATER.value)):
                 self.world.voxels[pos] = VoxelType.SAND.value  # buried by drift
-                del crops[pos]
+                del crops[pos]                                 # (water irrigates, not buries)
                 continue
             oasis = self.in_oasis(x, y)
             if not oasis:
@@ -2387,6 +2404,10 @@ class SandKingsSimulation:
                     continue
             crops[pos] += (OASIS_GROWTH_MULT if oasis
                            else self._biome_growth_units())  # BI5
+            # HYDRO P5: a field next to standing water (a channel/reservoir) is
+            # irrigated and grows faster. No water at neutral -> no boost -> identity.
+            if self._water_adjacent(pos):
+                crops[pos] += HYDRO_IRRIG_GROWTH
             if crops[pos] >= ripe_at:
                 self.world.voxels[pos] = VoxelType.CROP_RIPE.value
                 del crops[pos]

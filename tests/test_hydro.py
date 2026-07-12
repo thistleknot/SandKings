@@ -152,6 +152,29 @@ def test_hydro_reservoir_dig_gated_and_active():
         sandkings.HYDRO_SOURCES_ENABLED = old
 
 
+def test_hydro_irrigation_boosts_adjacent_crop():
+    """P5: a CROP next to standing water is irrigated and out-grows a dry crop; a
+    crop UNDER water is not buried."""
+    sim = make_sim()
+    sim.step_count = 0                     # Growth season (no stall/frost)
+    crops = sim._crops()
+    ax, ay = 5, 5                          # both well outside the oasis disc
+    bx, by = 9, 9
+    az = sim.world.surface_z(ax, ay)
+    bz = sim.world.surface_z(bx, by)
+    sim.world.voxels[ax, ay, az] = VoxelType.CROP.value
+    sim.world.voxels[bx, by, bz] = VoxelType.CROP.value
+    crops[(ax, ay, az)] = 0
+    crops[(bx, by, bz)] = 0
+    sim._add_water(ax + 1, ay, az, 1.0)    # water beside crop A only
+    sim.world.voxels[ax + 1, ay, az] = VoxelType.WATER.value
+    assert sim._water_adjacent((ax, ay, az))
+    assert not sim._water_adjacent((bx, by, bz))
+    sim._grow_crops()
+    assert crops.get((ax, ay, az), 999) > crops.get((bx, by, bz), 0), \
+        "the irrigated crop must out-grow the dry one"
+
+
 def test_hydro_water_renders():
     """WATER has a glyph + palette entry, and the web PNG renders with water present."""
     from live_view import GLYPHS, VOXEL_LEGEND, build_voxel_palette
