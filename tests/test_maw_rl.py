@@ -169,6 +169,38 @@ def test_colony_maw_rl_pickles():
     assert d.shape == (MAW_DIRECTIVE_DIM,)
 
 
+def test_reinforce_signsgd_learns():
+    """signSGD mode (sign-quantized gradient) still converges on the toy objective."""
+    if not HAVE_TORCH:
+        return _skip()
+    import maw_brain
+    torch.manual_seed(11)
+    p = MawPolicy(obs_dim=4, directive_dim=3)
+    opt = p.make_optimizer(lr=5e-2)
+    obs = torch.ones(4)
+    target = torch.tensor([0.9, 0.1, 0.5])
+
+    def dist():
+        d, _ = p.act(obs, deterministic=True)
+        return float(torch.mean((d - target) ** 2))
+
+    start = dist()
+    prev = maw_brain.MAW_SIGN_SGD
+    maw_brain.MAW_SIGN_SGD = True
+    try:
+        for _ in range(250):
+            lps, rs = [], []
+            for _ in range(32):
+                d, lp = p.act(obs)
+                rs.append(-float(torch.mean((d - target) ** 2)))
+                lps.append(lp)
+            p.update(lps, rs, opt)
+    finally:
+        maw_brain.MAW_SIGN_SGD = prev
+    end = dist()
+    assert end < start * 0.6, f"signSGD failed to learn: {start:.4f}->{end:.4f}"
+
+
 def test_colony_spawn_rl_multi_update():
     """Reproduces the cross-update stale-pending autograd bug: many units, many updates."""
     if not HAVE_TORCH:

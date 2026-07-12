@@ -34,15 +34,24 @@ MAW_DIRECTIVE_DIM = 6        # colony constants the spawn condition on
 MAW_HIDDEN = 32
 MAW_LR = 3e-3
 MAW_LOG_STD_INIT = -0.5      # exp(-0.5) ~ 0.61 initial exploration std
+MAW_GRAD_CLIP = 1.0          # clip the noisy REINFORCE gradient norm (between-batch stability)
+MAW_SIGN_SGD = False         # opt-in: quantize the gradient to its sign (signSGD; robust to noise)
 MAW_UPDATE_EVERY = 8         # flush a maw batch-REINFORCE update every K batch-cycles
 SPAWN_UPDATE_EVERY = 32      # flush a spawn-residual update every K accumulated spawn-steps
 MAW_DIRECTIVE_STRENGTH = 0.5  # bounds how far a directive can tilt an action (neutral at 0.5)
 MAW_RESIDUAL_CLIP = 0.15     # 15% tier "play": max |additive residual| on a spawn action logit
 
 
-def _reinforce_update(log_probs, rewards, optimizer) -> float:
+def _reinforce_update(log_probs, rewards, optimizer, clip=None, sign=None) -> float:
     """Batch-REINFORCE with a batch-mean baseline (whitened advantage). Shared by the maw
-    policy (85%) and the spawn residual policy (15%). Returns the loss value."""
+    policy (85%) and the spawn residual policy (15%). Returns the loss value.
+
+    The between-batch update is STABILIZED (REINFORCE is high-variance): the gradient is
+    either sign-quantized (signSGD, robust to heavy-tailed noise) or norm-clipped. Both are
+    read from the module globals at call time (MAW_SIGN_SGD / MAW_GRAD_CLIP) so a run can flip
+    them; pass clip/sign explicitly to override."""
+    clip = MAW_GRAD_CLIP if clip is None else clip
+    sign = MAW_SIGN_SGD if sign is None else sign
     lp = torch.stack(list(log_probs))
     r = torch.tensor([float(x) for x in rewards], dtype=lp.dtype, device=lp.device)
     adv = r - r.mean()
@@ -52,6 +61,16 @@ def _reinforce_update(log_probs, rewards, optimizer) -> float:
     loss = -(lp * adv).mean()
     optimizer.zero_grad()
     loss.backward()
+    if sign:                                          # signSGD: quantize gradient to its sign
+        for group in optimizer.param_groups:
+            for p in group['params']:
+                if p.grad is not None:
+                    p.grad.sign_()
+    elif clip and clip > 0:                           # otherwise clip the gradient norm
+        for group in optimizer.param_groups:
+            params = [p for p in group['params'] if p.grad is not None]
+            if params:
+                torch.nn.utils.clip_grad_norm_(params, clip)
     optimizer.step()
     return float(loss.detach())
 
