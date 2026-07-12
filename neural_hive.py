@@ -26,6 +26,84 @@ import copy
 ACTIVATION_EMA_DECAY = 0.99   # ~100-pass smoothing horizon
 PRUNE_WARMUP_PASSES = 100     # no pruning until this many forwards recorded
 
+# ZCA + Kanerva sparse-distributed encoder (the maw's 85% brain, kept TIGHT).
+# input -> ZCA whiten -> Kanerva sparse code (k of M protos) -> linear readout.
+# Prototypes + whitening are FROZEN buffers; only the readout evolves.
+KANERVA_PROTOS = 256          # M fixed prototypes (the distributed memory)
+KANERVA_ACTIVE = 16           # k nearest prototypes active per input (sparsity)
+ZCA_WARMUP = 64               # observations before the first whitening fit
+ZCA_REFRESH = 200             # observations between whitening-matrix refits
+ZCA_EPS = 1e-3                # eigenvalue floor / covariance regulariser
+ZCA_COV_DECAY = 0.99          # running-covariance EMA (tracks non-stationary state)
+ZCA_OBSERVE_EVERY = 8         # fold ZCA stats every N forwards (throttle the O(dim^2)
+#                               covariance update; whitening only needs a running estimate)
+
+
+class ZCAWhitener(nn.Module):
+    """Running ZCA whitening of the input state (SPEC_REPR): decorrelate + scale so
+    Euclidean distance in the whitened space is Mahalanobis in the raw space — the
+    metric Kanerva prototype matching needs. mean / running covariance / whitening
+    matrix W are BUFFERS (pickle with the module, never gradient-learned). W is the
+    identity until ZCA_WARMUP samples, then refit every ZCA_REFRESH observations."""
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.dim = dim
+        self.n = 0
+        self.register_buffer('mean', torch.zeros(dim))
+        self.register_buffer('cov', torch.eye(dim))
+        self.register_buffer('W', torch.eye(dim))
+
+    @torch.no_grad()
+    def observe(self, x: torch.Tensor):
+        """Fold one raw input into the running mean + covariance; refit periodically."""
+        self.n += 1
+        delta = x - self.mean
+        self.mean += delta / self.n
+        self.cov.mul_(ZCA_COV_DECAY).add_((1 - ZCA_COV_DECAY) * torch.outer(delta, x - self.mean))
+        if self.n >= ZCA_WARMUP and self.n % ZCA_REFRESH == 0:
+            c = 0.5 * (self.cov + self.cov.t()) + ZCA_EPS * torch.eye(self.dim)
+            evals, evecs = torch.linalg.eigh(c)
+            self.W.copy_(evecs @ torch.diag(torch.clamp(evals, min=ZCA_EPS).rsqrt()) @ evecs.t())
+
+    @torch.no_grad()
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return (x - self.mean) @ self.W
+
+
+class KanervaEncoder(nn.Module):
+    """Sparse distributed memory (SPEC_REPR): M fixed random prototypes in the
+    whitened space; the k nearest fire with a Gaussian receptive-field weight (a
+    normalized sparse code). Prototypes are a FROZEN buffer — never learned/evolved.
+    Returns (active indices, activations) so the readout can gather only k columns."""
+
+    def __init__(self, dim: int, n_protos: int = KANERVA_PROTOS, k: int = KANERVA_ACTIVE):
+        super().__init__()
+        self.n_protos = n_protos
+        self.k = min(k, n_protos)
+        # A SHARED, deterministic codebook: every brain gets the SAME prototypes so
+        # a readout column means the same memory cell across colonies — that makes
+        # grafting/crossover of readout weights meaningful. A private generator keeps
+        # the global RNG stream untouched (determinism guardrail).
+        g = torch.Generator().manual_seed(0x5A11D)
+        protos = torch.randn(n_protos, dim, generator=g)
+        self.register_buffer('protos', protos)
+        self.register_buffer('proto_sq', (protos * protos).sum(dim=1))   # precomputed norms
+
+    @torch.no_grad()
+    def forward(self, xw: torch.Tensor):
+        """xw: (B, dim) whitened -> (idx (B,k) long, acts (B,k) normalized).
+
+        Distance by the matmul identity ||x-p||^2 = |x|^2 - 2 x.p + |p|^2 — one
+        (B x dim)@(dim x M) matmul, NO (B, M, dim) broadcast intermediate. This is
+        what keeps the sparse encoder tight."""
+        xw_sq = (xw * xw).sum(dim=1, keepdim=True)                        # (B, 1)
+        d2 = xw_sq - 2.0 * (xw @ self.protos.t()) + self.proto_sq         # (B, M)
+        vals, idx = torch.topk(d2, self.k, dim=1, largest=False)          # (B, k)
+        acts = torch.exp(-0.5 * vals.clamp(min=0.0))
+        acts = acts / (acts.sum(dim=1, keepdim=True) + 1e-8)
+        return idx, acts
+
 
 @dataclass
 class ActivationStats:
@@ -64,118 +142,91 @@ class HiveMindBrain(nn.Module):
                  encoding_dim: int = 32, depth: int = 1):
         super().__init__()
         self.input_dim = input_dim
-        self.hidden_dim = hidden_dim
+        self.hidden_dim = hidden_dim   # kept for API compat; the SDM encoder ignores it
         self.encoding_dim = encoding_dim
-        self.depth = max(1, int(depth))  # hidden layers before the encoder head
+        self.depth = max(1, int(depth))
 
-        # Evolvable perception encoder: input -> (hidden ->)*depth -> encoding.
-        # The contract downstream (fold/prune read encoder[-2] as the last
-        # Linear, SoldierLayer expects an encoding_dim vector) is preserved:
-        # the encoder always ENDS in Linear(hidden->encoding), ReLU.
-        layers: List[nn.Module] = [nn.Linear(input_dim, hidden_dim), nn.ReLU()]
-        for _ in range(self.depth - 1):
-            layers += [nn.Linear(hidden_dim, hidden_dim), nn.ReLU()]
-        layers += [nn.Linear(hidden_dim, encoding_dim), nn.ReLU()]
-        self.encoder = nn.Sequential(*layers)
+        # The maw's 85% brain, kept TIGHT: ZCA whiten -> Kanerva sparse code ->
+        # linear readout -> encoding. ZCA + prototypes are frozen buffers; ONLY the
+        # readout (Kanerva memory -> encoding) is a Parameter, so mutate/mate touch
+        # nothing else. SoldierLayer still consumes an encoding_dim vector unchanged.
+        self.zca = ZCAWhitener(input_dim)
+        self.kanerva = KanervaEncoder(input_dim, KANERVA_PROTOS, KANERVA_ACTIVE)
+        self.readout = nn.Linear(KANERVA_PROTOS, encoding_dim)
+        with torch.no_grad():
+            self.readout.weight.normal_(std=0.05)
+            self.readout.bias.zero_()
 
-        # Track activation patterns for pruning, keyed per Linear layer
-        self.activation_stats = {
-            f'encoder.{i}': ActivationStats()
-            for i, layer in enumerate(self.encoder)
-            if isinstance(layer, nn.Linear)
-        }
-
-        # Performance tracking
+        # per-prototype win-frequency EMA, backing prototype pruning
+        self.proto_usage = ActivationStats()
         self.folded_layer_count = 0
-    
+
+    @torch.no_grad()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Encode sensory input to shared representation + track activations.
-
-        Accepts (input_dim,) or (batch, input_dim); records per-neuron
-        post-ReLU firing fractions into activation_stats without altering
-        the returned encoding.
-        """
+        """Encode sensory input to the shared representation via ZCA -> Kanerva ->
+        sparse readout. Accepts (input_dim,) or (batch, input_dim). Records ZCA
+        stats and per-prototype activation (for whitening refits and pruning)
+        without altering the returned encoding. Evolution-only (no autograd)."""
         squeeze = x.dim() == 1
-        h = x.unsqueeze(0) if squeeze else x
+        h = x.unsqueeze(0) if squeeze else x            # (B, input_dim)
 
-        for i, layer in enumerate(self.encoder):
-            h = layer(h)
-            if isinstance(layer, nn.ReLU):
-                # h is the post-ReLU output of the Linear at encoder[i-1]
-                with torch.no_grad():
-                    fired = (h > 0).float().mean(dim=0)
-                    self.activation_stats[f'encoder.{i-1}'].update(fired)
+        # Fold ZCA stats in periodically (throttled) using the batch mean — the
+        # per-forward covariance update is the bulk of the cost and whitening only
+        # needs a running estimate.
+        self._zca_ctr = getattr(self, '_zca_ctr', 0) + 1
+        if self._zca_ctr % ZCA_OBSERVE_EVERY == 0:
+            self.zca.observe(h.mean(dim=0))
+        xw = self.zca(h)                                # (B, input_dim) whitened
+        idx, acts = self.kanerva(xw)                    # (B, k), (B, k)
 
-        return h.squeeze(0) if squeeze else h
+        # sparse readout: gather only the k active prototype columns per row.
+        # readout.weight is (encoding, M); W[:, idx] -> (encoding, B, k).
+        Wg = self.readout.weight[:, idx]                # advanced index -> (E, B, k)
+        enc = torch.einsum('bk,ebk->be', acts, Wg) + self.readout.bias
+        enc = torch.relu(enc)                           # (B, encoding)
+
+        # prototype-usage EMA: fraction of the batch each prototype won
+        fired = torch.zeros(self.kanerva.n_protos)
+        fired.scatter_add_(0, idx.reshape(-1),
+                           torch.ones(idx.numel()) / max(1, h.shape[0]))
+        self.proto_usage.update(fired)
+
+        return enc.squeeze(0) if squeeze else enc
 
     def prune_weights(self, threshold: float = 0.01):
-        """Zero the weight rows and biases of neurons that rarely fire.
+        """Zero the readout columns of prototypes that (almost) never win — the
+        sparse code's dead memory cells. Skipped until PRUNE_WARMUP_PASSES forwards
+        so early noise can't prune live prototypes. Returns newly-zeroed count."""
+        if self.proto_usage.total_forward_passes < PRUNE_WARMUP_PASSES:
+            return 0
+        usage = self.proto_usage.get_usage_ratio()
+        if usage.dim() == 0:
+            return 0
+        dead = usage <= threshold            # (M,) per-prototype
+        if not dead.any():
+            return 0
+        with torch.no_grad():
+            newly_zeroed = (self.readout.weight.data[:, dead] != 0).sum().item()
+            self.readout.weight.data[:, dead] = 0.0
+        return newly_zeroed
 
-        A neuron is dead when its firing EMA <= threshold. Layers with fewer
-        than PRUNE_WARMUP_PASSES recorded forwards are skipped so early EMA
-        noise cannot prune live neurons. Returns the count of newly zeroed
-        weight elements.
-        """
-        pruned_count = 0
-
-        for i, layer in enumerate(self.encoder):
-            if not isinstance(layer, nn.Linear):
-                continue
-            stats = self.activation_stats[f'encoder.{i}']
-            if stats.total_forward_passes < PRUNE_WARMUP_PASSES:
-                continue
-            usage = stats.get_usage_ratio()
-            if usage.dim() == 0:
-                continue
-
-            dead = usage <= threshold  # per-output-neuron mask
-            if not dead.any():
-                continue
-
-            with torch.no_grad():
-                newly_zeroed = (layer.weight.data[dead] != 0).sum().item()
-                layer.weight.data[dead] = 0.0
-                if layer.bias is not None:
-                    layer.bias.data[dead] = 0.0
-            pruned_count += newly_zeroed
-
-        return pruned_count
-    
     def fold_soldier_layer(self, soldier_layer: 'SoldierLayer', performance_score: float):
-        """
-        Incorporate successful soldier layer into encoder
-        
-        High-performing soldiers contribute to Maw's evolution
-        """
+        """Lamarckian fold: a high-performing soldier nudges the maw's readout
+        (acquired traits passed up). Shapes differ (soldier output action×encoding
+        vs readout encoding×M), so only the overlapping submatrix is blended (N9)."""
         if performance_score < 0.7:  # Only fold if soldier was effective
             return False
-        
-        # Blend soldier's output layer back into encoder's final layer
-        # This is like Lamarckian evolution - acquired traits passed up.
-        # Shapes differ (soldier 7x32 vs encoder 32x64), so only the
-        # overlapping submatrix is blended (spec N9).
         with torch.no_grad():
-            encoder_final_layer = self.encoder[-2]  # Last linear layer before ReLU
-            soldier_output_layer = soldier_layer.output
-
-            # Weighted blend: 90% encoder, 10% soldier (conservative folding)
-            alpha = 0.1 * performance_score  # Scale by performance
-
-            rows = min(soldier_output_layer.out_features, encoder_final_layer.out_features)
-            cols = min(soldier_output_layer.in_features, encoder_final_layer.in_features)
-
-            # Fold soldier weights into the overlapping region of the encoder
-            encoder_final_layer.weight.data[:rows, :cols] = (
-                (1 - alpha) * encoder_final_layer.weight.data[:rows, :cols] +
-                alpha * soldier_output_layer.weight.data[:rows, :cols]
-            )
-
-            if encoder_final_layer.bias is not None and soldier_output_layer.bias is not None:
-                encoder_final_layer.bias.data[:rows] = (
-                    (1 - alpha) * encoder_final_layer.bias.data[:rows] +
-                    alpha * soldier_output_layer.bias.data[:rows]
-                )
-        
+            alpha = 0.1 * performance_score
+            rows = min(soldier_layer.output.out_features, self.readout.out_features)
+            cols = min(soldier_layer.output.in_features, self.readout.in_features)
+            self.readout.weight.data[:rows, :cols] = (
+                (1 - alpha) * self.readout.weight.data[:rows, :cols] +
+                alpha * soldier_layer.output.weight.data[:rows, :cols])
+            if self.readout.bias is not None and soldier_layer.output.bias is not None:
+                self.readout.bias.data[:rows] = (
+                    (1 - alpha) * self.readout.bias.data[:rows] +
+                    alpha * soldier_layer.output.bias.data[:rows])
         self.folded_layer_count += 1
         return True
     
@@ -365,7 +416,7 @@ def encode_soldier_state(unit, colony, world, enemy_positions) -> torch.Tensor:
             enemy_dir = torch.tensor([
                 (ex - x)/w,
                 (ey - y)/h,
-                (ez - z)/h
+                (ez - z)/d
             ], dtype=torch.float32)
             enemy_dist = min_dist / max(w, h, d)
         else:

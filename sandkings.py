@@ -7252,6 +7252,38 @@ class SandKingsSimulation:
         """Display identity for decision logs and rosters."""
         return f"{unit.unit_type.name.title()} #{getattr(unit, 'unit_id', 0)}"
 
+    def _colony_encodings(self, colony: Colony) -> dict:
+        """Batch the maw's SHARED encoder across all a colony's neural soldiers in
+        ONE forward per step (encoding per-soldier was the perf sink — the maw is a
+        shared encoder, so its Kanerva/ZCA cost should be paid once and split B
+        ways). Memoized by step; returns {id(unit): encoding}. Row-independent, so
+        the batched encoding equals the per-soldier one."""
+        cache = getattr(self, '_enc_cache', None)
+        if cache is None or cache[0] != self.step_count:
+            cache = (self.step_count, {})
+            self._enc_cache = cache
+        _step, per_colony = cache
+        if colony.colony_id in per_colony:
+            return per_colony[colony.colony_id]
+        from politics import hostile as _hostile
+        enemy_positions = []
+        for ec in self.colonies:
+            if _hostile(self, colony.colony_id, ec.colony_id):
+                enemy_positions.extend([e.position for e in ec.units])
+        soldiers = [u for u in colony.units
+                    if u.unit_type == UnitType.SOLDIER and u.brain_layer is not None]
+        enc_map = {}
+        if soldiers:
+            states = torch.stack([
+                encode_soldier_state(u, colony, self.world, enemy_positions)
+                for u in soldiers])                          # (B, input_dim)
+            with torch.no_grad():
+                encs = colony.genome.brain(states)           # (B, encoding) — ONE call
+            for u, e in zip(soldiers, encs):
+                enc_map[id(u)] = e
+        per_colony[colony.colony_id] = enc_map
+        return enc_map
+
     def _execute_unit_ai(self, unit: SandKing, colony: Colony):
         """Simple AI for unit behavior - NEURAL or RULE-BASED"""
         x, y, z = unit.position
@@ -7491,24 +7523,26 @@ class SandKingsSimulation:
                 colony.genome.brain is not None and 
                 unit.brain_layer is not None):
                 
-                # Gather enemy positions (hostile colonies only, P9)
-                from politics import hostile as _hostile
-                enemy_positions = []
-                for enemy_colony in self.colonies:
-                    if _hostile(self, colony.colony_id, enemy_colony.colony_id):
-                        enemy_positions.extend([e.position for e in enemy_colony.units])
-                
                 # AUG3: sync the soldier's KV-cache length to the colony's
                 # earned augment level (idempotent; covers every spawn path)
                 unit.brain_layer.cache_len = (getattr(colony, 'memory_augment', 0)
                                               * AUG_CACHE_STEP)
 
-                # Encode state
-                state_tensor = encode_soldier_state(unit, colony, self.world, enemy_positions)
-                
-                # Forward pass through Maw brain → Soldier layer
+                # SHARED maw encoder, batched once per colony/step (perf: the maw's
+                # Kanerva/ZCA cost is paid once and split across the soldiers, not
+                # rerun per soldier). Fall back to a single encode for an edge case
+                # (a soldier not in this step's batch).
+                encoding = self._colony_encodings(colony).get(id(unit))
+                if encoding is None:
+                    from politics import hostile as _hostile
+                    ep = []
+                    for ec in self.colonies:
+                        if _hostile(self, colony.colony_id, ec.colony_id):
+                            ep.extend([e.position for e in ec.units])
+                    with torch.no_grad():
+                        encoding = colony.genome.brain(
+                            encode_soldier_state(unit, colony, self.world, ep))
                 with torch.no_grad():
-                    encoding = colony.genome.brain(state_tensor)
                     action_probs = unit.brain_layer(encoding)
                 
                 # HIVE MONITOR: decode this soldier's mind (SPEC_HIVE_MONITOR M2/M3)

@@ -38,24 +38,23 @@ def build_brain(genome) -> Optional["HiveMindBrain"]:
                          depth=int(getattr(genome, 'brain_depth', 1)))
 
 
+def _graft_readout(cl, dl) -> None:
+    """Copy a donor readout's overlapping top-left block into the child readout
+    (shared Kanerva codebook -> columns are comparable). Shapes may differ."""
+    ro = min(cl.weight.shape[0], dl.weight.shape[0])
+    co = min(cl.weight.shape[1], dl.weight.shape[1])
+    cl.weight.data[:ro, :co] = dl.weight.data[:ro, :co]
+    if cl.bias is not None and dl.bias is not None:
+        cl.bias.data[:ro] = dl.bias.data[:ro]
+
+
 def graft_into(child: "HiveMindBrain", parent: "HiveMindBrain") -> None:
-    """EV4: copy each parent Linear's overlapping top-left block into the
-    child's same-index Linear. Shapes may differ; only the overlap moves."""
+    """EV4: copy the parent brain's readout into the child (the SDM readout is the
+    only evolvable layer now — ZCA + Kanerva prototypes are frozen/shared)."""
     if not _TORCH or parent is None:
         return
-    import torch.nn as nn
-    c_lin = [m for m in child.encoder if isinstance(m, nn.Linear)]
-    p_lin = [m for m in parent.encoder if isinstance(m, nn.Linear)]
     with torch.no_grad():
-        for i, cl in enumerate(c_lin):
-            if i >= len(p_lin):
-                break
-            pl = p_lin[i]
-            ro = min(cl.weight.shape[0], pl.weight.shape[0])
-            co = min(cl.weight.shape[1], pl.weight.shape[1])
-            cl.weight.data[:ro, :co] = pl.weight.data[:ro, :co]
-            if cl.bias is not None and pl.bias is not None:
-                cl.bias.data[:ro] = pl.bias.data[:ro]
+        _graft_readout(child.readout, parent.readout)
 
 
 def crossover_genome(a, b, mutation_rate: float = 0.15):
@@ -84,26 +83,17 @@ def crossover_genome(a, b, mutation_rate: float = 0.15):
 
 
 def _mosaic_graft(child_brain, brain_a, brain_b) -> None:
+    """EV4 mosaic: the child's readout is grafted from one parent (a or b). With
+    the SDM shared codebook there is one evolvable layer, so the mosaic is a
+    per-child donor pick rather than per-encoder-layer."""
     if not _TORCH or child_brain is None:
         return
-    import torch.nn as nn
-    c_lin = [m for m in child_brain.encoder if isinstance(m, nn.Linear)]
+    donor = brain_a if random.random() < 0.5 else brain_b
+    donor = donor or brain_a or brain_b
+    if donor is None:
+        return
     with torch.no_grad():
-        for i, cl in enumerate(c_lin):
-            donor = brain_a if random.random() < 0.5 else brain_b
-            if donor is None:
-                donor = brain_a or brain_b
-            if donor is None:
-                continue
-            d_lin = [m for m in donor.encoder if isinstance(m, nn.Linear)]
-            if i >= len(d_lin):
-                continue
-            dl = d_lin[i]
-            ro = min(cl.weight.shape[0], dl.weight.shape[0])
-            co = min(cl.weight.shape[1], dl.weight.shape[1])
-            cl.weight.data[:ro, :co] = dl.weight.data[:ro, :co]
-            if cl.bias is not None and dl.bias is not None:
-                cl.bias.data[:ro] = dl.bias.data[:ro]
+        _graft_readout(child_brain.readout, donor.readout)
 
 
 def architecture_of(genome) -> str:

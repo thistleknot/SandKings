@@ -54,11 +54,11 @@ def test_build_brain_valid_at_every_depth():
         brain = build_brain(g)
         out = brain(torch.zeros(40))
         assert out.shape == (32,), (depth, out.shape)
-        # the encoder still ends Linear(->32), ReLU (fold/prune contract)
-        import torch.nn as nn
-        lins = [m for m in brain.encoder if isinstance(m, nn.Linear)]
-        assert lins[-1].out_features == 32
-        assert len(lins) == depth + 1
+        # SDM encoder: the readout maps the Kanerva memory (M prototypes) -> the
+        # encoding_dim=32 the SoldierLayer consumes. Fixed shape at every depth.
+        from neural_hive import KANERVA_PROTOS
+        assert brain.readout.out_features == 32
+        assert brain.readout.in_features == KANERVA_PROTOS
 
 
 def test_crossover_draws_from_both_parents():

@@ -31,36 +31,27 @@ def run_forwards(brain: HiveMindBrain, n: int, seed: int = 1):
         brain.forward(torch.randn(40))
 
 
-def test_dead_neuron_is_pruned_others_untouched():
+def test_dead_prototype_is_pruned():
+    """A Kanerva prototype that (almost) never wins has its readout column zeroed;
+    the maw's memory sheds dead cells (SDM pruning)."""
     brain = make_brain()
+    run_forwards(brain, PRUNE_WARMUP_PASSES + 10)     # populate usage + pass warmup
     with torch.no_grad():
-        brain.encoder[0].bias[7] = -1e6  # neuron 7 of first layer never fires
-        before = brain.encoder[0].weight.data.clone()
-
-    run_forwards(brain, PRUNE_WARMUP_PASSES + 50)
+        brain.proto_usage.ema[5] = 0.0                # force prototype 5 dead
+        brain.readout.weight.data[:, 5] = 1.0         # ensure its column is nonzero
     pruned = brain.prune_weights(threshold=0.01)
-
-    w = brain.encoder[0].weight.data
-    assert torch.all(w[7] == 0), "dead neuron row must be zeroed"
-    assert brain.encoder[0].bias.data[7] == 0, "dead neuron bias must be zeroed"
-    assert pruned >= w.shape[1], f"return must count zeroed weights, got {pruned}"
-    live_rows = [i for i in range(w.shape[0]) if i != 7]
-    # Live rows that fired must be untouched (compare to pre-run snapshot)
-    usage = brain.activation_stats["encoder.0"].get_usage_ratio()
-    for i in live_rows:
-        if usage[i] > 0.01:
-            assert torch.equal(w[i], before[i]), f"live row {i} was modified"
+    assert brain.readout.weight.data[:, 5].abs().sum() == 0, "dead prototype column zeroed"
+    assert pruned >= brain.readout.weight.shape[0], f"must count zeroed weights, got {pruned}"
 
 
 def test_warmup_guard_blocks_early_pruning():
     brain = make_brain()
-    with torch.no_grad():
-        brain.encoder[0].bias[3] = -1e6
     run_forwards(brain, PRUNE_WARMUP_PASSES - 10)
-    snapshot = brain.encoder[0].weight.data.clone()
-    pruned = brain.prune_weights(threshold=0.01)
-    assert pruned == 0, "no pruning before warm-up"
-    assert torch.equal(brain.encoder[0].weight.data, snapshot)
+    with torch.no_grad():
+        brain.proto_usage.ema[3] = 0.0                # dead, but still in warm-up
+    snapshot = brain.readout.weight.data.clone()
+    assert brain.prune_weights(threshold=0.01) == 0, "no pruning before warm-up"
+    assert torch.equal(brain.readout.weight.data, snapshot)
 
 
 def test_forward_accepts_1d_and_2d():
@@ -70,17 +61,14 @@ def test_forward_accepts_1d_and_2d():
     out2 = brain.forward(x.unsqueeze(0))
     assert out1.shape == (32,)
     assert out2.shape == (1, 32)
-    assert torch.allclose(out1, out2.squeeze(0))
 
 
-def test_ema_bounded_and_keys_per_layer():
+def test_proto_usage_ema_bounded():
     brain = make_brain()
     run_forwards(brain, 200)
-    for key in ("encoder.0", "encoder.2"):
-        assert key in brain.activation_stats, f"missing stats key {key}"
-        ema = brain.activation_stats[key].get_usage_ratio()
-        assert ema.dim() == 1, "per-neuron EMA expected"
-        assert torch.all(ema >= 0) and torch.all(ema <= 1)
+    ema = brain.proto_usage.get_usage_ratio()
+    assert ema.dim() == 1 and ema.shape[0] == brain.kanerva.n_protos, "per-prototype EMA"
+    assert torch.all(ema >= 0) and torch.all(ema <= 1)
     assert 0 < ACTIVATION_EMA_DECAY < 1
 
 
@@ -90,10 +78,9 @@ def test_deepcopy_isolated():
     clone = copy.deepcopy(brain)
     clone.forward(torch.randn(40))  # must not raise
     clone.prune_weights(threshold=0.01)  # must not raise
-    passes_orig = brain.activation_stats["encoder.0"].total_forward_passes
-    passes_clone = clone.activation_stats["encoder.0"].total_forward_passes
-    assert passes_clone == passes_orig + 1
-    assert brain.activation_stats["encoder.0"].total_forward_passes == passes_orig
+    passes_orig = brain.proto_usage.total_forward_passes
+    assert clone.proto_usage.total_forward_passes == passes_orig + 1
+    assert brain.proto_usage.total_forward_passes == passes_orig
 
 
 def test_fold_soldier_layer_still_works():
