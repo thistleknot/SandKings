@@ -384,6 +384,32 @@ def test_checkpoint_roundtrip(tmp_path=None):
         assert loaded.step_count == sim.step_count + 1
 
 
+def test_checkpoint_history_is_bounded():
+    """Regression: save_checkpoint pruned to CHECKPOINT_KEEP rows. It used to
+    INSERT a new full-sim pickle every autosave and never delete, so a long run
+    grew the db without limit (~3.9 GB at 268k steps) until the volume filled and
+    the write meant to preserve state failed. load must still return the latest."""
+    import sqlite3
+    import tempfile
+    from sandkings import (CHECKPOINT_KEEP, load_checkpoint, save_checkpoint)
+    sim = make_sim(seed=21)
+    with tempfile.TemporaryDirectory() as tmp:
+        db = os.path.join(tmp, "terrarium.db")
+        for _ in range(CHECKPOINT_KEEP + 5):   # more saves than the retention cap
+            sim.step()
+            save_checkpoint(sim, db)
+        conn = sqlite3.connect(db)
+        try:
+            rows = conn.execute("SELECT COUNT(*) FROM checkpoints").fetchone()[0]
+        finally:
+            conn.close()
+        assert rows == CHECKPOINT_KEEP, (
+            f"history must be bounded to {CHECKPOINT_KEEP} rows, found {rows}")
+        loaded = load_checkpoint(db)
+        assert loaded is not None and loaded.step_count == sim.step_count, (
+            "the newest checkpoint must still load after pruning")
+
+
 def test_checkpoint_incompatible_loads_fresh_not_crash():
     """Resume-by-default: a version mismatch or corrupt state returns None
     (start fresh) instead of crashing the resume path."""

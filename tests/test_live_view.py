@@ -423,6 +423,33 @@ def test_legend_layout_never_cuts_off_vertically():
     assert len({x for x, _y in positions}) >= 2, "layout should use multiple columns"
 
 
+def test_manager_layout_never_cuts_off_vertically():
+    """Regression (same class as the legend R34): the manager stat block
+    column-wraps via legend_layout so NO row renders past area_h. The old
+    _render_manager placed row i at y=10+i*17 with no height bound, so a tall
+    colony block (35-anchor concept table + soldiers + decision log) ran off the
+    bottom and cut off."""
+    from live_view import build_manager_entries, legend_layout
+    sim = make_sim()
+    for _ in range(4):  # let instincts/soldiers populate the block
+        sim.step()
+    cid = sim.colonies[0].colony_id
+    entries = build_manager_entries(sim, cid)
+    n = len(entries)
+    line_h, top, left = 17, 10, 14        # the values _render_manager passes
+    area_w, area_h = 672, 400             # a window too short for one column
+    single_col_bottom = top + n * line_h
+    assert single_col_bottom > area_h, (
+        "test premise: the manager block must overflow one column at this size "
+        f"(needs {single_col_bottom}px, have {area_h}px)")
+    positions = legend_layout(n, area_w, area_h, line_h=line_h, top=top, left=left)
+    assert len(positions) == n, "every entry must get a position (none dropped)"
+    for (x, y) in positions:
+        assert top <= y < area_h, f"manager row at y={y} is cut off (area_h={area_h})"
+        assert 0 <= x < area_w, f"manager row at x={x} is outside area_w={area_w}"
+    assert len({x for x, _y in positions}) >= 2, "layout should wrap into columns"
+
+
 def test_column_inhabitants_orders_by_height_and_inspect_reads():
     from live_view import (build_inspect_entries, column_inhabitants,
                            target_alive)

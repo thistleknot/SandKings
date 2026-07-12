@@ -1658,15 +1658,18 @@ class LiveViewer:
     def _render_manager(self, area_w: int, area_h: int) -> None:
         """Manager screen over the map area (SPEC_HIVE_MONITOR M5).
 
-        The HUD panel stays live on the right; overflow rows clip."""
+        The HUD panel stays live on the right; a tall stat block column-wraps
+        (R34, the same fix as the legend) so it NEVER overflows area_h and cuts
+        off — hidden state is untrustworthy state."""
         self._screen.fill(HUD_BG)
         pygame.draw.rect(self._screen, (30, 30, 40),
                          pygame.Rect(0, 0, area_w, area_h), 1)
-        for i, (line, color) in enumerate(
-                build_manager_entries(self.sim, self.manager_colony)):
+        m_entries = build_manager_entries(self.sim, self.manager_colony)
+        positions = legend_layout(len(m_entries), area_w, area_h,
+                                  line_h=17, top=10, left=14)
+        for (line, color), (x, y) in zip(m_entries, positions):
             if line:
-                self._screen.blit(self._font.render(line, True, color),
-                                  (14, 10 + i * 17))
+                self._screen.blit(self._font.render(line, True, color), (x, y))
 
         hud_x = area_w + 12
         for i, (line, color) in enumerate(build_hud_entries(

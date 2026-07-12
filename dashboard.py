@@ -719,7 +719,7 @@ button.act.breach{border-color:var(--breach);color:var(--breach)}
     <button class="act" onclick="release('ant')">Ants</button>
     <button class="act" onclick="release('small_spider')">Small Spider</button>
     <button class="act" onclick="release('fly')">Flies</button>
-    <span class="lab">Tech Gift</span>
+    <span class="lab" id="techGiftLab">Tech Gift</span>
     <button class="act gold" id="giftAbacus" onclick="post('/api/keeper/gift?kind=abacus')">Abacus</button>
     <button class="act gold" id="giftWatch" onclick="post('/api/keeper/gift?kind=watch')">Watch</button>
     <button class="act gold" id="giftCalculator" onclick="post('/api/keeper/gift?kind=calculator')">Calculator</button>
@@ -824,6 +824,16 @@ function render(){
     b.title = claimed ? 'already given' : (locked ? ('unlocks year '+_unlock[k]) : 'available');
     b.style.opacity = (claimed||locked) ? 0.5 : 1.0;
   });
+  // label the NEXT gift (first ungiven rung), with its unlock year / readiness
+  const _names = {abacus:'Abacus',watch:'Watch',calculator:'Calculator',pi:'Raspberry Pi'};
+  const _next = _ladder.find(function(k){ return _given.indexOf(k)<0; });
+  const _giftLab = document.getElementById('techGiftLab');
+  if(_giftLab){
+    _giftLab.textContent = _next
+      ? ('Tech Gift → '+_names[_next]+((state.year||0)<_unlock[_next]
+          ? (' (yr '+_unlock[_next]+')') : ' (ready)'))
+      : 'Tech Gift · all given';
+  }
   const c=document.getElementById('chips');
   c.innerHTML=`<span class="chip"><b>Year ${state.year}</b> · ${state.season}</span>`+
     `<span class="chip">dole <b>${state.dole_pct}%</b></span>`+
@@ -834,6 +844,15 @@ function render(){
     (state.keeper_bound?`<span class="chip warn">BOUND · House ${state.keeper_bound_by}</span>`
       :(state.keeper_influence_word?`<span class="chip warn">you feel ${state.keeper_influence_word}</span>`:''))+
     state.weather.map(w=>`<span class="chip wx">${w}</span>`).join('');
+  // Preserve a focused chat input across the full re-render. The rail is rebuilt
+  // on every state poll (innerHTML=''), which destroys the <input> and steals
+  // focus — so clicking into "say something..." deselected a beat later. Capture
+  // the focused say-input's id/value/caret now and restore it after the rebuild.
+  const _act=document.activeElement;
+  let _focus=null;
+  if(_act&&_act.tagName==='INPUT'&&_act.id&&_act.id.indexOf('say')===0){
+    _focus={id:_act.id,val:_act.value,ss:_act.selectionStart,se:_act.selectionEnd};
+  }
   const rail=document.getElementById('rail');rail.innerHTML='';
   state.colonies.forEach(col=>{
     const d=document.createElement('div');
@@ -868,6 +887,11 @@ function render(){
       inner+=`<div class="speak"><input id="say${col.id}" placeholder="(House ${col.house} is not yet awakened)" onkeydown="if(event.key==='Enter')converse(${col.id},'say${col.id}')">`+
         `<button onclick="converse(${col.id},'say${col.id}')">Say</button></div>`;}
     d.innerHTML=inner;rail.appendChild(d);});
+  if(_focus){                          // restore the chat input the rebuild just replaced
+    const _r=document.getElementById(_focus.id);
+    if(_r){_r.value=_focus.val;_r.focus();
+      try{_r.setSelectionRange(_focus.ss,_focus.se);}catch(e){}}
+  }
   document.getElementById('saga').innerHTML=
     state.saga.slice().reverse().map(l=>`<div class="line">${l}</div>`).join('')
     ||'<div class="line" style="color:var(--dim)">The chronicle is yet unwritten.</div>';

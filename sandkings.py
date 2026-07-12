@@ -7343,6 +7343,7 @@ class SandKingsSimulation:
 # mismatch makes load_checkpoint() report "incompatible" and start fresh
 # rather than crash (the user's "load last state unless incompatible").
 CHECKPOINT_VERSION = "2.16"
+CHECKPOINT_KEEP = 3   # retain only the newest N checkpoint rows (bounds db growth)
 
 
 def save_checkpoint(sim: 'SandKingsSimulation', path: str) -> int:
@@ -7370,6 +7371,15 @@ def save_checkpoint(sim: 'SandKingsSimulation', path: str) -> int:
             "INSERT INTO checkpoints (step, saved_at, version, state) "
             "VALUES (?, datetime('now'), ?, ?)",
             (sim.step_count, CHECKPOINT_VERSION, sqlite3.Binary(blob)))
+        # Bound the history: load_checkpoint only ever reads the newest row, so
+        # every prior snapshot is dead weight. Without this prune each autosave
+        # appended a full sim pickle and the db grew without limit (a 268k-step
+        # run reached ~3.9 GB), eventually filling the volume and failing the
+        # very write meant to preserve state. Keep the last few for rollback.
+        conn.execute(
+            "DELETE FROM checkpoints WHERE id NOT IN "
+            "(SELECT id FROM checkpoints ORDER BY id DESC LIMIT ?)",
+            (CHECKPOINT_KEEP,))
         conn.commit()
         return cursor.lastrowid
     finally:
