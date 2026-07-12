@@ -504,18 +504,20 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
         if hp_frac < 1.0:
             maw_line += f" {hp_bar(hp_frac)}"
         entries.append((maw_line, color))
-        # BRK-B: breakout-proximity gauge (reuses hp_bar; skipped once breached)
+        # BRK-B: breakout-proximity gauge (reuses hp_bar; skipped once breached).
+        # Suppressed for pre-machine colonies with no pi (pure noise on every house).
         phase, frac, label = breakout_progress(colony)
-        if phase == "breached":
-            gauge = "  BREACHED"
-        elif phase == "nopi":
-            gauge = "  breakout: no pi"
-        elif phase == "unlocking":
-            gauge = f"  unlock:{hp_bar(frac)}"
-        else:  # mastering
-            uses = int(getattr(colony, 'terminal_uses', 0))
-            gauge = f"  breach:{hp_bar(frac)} {uses}/{TERMINAL_MASTERY}"
-        entries.append((gauge, color))
+        if not (phase == "nopi" and getattr(colony, 'machine_arc', 'none') == 'none'):
+            if phase == "breached":
+                gauge = "  BREACHED"
+            elif phase == "nopi":
+                gauge = "  breakout: no pi"
+            elif phase == "unlocking":
+                gauge = f"  unlock:{hp_bar(frac)}"
+            else:  # mastering
+                uses = int(getattr(colony, 'terminal_uses', 0))
+                gauge = f"  breach:{hp_bar(frac)} {uses}/{TERMINAL_MASTERY}"
+            entries.append((gauge, color))
     events = list(getattr(sim, 'events', []))[-EVENT_LINES:]
     if events:
         entries.append(("", HUD_FG))
@@ -1353,10 +1355,10 @@ class LiveViewer:
                     self.sim.keeper_auto = False
                     self.sim.keeper_ignite(*self.cursor)
             elif key == pygame.K_o:                     # BRK-C: keeper opens the door
-                target = _breakout_target(self)
-                if target is not None:
-                    with self.runner.lock:
-                        self.sim.keeper_auto = False
+                with self.runner.lock:
+                    self.sim.keeper_auto = False
+                    target = _breakout_target(self)
+                    if target is not None:
                         self.sim.keeper_open_door(target)
             elif key == pygame.K_x:                     # PANEL: more water
                 with self.runner.lock:

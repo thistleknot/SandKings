@@ -555,3 +555,38 @@ def test_iso_full_loop_headless():
     viewer.look_mode = True  # exercise the iso cursor path too
     viewer.run()
     assert viewer.steps_done == 6, "ISO view runs the loop to completion"
+
+
+def test_breakout_target_rules():
+    """W2 FIX 3 (relocated from test_breakout to keep that suite pygame-free):
+    _breakout_target — inspected unit/maw -> its colony, else the living colony
+    whose maw is nearest the cursor, else None. Lives here because _breakout_target
+    is a live_view helper and this file already imports pygame (test_dashboard's
+    pygame-free invariant sorts before test_breakout but after nothing here)."""
+    from live_view import _breakout_target
+    from sandkings import SandKing, UnitType, Beast
+    sim = make_sim()
+    c0, c1 = sim.colonies[0], sim.colonies[1]
+
+    class StubView:
+        def __init__(self, sim, cursor, inspected):
+            self.sim, self.cursor, self.inspected = sim, cursor, inspected
+
+    # (a) inspected unit -> its colony
+    unit = SandKing(c0.colony_id, (5, 5, 2), UnitType.WORKER)
+    assert _breakout_target(StubView(sim, (8, 8), ('unit', unit))) is c0
+
+    # (b) inspected beast (no colony_id) -> falls through to nearest-cursor colony
+    beast = Beast('spider', (10, 10, 3), 25, 8, 20, 2)
+    tgt = _breakout_target(StubView(sim, (8, 8), ('beast', beast)))
+    assert tgt is not None and tgt in sim.colonies
+
+    # (c) no inspection, cursor near a maw -> nearest living colony
+    c1.maw.position = (8, 9, 2)
+    tgt = _breakout_target(StubView(sim, (8, 8), None))
+    assert tgt is not None and tgt.is_alive()
+
+    # (d) all colonies dead -> None
+    for c in sim.colonies:
+        c.maw.alive = False
+    assert _breakout_target(StubView(sim, (8, 8), None)) is None

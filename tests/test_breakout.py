@@ -331,3 +331,75 @@ def test_brk_a2_no_controller_port_7_gated():
     # Verify terminal_uses stays 0
     assert getattr(colony, 'terminal_uses', 0) == 0, \
         "colony with no controllers should not increment terminal_uses at port 7"
+
+
+# ============================================================================
+# W2 Regression Tests — breakout correctness fixes
+# ============================================================================
+
+def test_terminal_carve_no_crash_at_east_wall():
+    """W2 FIX 1: carving at east wall (mx+2 >= width) should not crash; command still counts."""
+    sim = make_sim()
+    colony = sim.colonies[0]
+
+    # Give the colony a pi-gifted controller, unlocked
+    ctrl = Controller(colony.colony_id, fuel=PI_FUEL, durability=PI_DURABILITY)
+    ctrl.operate_ticks = TERMINAL_UNLOCK
+    colony.controllers = [ctrl]
+    colony.machine_arc = 'claimed'
+    colony.terminal_uses = 0
+
+    # Position maw at the east wall (x = width - 1)
+    # so mx + 2 = width + 1 would be out of bounds
+    colony.maw.position = (sim.world.width - 1, colony.maw.position[1], colony.maw.position[2])
+
+    # Call _actuate with port 7, value 2 (carve command)
+    # Should NOT raise IndexError
+    sim._actuate(colony, 7, 2)
+
+    # Command still counts as a terminal use (it just carves nothing)
+    assert getattr(colony, 'terminal_uses', 0) == 1, \
+        "carve command at east wall should still increment terminal_uses"
+
+
+def test_keeper_open_door_skips_dead_colony():
+    """W2 FIX 2: keeper_open_door should not breach a dead colony."""
+    sim = make_sim()
+    colony = sim.colonies[0]
+
+    # Kill the colony by setting maw.alive = False
+    colony.maw.alive = False
+
+    # Verify is_alive() returns False
+    assert not colony.is_alive(), "colony should be dead"
+
+    # Attempt to breach the dead colony
+    sim.keeper_open_door(colony)
+
+    # Colony should NOT be breached (a corpse stays a corpse)
+    assert getattr(colony, 'breached', False) is False, \
+        "dead colony should not be breached"
+
+
+def test_breakout_progress_clamps_over_mastery():
+    """W2 FIX 4: breakout_progress should clamp frac to 1.0 when terminal_uses >= TERMINAL_MASTERY."""
+    colony = Colony(0, (8, 8, 8), (255, 0, 0))
+    ctrl = Controller(colony.colony_id, fuel=PI_FUEL, durability=PI_DURABILITY)
+    ctrl.operate_ticks = TERMINAL_UNLOCK
+    colony.controllers = [ctrl]
+    colony.terminal_uses = 20  # Exceeds TERMINAL_MASTERY (16)
+    colony.breached = False
+
+    phase, frac, label = breakout_progress(colony)
+
+    assert phase == "mastering", f"expected 'mastering', got '{phase}'"
+    assert frac == 1.0, f"expected frac==1.0 when uses > TERMINAL_MASTERY, got {frac}"
+    assert 0.0 <= frac <= 1.0
+
+
+# NOTE: test_breakout_target_rules lives in tests/test_live_view.py, not here.
+# _breakout_target is a live_view helper, and importing live_view pulls in pygame;
+# test_breakout sorts before test_dashboard in the single-process battery, whose
+# test_frame_png_renders_without_pygame asserts pygame is absent from sys.modules.
+# Keeping the pygame-touching test in test_live_view (which runs after test_dashboard
+# and legitimately imports pygame) preserves that headless invariant.

@@ -442,7 +442,7 @@ def breakout_progress(colony) -> Tuple[str, float, str]:
     if getattr(colony, 'breached', False):
         return ("breached", 1.0, "BREACHED")
     controllers = getattr(colony, 'controllers', None) or []
-    pi_ticks = [c.operate_ticks for c in controllers
+    pi_ticks = [getattr(c, 'operate_ticks', 0) for c in controllers
                 if getattr(c, 'fuel_cap', VM_FUEL) > VM_FUEL]
     if not pi_ticks:
         return ("nopi", 0.0, "no pi")
@@ -2880,7 +2880,7 @@ class SandKingsSimulation:
         """
         if self._hand_stayed():        # PS5: the bound god cannot act
             return
-        if colony is None or getattr(colony, 'breached', False):
+        if colony is None or not colony.is_alive() or getattr(colony, 'breached', False):
             return
         self._log_event(f"The keeper opens the door - House "
                         f"{self._house_name(colony)} is invited to step through")
@@ -3840,10 +3840,11 @@ class SandKingsSimulation:
             del colony.known_food[:-KNOWN_FOOD_CAP]
         elif value == 2:  # echo: the machine carves
             mx, my, _ = colony.maw.position
-            cz = self.world.surface_z(mx + 2, my)
-            if (0 <= cz < self.world.depth and self.world.voxels
-                    [mx + 2, my, cz] == VoxelType.SAND.value):
-                self._carvings()[(mx + 2, my, cz)] = CARVE_SYMBOLS['machine']
+            if mx + 2 < self.world.width:            # bounds guard (maw may hug the east wall)
+                cz = self.world.surface_z(mx + 2, my)
+                if (0 <= cz < self.world.depth and self.world.voxels
+                        [mx + 2, my, cz] == VoxelType.SAND.value):
+                    self._carvings()[(mx + 2, my, cz)] = CARVE_SYMBOLS['machine']
         elif value == 3:  # install: the pre-wrapped KV-cache augment (AUG2)
             self._install_augment(colony)
         elif value == 4:  # predict: the pre-wrapped regression tool (TL3)
