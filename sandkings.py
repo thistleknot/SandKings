@@ -7973,6 +7973,11 @@ def main():
                              'chooses annihilate / subjugate / wage by net '
                              'extraction, driving capture and the wage market '
                              '(SPEC_BARGAIN; supersedes --subjugation and --wages)')
+    parser.add_argument('--hydro', action='store_true',
+                        help='Enable water engineering: the oasis springs, water flows '
+                             'and pools, and colonies that learn the hydro tree dig '
+                             'rivers/reservoirs and irrigation dikes; boats cross water '
+                             '(SPEC_HYDRO)')
     args = parser.parse_args()
     
     print("="*60)
@@ -8030,6 +8035,16 @@ def main():
         print("[CHAIN] BARGAIN ENABLED - each colony pair chooses annihilate/"
               "subjugate/wage by net extraction; wages win when force merely leaks "
               "(SPEC_BARGAIN)")
+
+    # --hydro: turn on the water-engineering system for this run only. The module
+    # default HYDRO_SOURCES_ENABLED stays False (regression battery byte-identical);
+    # here we flip the live global so the oasis springs, water flows and pools, and
+    # colonies that learn the hydro tree build rivers/reservoirs/dikes.
+    if getattr(args, 'hydro', False):
+        globals()['HYDRO_SOURCES_ENABLED'] = True
+        print("[CHAIN] HYDRO ENABLED - the oasis springs; water flows, pools, and "
+              "irrigates; colonies dig rivers/reservoirs and boats cross the water "
+              "(SPEC_HYDRO)")
 
     # Enable neural mode if requested (fresh sims only - resumed sims keep
     # their evolved brains)

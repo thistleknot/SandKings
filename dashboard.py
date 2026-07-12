@@ -971,7 +971,15 @@ def main():
                         help="seat the novella's four houses (CH1)")
     parser.add_argument("--dynamic", action="store_true",
                         help="dynamic population + Spartan succession (count breathes 2..8)")
+    parser.add_argument("--hydro", action="store_true",
+                        help="water engineering: oasis springs, water flows/pools, colonies "
+                             "dig rivers/reservoirs/dikes, boats cross water (SPEC_HYDRO)")
     args = parser.parse_args()
+
+    if getattr(args, 'hydro', False):
+        import sandkings as _sk
+        _sk.HYDRO_SOURCES_ENABLED = True
+        print("[keeper] HYDRO enabled - the oasis springs and water engineering is live")
 
     sim = None
     if args.persist and not args.fresh:
