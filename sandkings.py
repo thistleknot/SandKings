@@ -2303,6 +2303,15 @@ class SandKingsSimulation:
         v = self.world.voxels
         return (v == VoxelType.AIR.value) | (v == VoxelType.WATER.value)
 
+    def _flood_damage(self, colony: 'Colony') -> int:
+        """HYDRO P6: flood damage a colony's exposed units take. A house that has
+        learned to build RESERVOIRS soaks the surge into its basins -> reduced
+        damage. Full FLOOD_DAMAGE otherwise (and at neutral, gate off)."""
+        if (HYDRO_SOURCES_ENABLED
+                and 'reservoir' in getattr(colony, 'techs', ())):
+            return max(1, int(FLOOD_DAMAGE * (1.0 - HYDRO_RESERVOIR_ABSORB)))
+        return FLOOD_DAMAGE
+
     def _water_adjacent(self, pos: Tuple[int, int, int]) -> bool:
         """HYDRO P5: is a WATER voxel 6-adjacent to pos (crop irrigation check)?
         Always False when no water exists, so neutral crop growth is unchanged."""
@@ -4333,7 +4342,10 @@ class SandKingsSimulation:
                                             " to rafts on the floodwater", unit)
                         if getattr(unit, 'rafted', False):
                             continue  # afloat — the water does not take it
-                        self._weather_kill(unit, colony, FLOOD_DAMAGE)
+                        # HYDRO P6: a reservoir-building house takes reduced flood
+                        # damage (its basins soak the surge; dikes already part the
+                        # flood via the dam rule).
+                        self._weather_kill(unit, colony, self._flood_damage(colony))
             if random.random() < 0.02:  # the water takes what it finds
                 for (x, y) in list(cells)[:40]:
                     z = self.world.surface_z(x, y)
@@ -5700,7 +5712,36 @@ class SandKingsSimulation:
             voxel = self.world.get_voxel(*new_pos)
             if voxel == VoxelType.AIR:
                 unit.move(new_pos)
+                # BOATS: dismount when reaching DRY solid ground (a raft beaches) —
+                # but only in CALM conditions. While a flood is active anywhere the
+                # unit keeps riding out its raft (the recede code clears it); that is
+                # the reactive flood-raft, distinct from a boat crossing a lake.
+                if getattr(unit, 'rafted', False):
+                    flood_active = (getattr(self, 'flood_until', 0) > self.step_count
+                                    or getattr(self, 'kw_until', 0) > self.step_count)
+                    nx, ny, nz = new_pos
+                    below = (self.world.get_voxel(nx, ny, nz - 1)
+                             if nz - 1 >= 0 else VoxelType.STONE)
+                    if not flood_active and below not in (VoxelType.AIR, VoxelType.WATER):
+                        unit.rafted = False
                 return True
+            if voxel == VoxelType.WATER:
+                # BOATS (HYDRO P7): a unit crosses standing water by raft — already
+                # afloat passes through; otherwise it boards if the house has timber
+                # (one wood per raft). Without timber it cannot cross; try another
+                # direction. Only reachable when WATER voxels exist, so identity holds.
+                if getattr(unit, 'rafted', False):
+                    unit.move(new_pos)
+                    return True
+                if getattr(colony, 'wood', 0) >= 1:
+                    colony.wood -= 1
+                    unit.rafted = True
+                    self._milestone(colony, 'raft',
+                                    f"House {self._house_name(colony)} takes to a raft"
+                                    " to cross the water", unit)
+                    unit.move(new_pos)
+                    return True
+                continue
             if voxel == VoxelType.WEB:  # T48: the silk snares the step
                 self.world.set_voxel(*new_pos, VoxelType.AIR)
                 return False

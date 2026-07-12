@@ -175,6 +175,57 @@ def test_hydro_irrigation_boosts_adjacent_crop():
         "the irrigated crop must out-grow the dry one"
 
 
+def test_hydro_boats_cross_water():
+    """P7: a unit reaches a target across standing water by boarding a raft (one
+    wood), passes over the water, and dismounts on the far shore; without timber it
+    cannot cross."""
+    sim = make_sim()
+    c = sim.colonies[0]
+    worker = c.units[0]
+    z = 6
+    wx, wy = 4, 4
+    for x in (wx, wx + 1, wx + 2):                 # solid ground under a 3-cell run
+        sim.world.voxels[x, wy, z - 1] = VoxelType.SAND.value
+        sim.world.voxels[x, wy, z] = VoxelType.AIR.value
+    sim.world.voxels[wx + 1, wy, z] = VoxelType.WATER.value   # water in the middle
+    sim._add_water(wx + 1, wy, z, 0.5)
+    target = (wx + 2, wy, z)
+
+    c.wood = 0                                     # no timber -> cannot cross
+    worker.position = (wx, wy, z)
+    sim._step_toward(worker, target, c)
+    assert worker.position == (wx, wy, z), "no raft without timber -> stalls at the water"
+
+    c.wood = 3                                     # timber -> boards and crosses
+    worker.position = (wx, wy, z)
+    sim._step_toward(worker, target, c)
+    assert worker.position == (wx + 1, wy, z) and getattr(worker, 'rafted', False), \
+        "boards a raft onto the water"
+    sim._step_toward(worker, target, c)
+    assert worker.position == (wx + 2, wy, z) and not getattr(worker, 'rafted', True), \
+        "dismounts on the far shore"
+
+
+def test_hydro_reservoir_reduces_flood_damage():
+    """P6: with the water system on, a reservoir-building house takes reduced flood
+    damage; without the tech (or with the system off) it takes the full hit."""
+    import sandkings
+    from sandkings import FLOOD_DAMAGE
+    sim = make_sim()
+    plain = sim.colonies[0]
+    teched = sim.colonies[1]
+    teched.techs = set(getattr(teched, 'techs', set())) | {'reservoir'}
+    assert sim._flood_damage(teched) == FLOOD_DAMAGE, "no relief while the system is off"
+
+    old = sandkings.HYDRO_SOURCES_ENABLED
+    sandkings.HYDRO_SOURCES_ENABLED = True
+    try:
+        assert sim._flood_damage(plain) == FLOOD_DAMAGE, "no reservoir tech -> full damage"
+        assert sim._flood_damage(teched) < FLOOD_DAMAGE, "reservoirs soak the surge"
+    finally:
+        sandkings.HYDRO_SOURCES_ENABLED = old
+
+
 def test_hydro_water_renders():
     """WATER has a glyph + palette entry, and the web PNG renders with water present."""
     from live_view import GLYPHS, VOXEL_LEGEND, build_voxel_palette
