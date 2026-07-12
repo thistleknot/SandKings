@@ -2142,7 +2142,7 @@ class SandKingsSimulation:
         self._apply_maw_regen()
         self._check_maw_deaths()
         self._process_respawns()
-        if self.dynamic_population:          # Phase 6: the pool breathes 2..MAX
+        if getattr(self, 'dynamic_population', False):   # Phase 6: pool breathes 2..MAX
             self._succession_tick()          # advance any live succession windows
             self._population_tick()           # fill-in when sparse, bud when crowded
         self._maw_rl_tick()                  # 85% tier: maw real-RL directive (gated)
@@ -6762,7 +6762,7 @@ class SandKingsSimulation:
             # weak and pheromone-only, until it molts into a maw. If no heir
             # survives, the house falls through to the normal cascade, where the
             # respawn reclamation fork can still continue the loyal line.
-            if (self.dynamic_population
+            if (getattr(self, 'dynamic_population', False)
                     and getattr(colony, 'pop_state', POP_ACTIVE) != POP_SUCCESSION
                     and getattr(colony.genome, 'loyalty', 0.0) >= SPARTAN_LOYALTY):
                 aspirant = self._select_aspirant(colony)
