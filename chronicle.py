@@ -27,6 +27,13 @@ PRUNE_KEEP_SALIENCE = 7  # rows at/above this salience are never pruned
 # wins; the table is ordered most-specific first)
 SALIENCE = [
     ("has fallen", 10),
+    ("RESTORED", 10),                # a Spartan heir reclaims the line (succession)
+    ("extinguished", 10),           # a house dies out (failed succession)
+    ("in disgrace", 9),             # a house falls disgraced (collapse-madness)
+    ("aspirant rises", 8),          # the succession window opens
+    ("endures the collapse", 7),    # a high-loyalty house holds, an heir stirs
+    ("buds a daughter", 6),         # a prosperous house buds (crowding → war pressure)
+    ("draws a new house", 5),       # the sparse board fills in (founding)
     ("betrays", 9),
     ("blood feud", 9),
     ("coaxes the ancient machine", 8),

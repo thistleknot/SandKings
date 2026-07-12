@@ -77,7 +77,13 @@ MIN_ACTIVE_COLONIES = 2                  # liveness FLOOR: below this, founding 
 # house goes mad → extinct (Phase 2 disgrace). All inert while DYNAMIC_POPULATION=False.
 SPARTAN_LOYALTY  = 0.7                    # colony-genome loyalty gate for an heir to rise [prov:C]
 SPARTAN_BOOST    = 1.3                    # augmented-net / boosted-stat multiplier on the rise [prov:C]
-SUCCESSION_WINDOW = 800                   # half-year live-transition window (reserved: live aspirant) [prov:C]
+SUCCESSION_WINDOW = 800                   # half-year live-transition window for a live aspirant [prov:C]
+# Founding / budding — the bounded pool BREATHES around equilibrium (Phase 6).
+EQUILIBRIUM_COLONIES = 4                  # ~natural equilibrium (not a hard constant) [prov:C]
+FOUND_FILLIN_CHANCE  = 0.02              # per-tick chance a DORMANT slot fills the sparse board [prov:C]
+BUD_FOOD             = 320               # maw hoard that lets a prosperous house bud a daughter [prov:C]
+BUD_CHANCE           = 0.01              # per-tick chance a prosperous house buds when crowded [prov:C]
+POP_TICK_INTERVAL    = 50               # steps between population-breathing evaluations [prov:C]
 
 WAR_CHEST = 400              # food hoard that sends a colony to war (SPEC T10)
 SCOUT_ALARM_RANGE = 5        # Manhattan distance that triggers a scout alarm (SPEC T11)
@@ -1573,7 +1579,7 @@ class SandKingsSimulation:
     """Main simulation engine coordinating all systems"""
     
     def __init__(self, width=80, height=40, depth=20, num_colonies=4,
-                 canon=False):
+                 canon=False, dynamic_population=None):
         self.world = VoxelWorld(width, height, depth)
         self.canon = bool(canon)  # CH1: the novella's four color-houses
         # Resolve random colony count here so the pheromone layer's
@@ -1582,7 +1588,15 @@ class SandKingsSimulation:
             num_colonies = 4  # Red, White, Black, Orange
         elif num_colonies is None or num_colonies == 0:
             num_colonies = random.randint(3, 5)
-        self.pheromones = PheromoneLayer(self.world.dimensions, num_colonies)
+        # Bounded pool (Phase 6): resolved BEFORE pheromone sizing so the channel
+        # axis can span MAX_COLONIES when dynamic — only num_colonies seed ACTIVE,
+        # the rest are DORMANT slots that later founding/budding activates.
+        # instance override hook: explicit arg (e.g. --dynamic) wins; else the
+        # module default (False, so the test battery stays flag-off / identity-green)
+        self.dynamic_population = (DYNAMIC_POPULATION if dynamic_population is None
+                                   else bool(dynamic_population))
+        pher_channels = MAX_COLONIES if self.dynamic_population else num_colonies
+        self.pheromones = PheromoneLayer(self.world.dimensions, pher_channels)
         self.num_colonies = num_colonies   # resolved seed count (≤ MAX_COLONIES); read by the bounded pool (Phase 6)
         self.automata = CellularAutomata()
         self.colonies: List[Colony] = []
@@ -1598,10 +1612,15 @@ class SandKingsSimulation:
         self.sun_ema_mean = SUN_HOURS_DEFAULT   # SP10: rolling mean of realized daylight (observer)
         self.sun_ema_sd = 0.0                   # SP10: rolling |deviation| ~ sigma (observer)
         self._storm_wind = (1, 0)              # per-storm prevailing direction
-        self.dynamic_population = DYNAMIC_POPULATION   # instance override hook; Phase 0 = False
 
         # Initialize colonies with random count (3-5) and positions
         self._spawn_colonies(num_colonies)
+        # Bounded pool (Phase 6): pad the slot pool to MAX_COLONIES with DORMANT
+        # placeholders. A DORMANT slot is a not-alive Colony (maw.alive=False) with
+        # no board presence — invisible, skipped by every is_alive() guard — that
+        # founding/budding later activates. Inert while dynamic_population=False.
+        if self.dynamic_population:
+            self._pad_dormant_slots()
     
     # CH2: the four canonical color-houses (name, epithet, disposition
     # overrides, starting-food multiplier) keyed by colony_id / COLORS order
@@ -2063,6 +2082,9 @@ class SandKingsSimulation:
         self._apply_maw_regen()
         self._check_maw_deaths()
         self._process_respawns()
+        if self.dynamic_population:          # Phase 6: the pool breathes 2..MAX
+            self._succession_tick()          # advance any live succession windows
+            self._population_tick()           # fill-in when sparse, bud when crowded
 
     def _log_event(self, message: str):
         """Append to the drama feed (SPEC T9) and the chronicle (D4).
@@ -6220,6 +6242,28 @@ class SandKingsSimulation:
         for colony in self.colonies:
             if colony.maw.alive or colony.colony_id in self.pending_respawns:
                 continue
+            # DORMANT slots are not-alive by construction — never a death event.
+            if getattr(colony, 'pop_state', POP_ACTIVE) == POP_DORMANT:
+                continue
+            # A colony already IN a live succession window is not-alive (queen dead)
+            # but is NOT a fresh death — _succession_tick owns it. Skipping here is
+            # load-bearing: otherwise the death cascade re-corpses the aspirant every
+            # step and the window collapses one step after it opens.
+            if getattr(colony, 'pop_state', POP_ACTIVE) == POP_SUCCESSION:
+                continue
+            # SUCCESSION (Phase 3 live form): a Spartan house (high loyalty) with a
+            # surviving heir does NOT die outright — it enters a live succession
+            # window (_succession_tick advances it). The aspirant holds the ground,
+            # weak and pheromone-only, until it molts into a maw. If no heir
+            # survives, the house falls through to the normal cascade, where the
+            # respawn reclamation fork can still continue the loyal line.
+            if (self.dynamic_population
+                    and getattr(colony, 'pop_state', POP_ACTIVE) != POP_SUCCESSION
+                    and getattr(colony.genome, 'loyalty', 0.0) >= SPARTAN_LOYALTY):
+                aspirant = self._select_aspirant(colony)
+                if aspirant is not None:
+                    self._begin_succession(colony, aspirant)
+                    continue    # skip the corpse+respawn cascade; the line fights on
 
             # SJ6a: Convert this dead birth house's OWN thralls to their captors
             _converted_to = {}   # captor_id -> count, for a once-per-house event
@@ -6462,7 +6506,10 @@ class SandKingsSimulation:
         colony.reclaimed = False
         if getattr(self, 'dynamic_population', False):
             old = self.colonies[index]                        # dead colony, still resident
-            if (getattr(old, 'house', None) is not None
+            # Reclamation only for a real fallen house — never a DORMANT slot being
+            # founded fresh (those carry an empty house + placeholder genome).
+            if (getattr(old, 'house', '')
+                    and getattr(old, 'pop_state', POP_ACTIVE) != POP_DORMANT
                     and getattr(old.genome, 'loyalty', 0.0) >= SPARTAN_LOYALTY):
                 self._house_name(old)                         # ensure the base dynasty is founded
                 colony.house = old.house                      # the SAME line, reclaimed
@@ -6522,6 +6569,170 @@ class SandKingsSimulation:
         return sum(1 for c in self.colonies
                    if getattr(c, 'pop_state', POP_ACTIVE) == POP_ACTIVE
                    and c.is_alive())
+
+    def _pad_dormant_slots(self) -> None:
+        """Bounded pool (Phase 6): fill slots [len(colonies), MAX_COLONIES) with
+        DORMANT placeholders — not-alive Colonies (maw.alive=False) with no board
+        presence. Invisible and skipped by every is_alive() guard until founding
+        activates them. Only called when dynamic_population is on."""
+        _w, _h, d = self.world.dimensions
+        z0 = min(self.world.surface_z(0, 0) + 1, d - 1)
+        for cid in range(len(self.colonies), MAX_COLONIES):
+            genome = ColonyGenome()
+            genome.loyalty = 0.0                  # placeholder never triggers reclamation
+            placeholder = Colony(cid, (0, 0, z0), genome)
+            placeholder.maw.alive = False         # not alive -> is_alive() False everywhere
+            placeholder.units.clear()
+            placeholder.house = ""                # no dynasty until founded
+            placeholder.pop_state = POP_DORMANT
+            self.colonies.append(placeholder)
+
+    def _found_colony(self, cid: int, parent: 'Colony' = None) -> None:
+        """Activate a DORMANT slot as a living colony (Phase 6 founding/budding).
+
+        Reuses the respawn machinery to seat a maw, genome, and starting workers,
+        transitioning the slot DORMANT -> ACTIVE. When `parent` is given (a bud),
+        the daughter carries the parent's banner as a cadet branch."""
+        self._respawn_colony(cid)                 # seats a fresh/cadet colony in the slot
+        seated = self._colony_by_id(cid)
+        if seated is None:
+            return
+        seated.pop_state = POP_ACTIVE             # explicit (a fresh Colony defaults ACTIVE)
+        if parent is not None:                    # a bud carries the parent's banner
+            self._house_name(parent)
+            seated.house = parent.house
+            seated.generation = getattr(parent, 'generation', 1) + 1
+
+    def _population_tick(self) -> None:
+        """The bounded pool BREATHES (Phase 6): fill in when the board is sparse,
+        bud when it is crowded and a house is prosperous. Capped at MAX_COLONIES,
+        floored at MIN_ACTIVE_COLONIES. Inert while dynamic_population is off
+        (never called; no RNG drawn at flag-off)."""
+        if self.step_count % POP_TICK_INTERVAL != 0:
+            return
+        dormant = [c for c in self.colonies
+                   if getattr(c, 'pop_state', POP_ACTIVE) == POP_DORMANT]
+        if not dormant:
+            return
+        active = self._active_colony_count()
+        # FILL-IN: a sparse board -> unused real estate invites a fresh house.
+        # The chance ramps the further below equilibrium the board sits; below the
+        # floor it fills in urgently.
+        if active < EQUILIBRIUM_COLONIES:
+            deficit = (EQUILIBRIUM_COLONIES - active) / EQUILIBRIUM_COLONIES
+            chance = FOUND_FILLIN_CHANCE * (1.0 + deficit)
+            if active < MIN_ACTIVE_COLONIES:
+                chance *= 3.0
+            if random.random() < chance:
+                self._found_colony(dormant[0].colony_id)
+                self._log_event("Unused real estate draws a new house to the sands")
+                return
+        # BUDDING: a crowded board with a prosperous house -> it buds a daughter,
+        # raising the pressure to war over limited resources.
+        if EQUILIBRIUM_COLONIES <= active < MAX_COLONIES:
+            rich = [c for c in self.colonies
+                    if c.is_alive()
+                    and getattr(c, 'pop_state', POP_ACTIVE) == POP_ACTIVE
+                    and getattr(c.maw, 'food_stored', 0) >= BUD_FOOD]
+            if rich and random.random() < BUD_CHANCE:
+                parent = max(rich, key=lambda c: c.maw.food_stored)
+                parent.maw.food_stored -= BUD_FOOD // 2   # the surplus pays for the daughter
+                self._found_colony(dormant[0].colony_id, parent=parent)
+                self._log_event(f"House {self._house_name(parent)} buds a daughter colony"
+                                f" — the sands grow crowded")
+
+    # ---- Live succession (Phases 3-live / 4 psionic / 5 revolt) --------------
+    def _select_aspirant(self, colony: 'Colony'):
+        """Pick the Spartan heir from a fallen house's surviving FREE units.
+        Prefers a soldier (the spartan), then the healthiest. None if the house
+        was wiped (→ falls through to the respawn reclamation fallback)."""
+        free = [u for u in colony.units if getattr(u, 'laboring_for', -1) < 0]
+        if not free:
+            return None
+        soldiers = [u for u in free if u.unit_type == UnitType.SOLDIER]
+        return max(soldiers or free, key=lambda u: getattr(u, 'health', 0))
+
+    def _begin_succession(self, colony: 'Colony', aspirant: 'SandKing') -> None:
+        """Enter a live POP_SUCCESSION window (SUCCESSION_WINDOW steps). Non-heir
+        free spawn suffer collapse-madness (Phase 2) — a small honor guard endures,
+        the rest go mad and die; subjugated siblings are kept for the revolt."""
+        colony.pop_state = POP_SUCCESSION
+        colony.succession_until = self.step_count + SUCCESSION_WINDOW
+        aspirant.is_aspirant = True
+        free = [u for u in colony.units
+                if getattr(u, 'laboring_for', -1) < 0 and u is not aspirant]
+        honor_guard = free[:2]                     # a few loyalists hold
+        for u in free[2:]:                         # the rest shatter with the network
+            self.world.set_voxel(*u.position, VoxelType.CORPSE)
+        subjugated = [u for u in colony.units if getattr(u, 'laboring_for', -1) >= 0]
+        colony.units = [aspirant] + honor_guard + subjugated
+        mx, my, mz = colony.maw.position           # the queen is dead: her maw -> corpse
+        if self.world.in_bounds(mx, my, mz):
+            self.world.voxels[mx, my, mz] = VoxelType.CORPSE.value
+        self._log_event(f"House {self._house_name(colony)} — the queen is dead; a Spartan"
+                        f" aspirant rises to reclaim the line")
+
+    def _succession_tick(self) -> None:
+        """Advance every live succession window: grow the aspirant's psionic mind
+        (Phase 4), free subjugated siblings in a revolt surge (Phase 5), and at the
+        window's end molt the heir into a maw — or, if the heir fell, extinguish the
+        house. Inert while dynamic_population is off (never called)."""
+        for colony in self.colonies:
+            if getattr(colony, 'pop_state', POP_ACTIVE) != POP_SUCCESSION:
+                continue
+            aspirant = next((u for u in colony.units
+                             if getattr(u, 'is_aspirant', False)), None)
+            if aspirant is None:                   # the heir fell -> the line ends
+                self._fail_succession(colony)
+                continue
+            # Phase 4: the aspirant's mind grows toward the molt (augmentation)
+            colony.genome.brain_hidden = int(min(
+                64, getattr(colony.genome, 'brain_hidden', 8) * 1.02 + 0.5))
+            # Phase 5: a revolt surge frees this house's subjugated siblings, who
+            # rally to the aspirant (they never submit — defiance maxes out)
+            for u in colony.units:
+                if getattr(u, 'laboring_for', -1) >= 0:
+                    u.laboring_for = -1
+                    u.defiance = 1.0
+            if self.step_count >= getattr(colony, 'succession_until', 0):
+                self._molt_aspirant(colony, aspirant)
+
+    def _molt_aspirant(self, colony: 'Colony', aspirant: 'SandKing') -> None:
+        """The heir's terminal molt (SPEC_METAMORPHOSIS): it BECOMES a maw with an
+        augmented neural net + boosted stats, the SAME house reclaimed (Restored)."""
+        pos = aspirant.position
+        if aspirant in colony.units:
+            colony.units.remove(aspirant)          # the aspirant becomes the maw
+        colony.genome.loyalty = min(1.0, getattr(colony.genome, 'loyalty', 0.7) * SPARTAN_BOOST)
+        colony.genome.brain_hidden = int(getattr(colony.genome, 'brain_hidden', 8) * SPARTAN_BOOST)
+        colony.genome.use_neural = True            # the augmented neural net
+        colony.memory_augment = max(getattr(colony, 'memory_augment', 0), 1)
+        colony.maw = Maw(colony.colony_id, pos, colony.genome)
+        colony.maw.alive = True
+        colony.maw.food_stored = RESPAWN_FOOD
+        colony.stage = max(getattr(colony, 'stage', 1), 2)   # a terminal molt
+        colony.generation = getattr(colony, 'generation', 1) + 1
+        colony.pop_state = POP_ACTIVE
+        colony.reclaimed = True
+        self.world.set_voxel(*pos, VoxelType.AIR, colony_id=colony.colony_id)
+        self._kin_epoch = getattr(self, '_kin_epoch', 0) + 1
+        self._log_event(f"House {self._house_name(colony)} RESTORED — the Spartan aspirant"
+                        f" molts into a maw and reclaims the line"
+                        f" (generation {colony.generation})")
+
+    def _fail_succession(self, colony: 'Colony') -> None:
+        """The heir fell during the window: the house is extinguished in disgrace,
+        the slot returns to the normal respawn spine (a fresh house arrives)."""
+        self._log_event(f"House {self._house_name(colony)} is extinguished — its last heir"
+                        f" fell, the line ends in disgrace")
+        for u in colony.units:
+            self.world.set_voxel(*u.position, VoxelType.CORPSE)
+        colony.units.clear()
+        colony.pop_state = POP_ACTIVE              # slot rejoins the respawn spine
+        self.pheromones.trails[:, :, :, colony.colony_id, :] = 0.0
+        self.world.ownership[self.world.ownership == colony.colony_id] = -1
+        self._diplomacy().clear_slot(colony.colony_id, self.step_count)
+        self.pending_respawns[colony.colony_id] = self.step_count + RESPAWN_DELAY
 
     def _deactivate_slot(self, cid: int) -> None:
         """Slot-scrub choke point: clear all per-colony state for a given slot.
@@ -7243,6 +7454,10 @@ def main():
                         help='Skip the 2-year dole ramp: full seasonal scarcity '
                         'from step 0 (T17)')
     parser.add_argument('--num-colonies', type=int, default=0, help='Number of colonies (0=random 3-5)')
+    parser.add_argument('--dynamic', action='store_true',
+                        help='Dynamic population + succession: the colony count breathes '
+                             '2..8 (founding/budding), and a dead queen triggers a Spartan '
+                             'succession drama (heir reclaims the line, or the house falls).')
     parser.add_argument('--canon', action='store_true',
                         help="Seat the novella's four houses: Crimson (creative), "
                              "Pale (favored), Sable (wise), Amber (underdog)")
@@ -7298,7 +7513,8 @@ def main():
     if fresh:
         sim = SandKingsSimulation(width=args.width, height=args.height,
                                  depth=args.depth, num_colonies=args.num_colonies,
-                                 canon=getattr(args, 'canon', False))
+                                 canon=getattr(args, 'canon', False),
+                                 dynamic_population=getattr(args, 'dynamic', False))
     sim.harsh = args.harsh  # T17 ramp control (applies to resumed sims too)
 
     # --subjugation: turn the capture economy ON for this run only. The module

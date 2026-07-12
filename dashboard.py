@@ -928,6 +928,8 @@ def main():
     parser.add_argument("--colonies", type=int, default=4)
     parser.add_argument("--canon", action="store_true",
                         help="seat the novella's four houses (CH1)")
+    parser.add_argument("--dynamic", action="store_true",
+                        help="dynamic population + Spartan succession (count breathes 2..8)")
     args = parser.parse_args()
 
     sim = None
@@ -938,7 +940,8 @@ def main():
     if sim is None:
         sim = SandKingsSimulation(width=args.width, height=args.height,
                                   depth=args.depth, num_colonies=args.colonies,
-                                  canon=args.canon)
+                                  canon=args.canon,
+                                  dynamic_population=getattr(args, 'dynamic', False))
     runner = TerrariumRunner(sim, sps=args.sps,
                              save_path=None if args.fresh else args.persist)
     app = create_app(runner)

@@ -98,24 +98,44 @@ battery unchanged):
   cadet/fresh path (a rival seizes the vacant nest). Constants: `SPARTAN_LOYALTY`,
   `SPARTAN_BOOST`, `SUCCESSION_WINDOW=800` (reserved for the live-aspirant variant).
 
-Deferred to the flag-flip debug session (the "problems to solve" phase, where battery
-runs belong):
-- **Phase 6 (bounded-pool init + founding)** — the population-*breathing* headline. Needs
-  the 8-slot pool (size pheromone/politics arrays to `MAX_COLONIES` when the flag is on;
-  DORMANT slots = not-alive Colony placeholders, naturally skipped by existing `is_alive()`
-  guards) + a `_population_tick`: activate a DORMANT slot when below the floor (fill-in) and
-  bud when crowded+prosperous (war pressure), capped at 8. This is the doc's #1 risk
-  (slot-reuse hygiene, save/load shape) and is best built against the live flag-on loop —
-  implementing it blind and untested would be the exact speculative surface the debug
-  contract warns against.
-- The **live-aspirant drama** (wandering, debuffed, pheromone-only, subjugation-immune,
-  rally radius, revolt surge) — the richer form of Phase 3; the landed version delivers the
-  *lineage-continuity* core (Starks reclaim Winterfell) as a delayed reclaiming respawn.
-- **Phases 4/5/7/8** (psionic promotion, subjugation revolt-surge, dynasty/politics ext).
+**All phases now implemented (2026-07-11, second pass).** Phases 4–9 landed directly:
+- **Phase 6 (bounded pool + founding/budding)**: `__init__` sizes the pheromone axis and
+  slot pool to `MAX_COLONIES` when dynamic; `_pad_dormant_slots` seats DORMANT placeholders
+  (not-alive `Colony`, skipped by every `is_alive()` guard); `_population_tick` fills in when
+  sparse (below the floor, urgently) and buds a daughter when crowded + a house is prosperous
+  (`BUD_FOOD`), capped at 8. Politics is dict-keyed (lazy) so no matrix resize is needed —
+  only the pheromone array is fixed-size.
+- **Phase 3 live form**: on a Spartan queen's death `_check_maw_deaths` forks to
+  `_begin_succession` (a live `POP_SUCCESSION` window, `SUCCESSION_WINDOW` steps; non-heir
+  spawn suffer collapse-madness, a small honor guard endures). `_succession_tick` advances it;
+  at the deadline `_molt_aspirant` rebuilds the maw from the aspirant with a Spartan-boosted,
+  augmented genome (the SAME house, `RESTORED`); a fallen heir → `_fail_succession` (extinct +
+  disgrace, slot rejoins the respawn spine). The committed reclaim-via-respawn is now the
+  *fallback* when the house is wiped with no surviving heir.
+- **Phase 4 (psionic promotion)**: the aspirant's `brain_hidden` ramps through the window.
+- **Phase 5 (revolt surge)**: subjugated siblings in a succeeding house break free (defiance→1).
+- **Phase 7 (dynasties)**: chronicle salience rows for RESTORED / extinguished / disgrace /
+  aspirant-rises / buds-a-daughter / founding.
+- **Phase 8 (politics)**: covered by name-keyed kinship — a bud inherits the parent's house,
+  so grudges/kinship apply; `_fail_succession` routes through `clear_slot`.
 
-Flag-flip session first moves: (1) build the Phase-6 pool init + founding tick; (2) flip
-`DYNAMIC_POPULATION=True`; (3) tune the `SPARTAN_LOYALTY` gate to the ~30–60% rise-rate
-acceptance criterion; (4) run the battery + a new SUCCESSION acceptance suite.
+**Load-bearing bug found & fixed at flag-flip:** a `POP_SUCCESSION` colony is not-alive
+(queen dead), so `_check_maw_deaths` re-processed it as a fresh death every step and corpsed
+its own aspirant one step in. Fix: skip `POP_SUCCESSION` (and `POP_DORMANT`) colonies at the
+top of the death loop — the same treatment dormant slots get.
+
+**Phase 9 status:** flag-off battery **46/0** (all new code inert at default). Flag-on smoke
+(4000 steps, forced deaths) ran with no crash: population breathes 2↔6, dormant pool draws
+down as founding/budding fire, and succession produces both `RESTORED` molts (multi-generation
+dynasties — Maul-Den I→II→III) and `extinguished` failures. Shipped as **opt-in**: the module
+default `DYNAMIC_POPULATION=False` stays (battery/identity green, no test reconciliation
+needed); the runnable game turns it on with **`--dynamic`** (a `dynamic_population` ctor arg
+threaded through `sandkings.py main()` and `dashboard.py`).
+
+**Remaining (tuning, not implementation):** the aspirant is currently undefended during its
+window (some heirs die within a few steps) — tune survivability + the `SPARTAN_LOYALTY` gate to
+the ~30–60% rise-rate target, and add a dedicated SUCCESSION acceptance suite. These are
+polish; the system is functional end-to-end.
 
 ## Corrections to the initial architect sketch (verified against code, 2026-07-11)
 The initial scope was drafted without reading the code. Verified: the merge-debris
