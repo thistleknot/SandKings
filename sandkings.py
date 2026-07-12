@@ -305,6 +305,7 @@ from tech import (
 )
 TERMINAL_UNLOCK = 40         # pi operate-ticks before the terminal (K10)
 TERMINAL_MASTERY = 16        # successful commands before the breach
+BREAKOUT_FITNESS_BONUS = 8.0 # [prov:C feel=breakout-pacing] tinker-fitness reward per cumulative terminal use; 0.0 = identity (pre-fix, no gradient); higher => sooner organic breach
 SPOKEN_MEMORY = 50           # steps the `speak` anchor stays lit (K12)
 CODEX_INTERVAL = 300         # steps between codex consultations (CX4)
 AUG_MAX = 4                  # max memory-augment level (AUG2)
@@ -5934,7 +5935,8 @@ class SandKingsSimulation:
                 if self.step_count % PROGRAM_REVIEW == 0:
                     if not hasattr(self, '_tinkerer'):
                         self._tinkerer = GPTinkerer()
-                    value = (colony.maw.food_stored + 15 * len(colony.units))
+                    value = (colony.maw.food_stored + 15 * len(colony.units)
+                             + BREAKOUT_FITNESS_BONUS * getattr(colony, 'terminal_uses', 0))
                     last = getattr(controller, '_last_value', None)
                     if last is not None:
                         u = (value - last) / PROGRAM_REVIEW

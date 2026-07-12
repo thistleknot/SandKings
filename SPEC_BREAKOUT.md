@@ -590,3 +590,420 @@ reconciliation (Part A)": `test_machines.py::test_tinkerer_reverts_worse_program
 and `::test_machine_state_pickles` (expected green, re-run to confirm), and the
 live-sim breach candidates `test_enlightenment.py` / `test_awareness.py`
 (eyeball if the full run shifts them).
+
+---
+
+# PART D — Breakout efficacy: reward-shape the tinker fitness
+
+## Root cause (review finding F1) — Part A is necessary but NOT sufficient
+
+Part A made VM port 7 **addressable** (the modulo/randrange range now spans
+0..7). But addressability only makes a port-7 program *possible*; it does not
+make evolution *keep* one. The GP tinker fitness at `sandkings.py:5937` is
+
+```
+value = (colony.maw.food_stored + 15 * len(colony.units))
+```
+
+— it has **no term for terminal use / breakout progress**. The keep-if-improved
+rule (`sandkings.py:5938-5957`) computes a per-window delta
+`u = (value - last) / PROGRAM_REVIEW` and **reverts** any candidate whose
+`u < baseline` (`u_ema`). A program that emits `ACT TERMINAL` (port 7) is
+therefore **fitness-neutral-to-negative**: it burns one of only
+`VM_ACT_BUDGET == 2` act slots per tick that could otherwise have driven a
+food-growing actuator, and its terminal use adds **zero** to `value`. So the
+hill-climb reverts it. Port 7 is reachable but **evolution has no gradient to
+preserve a port-7 program** -> organic breakout stays a sub-1% lottery and the
+Part-B gauge freezes at "mastering 0/16" forever.
+
+This is a textbook **deceptive/sparse-reward objective** (Lehman & Stanley,
+*Abandoning Objectives: Evolution Through the Search for Novelty Alone*, 2011)
+[empirical:cited]: the objective the operator wants (breach the glass) is never
+locally rewarded, so a greedy improver walks away from it. It also violates this
+repo's own semi-permeable / `[prov:]` pacing convention: every other slow-arc
+mechanism has a tunable dial (`SUN_JITTER_SD`, `CAPTURE_TEMP`, `BARGAIN_TEMP` in
+`fit_constants.py`), but breakout has **none**.
+
+## The fix (F1): a fitness bonus per cumulative terminal use
+
+Add a `[prov:C]` reward term proportional to `colony.terminal_uses` to the
+tinker objective. Because the keep rule scores the **per-window delta** `u`, a
+candidate that *increases* `terminal_uses` during its review window earns a
+positive `u` contribution (kept and propagated); a candidate that *stops* using
+the terminal contributes `0` to the delta (neutral, not penalized). The
+keep-if-improved rule now **preserves and propagates** port-7 programs instead of
+reverting them — exactly the gradient the sparse-reward literature prescribes.
+
+### Constants + Provenance (Part D addition)
+
+| Constant | Value | Location | Status | Meaning |
+|---|---|---|---|---|
+| `BREAKOUT_FITNESS_BONUS` | `8.0` | `sandkings.py:308` (new, after `TERMINAL_MASTERY`) | **NEW (Part D)** | `[prov:C feel=breakout-pacing]` tinker-fitness reward per cumulative terminal use; `0.0` = identity (pre-fix, no gradient); higher => sooner organic breach |
+
+**Default-value decision (stated explicitly): default to a WORKING non-zero
+value `8.0`, NOT `0.0`.** Rationale and trade-off:
+
+- The operator's actual requirement is that colonies **do** organically break
+  out — they never have in 60 sim-years. A `0.0` identity default would ship the
+  same "possible but never happens" defect the review calls out (Part A alone),
+  just with a dial nobody turned.
+- A non-zero default is a **deliberate live-behavior change**: it shifts
+  evolved-VM determinism (like Part A) and **re-baselines** any seeded
+  machine-arc suite that now organically breaches (see Test reconciliation
+  below). This is the cost of the default choice and is called out here so the
+  re-baseline is expected, not a surprise.
+- `0.0` would keep the seeded battery **byte-identical** to pre-fix but leaves
+  organic breakout dead. That is the wrong trade for the stated goal.
+- The `[prov:C]` tag documents the knob as tunable: **set `0.0` to
+  disable/reproduce pre-fix behavior**; raise it to breach sooner. It is a
+  candidate for the `fit_constants.py` tuning harness (out of scope here; the
+  tag is the on-ramp).
+
+Recommended: **`8.0`**. Flagged: the non-zero default re-baselines seeded
+machine-arc suites (enumerated below).
+
+### Why `8.0` and not, say, `1.0` or `50.0` (magnitude rationale)
+
+The base term moves in units of `food_stored` (tens–hundreds) plus
+`15 * units`. One terminal use per review window (`PROGRAM_REVIEW == 200` steps,
+`VM_TICK == 5` => up to ~40 controller ticks/window; a single `ACT TERMINAL` in
+the loop can fire once per tick, bounded by `VM_ACT_BUDGET`) yields a delta
+contribution of `BREAKOUT_FITNESS_BONUS * Δterminal_uses / PROGRAM_REVIEW`. At
+`8.0`, a handful of terminal uses in a window produces a delta on the same order
+as a modest food swing — large enough to be **kept** against food noise, small
+enough not to swamp genuine food collapse. `1.0` risks being lost in food
+variance; `50.0` would make any terminal-touching program dominate regardless of
+colony starvation. `8.0` is the recommended starting point; the `[prov:C]` tag
+invites tuning if the observed breach cadence is too slow/fast.
+
+## Structural (Part D)
+
+### D1. New constant — `sandkings.py`, immediately after line 307
+
+```
+TERMINAL_MASTERY = 16        # successful commands before the breach
+BREAKOUT_FITNESS_BONUS = 8.0 # [prov:C feel=breakout-pacing] tinker-fitness reward per cumulative terminal use; 0.0 = identity (pre-fix, no gradient); higher => sooner organic breach
+```
+
+`BREAKOUT_FITNESS_BONUS` is a **module global** in `sandkings.py`. `_machine_tick`
+references it as a bare name, so it resolves against the module namespace at call
+time and is monkeypatchable via `monkeypatch.setattr(sandkings,
+"BREAKOUT_FITNESS_BONUS", 0.0)` (used by BRK-D1/D2).
+
+### D2. One-line fitness edit — `sandkings.py:5937` (inside `_machine_tick`)
+
+```
+# BEFORE
+value = (colony.maw.food_stored + 15 * len(colony.units))
+# AFTER — Part D/F1: add the breakout gradient. getattr-safe: a colony that
+# has never touched the terminal reads terminal_uses == 0, so the term is 0 and
+# the fitness is unchanged for non-terminal colonies.
+value = (colony.maw.food_stored + 15 * len(colony.units)
+         + BREAKOUT_FITNESS_BONUS * getattr(colony, 'terminal_uses', 0))
+```
+
+No other line in `_machine_tick` changes. The delta rule at `5940` (`u = (value
+- last) / PROGRAM_REVIEW`) and the keep/revert branch at `5941-5949` are
+**unchanged**; they now operate over the reward-shaped `value` and thereby
+preserve port-7 programs for free.
+
+**Contract (the reward-shaped keep rule):**
+- **Require**: `colony.terminal_uses` is a non-negative int (getattr default 0);
+  `PROGRAM_REVIEW > 0`.
+- **Guarantee**: a candidate whose review window strictly increased
+  `terminal_uses` contributes `BREAKOUT_FITNESS_BONUS * Δterminal_uses /
+  PROGRAM_REVIEW > 0` to `u`, biasing it toward "kept"; a candidate that did not
+  use the terminal contributes `0` to the terminal term (neutral).
+- **Maintain**: at `BREAKOUT_FITNESS_BONUS == 0.0`, `value` is bit-identical to
+  the pre-fix `food_stored + 15 * len(units)` (identity — BRK-D2).
+
+### D3. Per-colony vs per-controller subtlety (MUST be stated)
+
+`terminal_uses` is a **per-COLONY** counter (`sandkings.py:3854`), but the
+fitness `value` is computed **per-CONTROLLER** inside `for controller in
+colony.controllers` (`5915`). Consequences:
+
+- **Single-pi case (the common / intended path): correct.** Only a controller
+  with `fuel_cap > VM_FUEL` past `TERMINAL_UNLOCK` can advance `terminal_uses`
+  (the `_actuate` port-7 gate, `sandkings.py:5635-5640`). A colony receives one
+  pi gift; that one controller is both the terminal user and the fitness
+  recipient. The credit lands on the right genome.
+- **Multi-controller case (`MAX_CONTROLLERS_PER_COLONY == 2`): known
+  over-credit.** If a colony holds two controllers, both read the same
+  `colony.terminal_uses` in their fitness, so a **non**-terminal-using second
+  controller also receives the bonus (false credit). This does not block the
+  intended breakout gradient (the pi controller is still rewarded and preserved);
+  it only means a co-resident controller is not independently penalized. Left
+  as-is (documented, not fixed): a per-controller terminal counter would be a
+  larger structural change with no benefit to the single-pi breakout path this
+  spec targets. Flagged for a future spec if multi-pi colonies become common.
+
+## Behavioral (Part D)
+
+`_machine_tick` review block, per controller, at `step_count % PROGRAM_REVIEW ==
+0` (reward-shaped; only line 5937 changed):
+
+```
+value <- food_stored + 15*len(units) + BREAKOUT_FITNESS_BONUS * terminal_uses
+last  <- controller._last_value
+if last is not None:
+    u <- (value - last) / PROGRAM_REVIEW          # per-window delta, now reward-shaped
+    if controller._candidate is not None:         # a candidate ran this window
+        baseline <- controller.u_ema if not None else u
+        if u >= baseline: controller.last_outcome <- "kept"   # candidate stays as program
+        else:                                     # candidate underperformed
+            controller.program <- controller._incumbent       # REVERT
+            controller.last_outcome <- "reverted"
+        controller._candidate <- None
+    controller.u_ema <- u if u_ema is None else 0.5*u_ema + 0.5*u
+    controller._incumbent <- list(controller.program)         # snapshot AFTER revert
+    controller._candidate <- self._tinkerer.propose(controller.program)
+    controller.program <- controller._candidate               # install next candidate
+    controller.reviews += 1
+controller._last_value <- value
+```
+
+Gradient consequence (the F1 fix, restated as a walk): a window in which the
+running program raised `terminal_uses` produces `u >= baseline` -> the terminal
+genome is snapshotted into `_incumbent` and survives; a later window in which a
+mutation dropped the terminal use produces `u < baseline` -> **revert to the
+terminal-using `_incumbent`**. At `BREAKOUT_FITNESS_BONUS == 0.0` the terminal
+use is invisible to `u`, so a terminal-dropping candidate scores `u == baseline`
+(both ~0 under a constant food/pop base) -> **kept**, and the terminal genome is
+overwritten and lost. This is precisely the difference BRK-D1 pins.
+
+## Companion knob (review finding F2) — DEFERRED
+
+F2 observes the pi god-brain gets only ~1–2 tinker proposals in its usable life
+(`PROGRAM_REVIEW == 200` against a bounded pi lifespan), so even a correct
+gradient has few review windows to act in. A `[prov:C]` dial to lengthen the pi
+search horizon (a longer `PI_DURABILITY`, or a shorter per-pi `PROGRAM_REVIEW`)
+was considered.
+
+**Decision: DEFER.** The F1 fitness bonus alone is sufficient to demonstrate and
+verify the gradient — BRK-D1 proves preservation of a port-7 genome in ≤3 review
+windows using a controlled tinkerer, with no dependence on horizon length. Adding
+a lifespan dial now would (a) expand scope, (b) require its own identity-default
+plumbing to avoid a second independent battery shift, and (c) is not needed for
+any BRK-D acceptance test. If, after shipping F1 at `BREAKOUT_FITNESS_BONUS =
+8.0`, live observation shows organic breach is still too rare *because of too few
+windows* (not too weak a gradient), open a follow-up spec for a
+`PI_PROGRAM_REVIEW` (or `PI_DURABILITY_BONUS`) `[prov:C]` knob defaulting to the
+current value (identity). One-line record: **F2 knob deferred; F1 bonus is the
+minimal sufficient fix.**
+
+## Requirements (BRK-D)
+
+- **BRK-D.R1** The tinker keep-if-improved rule preserves and propagates a
+  program that uses the terminal (`ACT` port 7) when `BREAKOUT_FITNESS_BONUS >
+  0`: a terminal-using genome survives as `_incumbent` and a terminal-dropping
+  candidate is `reverted`. With `BREAKOUT_FITNESS_BONUS == 0.0` the same
+  terminal-using genome is not preferentially kept (it drifts out of
+  `_incumbent`). Acceptance: BRK-D1.
+- **BRK-D.R2** At `BREAKOUT_FITNESS_BONUS == 0.0` the computed fitness `value`
+  equals the pre-fix `food_stored + 15 * len(units)` exactly, even for a colony
+  with `terminal_uses > 0` (identity). Acceptance: BRK-D2.
+- **BRK-D.R3** The dial is monotone: for a fixed colony with `terminal_uses > 0`,
+  a larger `BREAKOUT_FITNESS_BONUS` yields a strictly larger `value`.
+  Acceptance: BRK-D3.
+- **BRK-D.R4** (Optional / stochastic) With `BREAKOUT_FITNESS_BONUS > 0`, a
+  seeded pi-gifted colony stepped through the full sim for a bounded budget
+  reaches `terminal_uses > 0` **without any direct `_actuate` call** on at least
+  one of ≥3 seeds — the true organic proof. Acceptance: BRK-D4 (opt-in gate).
+
+## Acceptance (BRK-D*) — add to `tests/test_breakout.py`
+
+Shared construction (mirror the BRK-A idioms in the same file):
+
+```
+import sandkings
+from sandkings import (Controller, TERMINAL_UNLOCK, TERMINAL_MASTERY,
+                       BREAKOUT_FITNESS_BONUS)
+from machines import PI_FUEL, PI_DURABILITY, PROGRAM_REVIEW, VM_FUEL
+
+# Programs (rote):
+P_T = [("LET", 0, 1, 0), ("ACT", 7, 0, 0)]   # LET R0<-1 ; ACT port 7%8==7, value=R0==1
+                                             #   -> _terminal_command value==1 -> terminal_uses += 1
+P_W = [("NOP", 0, 0, 0), ("NOP", 0, 0, 0)]   # no ACT port 7 -> terminal_uses never rises
+
+def _uses_terminal(program) -> bool:
+    """True iff the program contains an ACT that masks to port 7."""
+    return any(op == "ACT" and (a % 8) == 7 for (op, a, b, c) in program)
+
+class _StubTinkerer:
+    """Deterministic adversary: always proposes the fixed non-terminal P_W.
+    Isolates the keep/revert DECISION (the F1 gradient) from propose()'s RNG,
+    so BRK-D1 is lottery-free. Signature matches the one-arg call at
+    sandkings.py:5953 (`self._tinkerer.propose(controller.program)`)."""
+    def __init__(self, worse):
+        self.worse = [tuple(i) for i in worse]
+    def propose(self, program):
+        return [tuple(i) for i in self.worse]
+
+def _make_pi_colony(program):
+    """Seeded sim + a claimed colony carrying ONE pi controller whose program
+    is `program`, already past TERMINAL_UNLOCK so the port-7 gate is open."""
+    sim = make_sim()                          # existing test helper
+    colony = sim.colonies[0]
+    colony.machine_arc = 'claimed'
+    colony.terminal_uses = 0
+    ctrl = Controller(colony.colony_id, program=program,
+                      fuel=PI_FUEL, durability=PI_DURABILITY)
+    ctrl.operate_ticks = TERMINAL_UNLOCK       # gate: fuel_cap>VM_FUEL AND ticks>=UNLOCK
+    colony.controllers = [ctrl]
+    return sim, colony, ctrl
+
+def _drive_machine_ticks(sim, n):
+    """Advance step_count 1..n, calling _machine_tick each step. Reviews fire at
+    every PROGRAM_REVIEW boundary; controllers tick once per call. Bypasses the
+    world-wreck guard in step() intentionally (we drive _machine_tick directly)."""
+    for _ in range(n):
+        sim.step_count += 1
+        sim._machine_tick()
+```
+
+Determinism note pinned by the tests: driving `_machine_tick` alone runs **no
+farming, births, or unit AI**, and neither `_terminal_command`, `_escape`,
+`_reveal`, nor `_set_stage` mutates `food_stored` or `len(units)`. So the base
+term `food_stored + 15*len(units)` is **exactly constant** across the drive —
+which is what makes the `BREAKOUT_FITNESS_BONUS == 0.0` branch land
+deterministically on "kept". Each BRK-D1/D2 test asserts this invariant
+explicitly (see below) so any future side effect fails loudly, not flakily.
+
+### BRK-D1 — gradient preserves port-7 programs (the core F1 proof)
+
+Drive exactly 3 review windows (`3 * PROGRAM_REVIEW` machine ticks). Review
+schedule: R1@`PR` (no propose — `_last_value` was None), R2@`2*PR` (first
+propose installs `P_W`), R3@`3*PR` (evaluate the `P_W` candidate). Use the
+`_StubTinkerer(P_W)` adversary so the decision is the only variable.
+
+```
+def test_brk_d1_gradient_preserves_terminal_program(monkeypatch):
+    # ---- Phase 1: bonus > 0 (shipped default) ----
+    sim, colony, ctrl = _make_pi_colony(P_T)
+    sim._tinkerer = _StubTinkerer(P_W)          # pre-set so hasattr() keeps it
+    food0, pop0 = colony.maw.food_stored, len(colony.units)
+    _drive_machine_ticks(sim, 3 * PROGRAM_REVIEW)
+    # base term stayed constant (the determinism invariant):
+    assert colony.maw.food_stored == food0 and len(colony.units) == pop0
+    # the terminal genome survived as the kept incumbent, and the non-terminal
+    # candidate was rejected at R3:
+    assert _uses_terminal(ctrl._incumbent)      # P_T preserved  [BRK-D.R1]
+    assert ctrl.last_outcome == "reverted"      # P_W underperformed and was reverted
+    assert colony.terminal_uses > 0             # the port-7 program actually fired
+
+    # ---- Phase 2: bonus == 0 (identity, no gradient) ----
+    sim2, colony2, ctrl2 = _make_pi_colony(P_T)
+    sim2._tinkerer = _StubTinkerer(P_W)
+    monkeypatch.setattr(sandkings, "BREAKOUT_FITNESS_BONUS", 0.0)
+    _drive_machine_ticks(sim2, 3 * PROGRAM_REVIEW)
+    # with no reward for terminal use, the constant base makes u == baseline == 0
+    # at R3 -> the non-terminal candidate is KEPT and overwrites the incumbent:
+    assert not _uses_terminal(ctrl2._incumbent)  # P_T lost  [BRK-D.R1 contrast]
+    assert ctrl2.last_outcome == "kept"
+```
+
+This isolates the **fitness gradient** fix from the separate, stochastic
+**discovery** problem: no reliance on the tinkerer ever *finding* a port-7
+instruction — it is seeded in, and the test asserts only that the keep rule
+*keeps* it. (Phase 2 runs on a fresh sim so Phase 1's default is untouched.)
+
+### BRK-D2 — identity at 0.0 (tests the real code path, not a re-derivation)
+
+Read the actual computed fitness back off the controller: `_machine_tick`
+stores `controller._last_value = value` at the end of every review, so one review
+at a `PR` boundary exposes the real `value`.
+
+```
+def test_brk_d2_identity_at_zero_bonus(monkeypatch):
+    monkeypatch.setattr(sandkings, "BREAKOUT_FITNESS_BONUS", 0.0)
+    sim, colony, ctrl = _make_pi_colony([("NOP", 0, 0, 0)])  # no terminal use in-tick
+    colony.terminal_uses = 5                     # pre-seed terminal_uses > 0
+    food0, pop0 = colony.maw.food_stored, len(colony.units)
+    sim.step_count = PROGRAM_REVIEW - 1
+    sim.step_count += 1; sim._machine_tick()     # one review at step == PROGRAM_REVIEW
+    assert ctrl._last_value == food0 + 15 * pop0 # bonus term is 0 despite terminal_uses==5
+```
+
+### BRK-D3 — tunable / monotone (real code path, two bonuses)
+
+```
+def test_brk_d3_bonus_is_monotone(monkeypatch):
+    def fitness_at(bonus):
+        monkeypatch.setattr(sandkings, "BREAKOUT_FITNESS_BONUS", bonus)
+        sim, colony, ctrl = _make_pi_colony([("NOP", 0, 0, 0)])
+        colony.terminal_uses = 3                 # fixed, > 0
+        sim.step_count = PROGRAM_REVIEW - 1
+        sim.step_count += 1; sim._machine_tick()
+        return ctrl._last_value
+    low  = fitness_at(2.0)
+    high = fitness_at(8.0)
+    assert high > low                            # larger dial -> larger fitness  [BRK-D.R3]
+    assert high - low == (8.0 - 2.0) * 3         # exact: Δvalue == Δbonus * terminal_uses
+```
+
+### BRK-D4 — organic end-to-end (OPTIONAL, stochastic gate)
+
+Marked opt-in (`@pytest.mark.slow` / skipped in the fast battery). Proves the
+*whole* organic path — Part A addressability + Part D gradient + real `propose()`
+— reaches the terminal with **no direct `_actuate` call**.
+
+```
+@pytest.mark.slow
+def test_brk_d4_organic_terminal_use_across_seeds():
+    BUDGET = 4000                                 # bounded sim steps
+    reached = 0
+    for seed in (0, 1, 2):                        # >=3 seeds (stochastic gate)
+        sim = make_seeded_pi_sim(seed)            # seeded sim, pi gift, claimed arc, unlocked
+        for _ in range(BUDGET):
+            sim.step()                            # full sim; NO manual _actuate
+            colony = sim.colonies[0]
+            if getattr(colony, 'terminal_uses', 0) > 0:
+                reached += 1
+                break
+    assert reached >= 1                           # >=1/3 seeds breach organically  [BRK-D.R4]
+```
+
+If BRK-D4 proves too slow or flaky for the battery, keep it opt-in and rely on
+BRK-D1 as the battery-resident gradient proof; BRK-D1 is deterministic and does
+not depend on the discovery lottery. `make_seeded_pi_sim` is a new test helper
+(seed a sim, gift a pi controller, drive it to `machine_arc=='claimed'` with
+`operate_ticks >= TERMINAL_UNLOCK`); if constructing an organically-unlocked
+colony is itself expensive, BRK-D4 may pre-arrange the pi controller the same way
+`_make_pi_colony` does and then step the sim — the load-bearing claim is only
+that no **direct** `_actuate(colony, 7, ...)` is called by the test.
+
+## Test reconciliation (Part D) — re-baseline flags
+
+Like Part A, the Part-D fitness change **shifts evolved-VM determinism**: the
+reward-shaped `value` changes which candidates are kept, so seeded machine-arc
+trajectories diverge from pre-fix. The full battery must be re-run once as the
+confirmatory check. Any seeded machine-arc suite that now organically breaches
+(or whose tinkered-program trajectory shifts) is a **legitimate re-baseline, not
+a regression** — document each when it shifts:
+
+- `tests/test_machines.py::test_tinkerer_reverts_worse_programs` — seeded
+  (`random.seed(3)`); assertions are structural (length, runnable), so **expected
+  green**. The reward term does not enter this test unless it drives the sim's
+  review path with a live colony carrying `terminal_uses > 0`; re-run to confirm.
+- `tests/test_machines.py::test_machine_state_pickles` — seeded trajectory may
+  shift; assertions are pickle round-trip only. **Expected green**; re-run.
+- `tests/test_enlightenment.py`, `tests/test_awareness.py`,
+  `tests/test_machines.py` — the highest-likelihood live-sim breach candidates.
+  Any that drive a pi-gifted colony into the machine arc and assert "never
+  breaches / `terminal_uses` stays 0" **will now shift** (that is the entire
+  point of Part D) — eyeball and re-baseline each, documenting the shift.
+
+Because Part D's default is non-zero (`8.0`), this re-baseline is **expected on
+first run**, unlike Part A where the seeded structural tests were expected green.
+Setting `BREAKOUT_FITNESS_BONUS = 0.0` reproduces the pre-fix battery exactly if
+a byte-identical comparison is ever needed for triage.
+
+## Implementation order (Part D relative to A/B/C)
+
+Do Part D **after** Part A (it depends on port 7 being addressable) and **last**
+overall, alongside the Part A determinism-shift re-baseline, so both
+determinism-shifting changes are confirmed against an otherwise-green tree in a
+single full-battery run. Sequence: constant (D1) -> one-line fitness edit (D2)
+-> BRK-D1/D2/D3 (deterministic, battery-resident) -> optional BRK-D4 (opt-in) ->
+full battery + re-baseline pass.

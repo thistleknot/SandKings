@@ -403,3 +403,200 @@ def test_breakout_progress_clamps_over_mastery():
 # test_frame_png_renders_without_pygame asserts pygame is absent from sys.modules.
 # Keeping the pygame-touching test in test_live_view (which runs after test_dashboard
 # and legitimately imports pygame) preserves that headless invariant.
+
+
+# ============================================================================
+# BRK-D: Breakout fitness reward-shaping (Part D — gradient preservation)
+# ============================================================================
+
+import sandkings
+from machines import PROGRAM_REVIEW
+
+
+# Programs per the spec (rote):
+P_T = [("LET", 0, 1, 0), ("ACT", 7, 0, 0)]   # LET R0<-1 ; ACT port 7, value=R0==1
+                                             #   -> _terminal_command(value==1) -> terminal_uses += 1
+P_W = [("NOP", 0, 0, 0), ("NOP", 0, 0, 0)]   # no ACT port 7 -> terminal_uses never rises
+
+
+def _uses_terminal(program) -> bool:
+    """True iff the program contains an ACT that masks to port 7."""
+    return any(op == "ACT" and (a % 8) == 7 for (op, a, b, c) in program)
+
+
+class _StubTinkerer:
+    """Deterministic adversary: always proposes the fixed non-terminal P_W.
+    Isolates the keep/revert decision (the F1 gradient) from propose()'s RNG,
+    so BRK-D1 is lottery-free. Signature matches the one-arg call at
+    sandkings.py (controller.program arg)."""
+    def __init__(self, worse):
+        self.worse = [tuple(i) for i in worse]
+
+    def propose(self, program):
+        """Return the fixed non-terminal program."""
+        return [tuple(i) for i in self.worse]
+
+
+def _make_pi_colony(program):
+    """Seeded sim + a claimed colony carrying ONE pi controller whose program
+    is `program`, already past TERMINAL_UNLOCK so the port-7 gate is open."""
+    sim = make_sim()
+    colony = sim.colonies[0]
+    colony.machine_arc = 'claimed'
+    colony.terminal_uses = 0
+    ctrl = Controller(colony.colony_id, program=program,
+                      fuel=PI_FUEL, durability=PI_DURABILITY)
+    # BRK-D1 drives 3*PROGRAM_REVIEW ticks; the shipped PI_DURABILITY (480) would
+    # decay to death before the 3rd review (Council F2's short-lifespan finding).
+    # This test isolates the F1 GRADIENT fix, so keep the controller alive long
+    # enough for the keep/revert to actually fire (the lifespan issue is separate).
+    ctrl.durability = 10 * PROGRAM_REVIEW
+    ctrl.operate_ticks = TERMINAL_UNLOCK  # gate: fuel_cap>VM_FUEL AND ticks>=UNLOCK
+    colony.controllers = [ctrl]
+    return sim, colony, ctrl
+
+
+def _drive_machine_ticks(sim, n):
+    """Advance step_count 1..n, calling _machine_tick each step. Reviews fire at
+    every PROGRAM_REVIEW boundary; controllers tick once per call. Bypasses the
+    world-wreck guard in step() intentionally (we drive _machine_tick directly)."""
+    for _ in range(n):
+        sim.step_count += 1
+        sim._machine_tick()
+
+
+def test_brk_d1_gradient_preserves_terminal_program():
+    """BRK-D1: gradient preserves port-7 programs when bonus > 0; loses them at 0.0.
+
+    Phase 1: bonus > 0 (shipped default)
+      - Start with P_T (terminal-using program) as incumbent.
+      - Use _StubTinkerer to always propose P_W (non-terminal).
+      - Drive 3 review windows.
+      - Assert P_T survives as incumbent (reverted to it when P_W underperforms).
+
+    Phase 2: bonus == 0.0 (identity, no gradient)
+      - Start fresh with P_T as incumbent.
+      - With no reward for terminal use, the constant base makes u == baseline.
+      - P_W is KEPT and overwrites the incumbent.
+      - Assert P_T is lost from incumbent.
+    """
+    # ---- Phase 1: bonus > 0 (shipped default) ----
+    sim, colony, ctrl = _make_pi_colony(P_T)
+    sim._tinkerer = _StubTinkerer(P_W)
+    food0, pop0 = colony.maw.food_stored, len(colony.units)
+
+    # Drive 3 review windows
+    _drive_machine_ticks(sim, 3 * PROGRAM_REVIEW)
+
+    # Verify the base term stayed constant (determinism invariant):
+    assert colony.maw.food_stored == food0, "food_stored should not change during _machine_tick drive"
+    assert len(colony.units) == pop0, "colony units should not change during _machine_tick drive"
+
+    # The terminal genome survived as the kept incumbent, and the non-terminal
+    # candidate was rejected at R3:
+    assert _uses_terminal(ctrl._incumbent), \
+        "P_T should be preserved in _incumbent when bonus > 0 (BRK-D.R1)"
+    assert ctrl.last_outcome == "reverted", \
+        "P_W should be reverted when it underperforms the terminal program"
+    assert colony.terminal_uses > 0, \
+        "the port-7 program should have fired at least once"
+
+    # ---- Phase 2: bonus == 0.0 (identity, no gradient) ----
+    _orig = sandkings.BREAKOUT_FITNESS_BONUS
+    sandkings.BREAKOUT_FITNESS_BONUS = 0.0
+    try:
+        sim2, colony2, ctrl2 = _make_pi_colony(P_T)
+        sim2._tinkerer = _StubTinkerer(P_W)
+        _drive_machine_ticks(sim2, 3 * PROGRAM_REVIEW)
+        # With no reward for terminal use, u == baseline == 0 at R3 -> the
+        # non-terminal candidate is KEPT and overwrites the incumbent:
+        assert not _uses_terminal(ctrl2._incumbent), \
+            "P_T should be lost from _incumbent when bonus == 0.0 (BRK-D.R1 contrast)"
+        assert ctrl2.last_outcome == "kept", \
+            "P_W should be kept when bonus is 0.0 (no gradient to prefer P_T)"
+    finally:
+        sandkings.BREAKOUT_FITNESS_BONUS = _orig
+
+
+def test_brk_d2_identity_at_zero_bonus():
+    """BRK-D2: at BREAKOUT_FITNESS_BONUS == 0.0, computed fitness equals
+    pre-fix value exactly, even for a colony with terminal_uses > 0 (identity).
+
+    _machine_tick stores controller._last_value = value at every review, so one
+    review at a PR boundary exposes the real `value`.
+    """
+    _orig = sandkings.BREAKOUT_FITNESS_BONUS
+    sandkings.BREAKOUT_FITNESS_BONUS = 0.0
+    try:
+        sim, colony, ctrl = _make_pi_colony([("NOP", 0, 0, 0)])  # no terminal use in-tick
+        colony.terminal_uses = 5  # pre-seed terminal_uses > 0
+        food0, pop0 = colony.maw.food_stored, len(colony.units)
+        sim.step_count = PROGRAM_REVIEW - 1
+        sim.step_count += 1
+        sim._machine_tick()  # one review at step == PROGRAM_REVIEW
+        expected = food0 + 15 * pop0
+        assert ctrl._last_value == expected, \
+            f"fitness at bonus=0.0 should equal pre-fix value {expected}, got {ctrl._last_value}"
+    finally:
+        sandkings.BREAKOUT_FITNESS_BONUS = _orig
+
+
+def test_brk_d3_bonus_is_monotone():
+    """BRK-D3: the dial is monotone; larger bonus => larger fitness.
+    For a fixed colony with terminal_uses > 0, fitness difference equals
+    (high_bonus - low_bonus) * terminal_uses exactly.
+    """
+    def fitness_at(bonus):
+        _orig = sandkings.BREAKOUT_FITNESS_BONUS
+        sandkings.BREAKOUT_FITNESS_BONUS = bonus
+        try:
+            sim, colony, ctrl = _make_pi_colony([("NOP", 0, 0, 0)])
+            colony.terminal_uses = 3  # fixed, > 0
+            sim.step_count = PROGRAM_REVIEW - 1
+            sim.step_count += 1
+            sim._machine_tick()
+            return ctrl._last_value
+        finally:
+            sandkings.BREAKOUT_FITNESS_BONUS = _orig
+
+    low = fitness_at(2.0)
+    high = fitness_at(8.0)
+    assert high > low, f"fitness at bonus=8.0 ({high}) should exceed bonus=2.0 ({low})"
+    expected_delta = (8.0 - 2.0) * 3
+    assert (high - low) == expected_delta, \
+        f"fitness delta should be exactly {expected_delta}, got {high - low}"
+
+
+def _brk_d4_organic_terminal_use_across_seeds():
+    """BRK-D4 (OPTIONAL, stochastic gate, slow): organic end-to-end proof.
+    Proves the whole organic path — Part A addressability + Part D gradient +
+    real propose() — reaches the terminal with NO direct _actuate call.
+
+    NOT named test_* so run_tests.py skips it in the fast battery (it steps the
+    full sim 4000x across 3 seeds). Call it manually as an opt-in organic gate.
+    """
+    BUDGET = 4000  # bounded sim steps per seed
+    reached = 0
+
+    for seed in (0, 1, 2):  # >= 3 seeds (stochastic gate)
+        random.seed(seed)
+        np.random.seed(seed)
+        sim = SandKingsSimulation(width=48, height=36, depth=12, num_colonies=4)
+
+        # Gift the first colony a pi controller in the machine arc
+        colony = sim.colonies[0]
+        ctrl = Controller(colony.colony_id, fuel=PI_FUEL, durability=PI_DURABILITY)
+        colony.controllers = [ctrl]
+        colony.machine_arc = 'claimed'
+        ctrl.operate_ticks = TERMINAL_UNLOCK  # Unlocked
+
+        # Drive the sim
+        for _ in range(BUDGET):
+            sim.step()  # full sim; NO manual _actuate
+            if getattr(colony, 'terminal_uses', 0) > 0:
+                reached += 1
+                break
+
+    # At least 1 of 3 seeds should breach organically
+    assert reached >= 1, \
+        f"at least 1 of 3 seeds should organically reach terminal, reached {reached}"
