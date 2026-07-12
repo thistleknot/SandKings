@@ -2280,6 +2280,23 @@ class SandKingsSimulation:
         f[x, y, z] = min(HYDRO_CAP, f[x, y, z] + amount)
         return f
 
+    def _hydro_sources(self):
+        """Phase 2: the oasis is a perennial spring — each oasis column is topped
+        up to HYDRO_SOURCE_LEVEL just above its ground. The only place the flow sim
+        ADDS volume; from here water spreads/drains/evaporates to an equilibrium.
+        Allocates the field. Gated by HYDRO_SOURCES_ENABLED."""
+        f = self._ensure_water_field()
+        w, h, d = self.world.dimensions
+        cx, cy = w // 2, h // 2
+        r = OASIS_RADIUS
+        for x in range(max(0, cx - r), min(w, cx + r + 1)):
+            for y in range(max(0, cy - r), min(h, cy + r + 1)):
+                if (x - cx) ** 2 + (y - cy) ** 2 > r * r:
+                    continue
+                gz = self.world.terrain_z(x, y) + 1
+                if 0 <= gz < d:
+                    f[x, y, gz] = max(f[x, y, gz], HYDRO_SOURCE_LEVEL)
+
     def _hydro_passable(self) -> np.ndarray:
         """(w,h,d) bool: cells water may occupy — AIR or already WATER (never
         solid/sand/crop/wall). AIR + WATER are the flow medium."""
@@ -2293,6 +2310,8 @@ class SandKingsSimulation:
         total volume) are Phase 2, gated by HYDRO_SOURCES_ENABLED. Early-returns
         with no water, so a neutral run is untouched and this costs nothing until
         water exists."""
+        if HYDRO_SOURCES_ENABLED:
+            self._hydro_sources()          # oasis spring tops up (allocates field)
         f = getattr(self, 'water', None)
         if f is None or not f.any():
             return
@@ -2317,7 +2336,12 @@ class SandKingsSimulation:
             f -= flow
             f += np.roll(flow, shift, axis=axis)
         np.minimum(f, HYDRO_CAP, out=f)
-        # (3) EDGE SINKS: water at the map boundary drains (the outfall; also
+        # (3) EVAPORATION (Phase 2): the only volume-remove besides sinks; scaled by
+        # dryness so a drought shrinks reservoirs/lakes (gated with sources).
+        if HYDRO_SOURCES_ENABLED and HYDRO_EVAP_RATE > 0.0:
+            dryness = 1.0 if self._is_dry() else 0.35
+            f *= (1.0 - HYDRO_EVAP_RATE * dryness)
+        # (4) EDGE SINKS: water at the map boundary drains (the outfall; also
         # absorbs any np.roll wrap-around at the edges).
         f[0, :, :] = 0.0; f[-1, :, :] = 0.0
         f[:, 0, :] = 0.0; f[:, -1, :] = 0.0

@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 
 from sandkings import (
-    HYDRO_CAP, HYDRO_SETTLE_MIN, SandKingsSimulation, VoxelType,
+    HYDRO_CAP, HYDRO_SETTLE_MIN, OASIS_RADIUS, SandKingsSimulation, VoxelType,
 )
 
 
@@ -98,6 +98,31 @@ def test_hydro_water_is_not_solid_or_tunnelable():
     """WATER blocks movement/tunneling (boats cross it) but is not 'ground'."""
     assert not VoxelType.WATER.is_solid()
     assert not VoxelType.WATER.is_tunnelable()
+
+
+def test_hydro_oasis_spring_fills_when_enabled():
+    """Phase 2: with HYDRO_SOURCES_ENABLED the oasis becomes a perennial spring and
+    standing water pools there; with the gate off, a normal run never allocates the
+    field (identity)."""
+    import sandkings
+    sim = make_sim()
+    for _ in range(20):                    # gate off (default): stays dry
+        sim.step()
+    assert sim._water_field() is None, "sources off -> no water field ever allocated"
+
+    old = sandkings.HYDRO_SOURCES_ENABLED
+    sandkings.HYDRO_SOURCES_ENABLED = True
+    try:
+        sim2 = make_sim(seed=2)
+        for _ in range(80):
+            sim2.step()
+        wet = np.argwhere(sim2.world.voxels == VoxelType.WATER.value)
+        assert len(wet) > 0, "the oasis spring must create standing water when enabled"
+        cx, cy = sim2.world.width // 2, sim2.world.height // 2
+        near = sum(1 for x, y, z in wet if (x - cx) ** 2 + (y - cy) ** 2 <= (OASIS_RADIUS + 5) ** 2)
+        assert near > 0, "standing water should pool at/near the oasis"
+    finally:
+        sandkings.HYDRO_SOURCES_ENABLED = old
 
 
 def test_hydro_water_renders():
