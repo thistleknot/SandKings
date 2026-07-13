@@ -68,7 +68,7 @@ class ZCAWhitener(nn.Module):
 
     @torch.no_grad()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return (x - self.mean) @ self.W
+        return (x.to(self.W.dtype) - self.mean) @ self.W   # guard: never float64 @ float32
 
 
 class KanervaEncoder(nn.Module):
@@ -445,12 +445,12 @@ def encode_soldier_state(unit, colony, world, enemy_positions) -> torch.Tensor:
     state = torch.cat([
         pos,                                    # [0:3] = 3 features
         maw_rel,                               # [3:6] = 3 features
-        torch.tensor([health_pct]),            # [6] = 1 feature
-        torch.tensor([retreating]),            # [7] = 1 feature
+        torch.tensor([health_pct], dtype=torch.float32),   # [6] = 1 feature
+        torch.tensor([retreating], dtype=torch.float32),   # [7] = 1 feature
         enemy_dir,                             # [8:11] = 3 features
-        torch.tensor([enemy_dist]),            # [11] = 1 feature
-        torch.tensor(local_voxels),            # [12:39] = 27 features
-        torch.tensor([food_level])             # [39] = 1 feature
+        torch.tensor([enemy_dist], dtype=torch.float32),   # [11] = 1 feature
+        torch.tensor(local_voxels, dtype=torch.float32),   # [12:39] = 27 features
+        torch.tensor([food_level], dtype=torch.float32)    # [39] = 1 feature
     ])
     
     return state
