@@ -7,6 +7,11 @@ Objectives defined in `objective.md`. Dates are absolute.
 
 ## RL v2 upgrade (RLOO + entropy + warm-start + plasticity-LR + verticality + kills-reward)
 
+- **2026-07-13 (Bundle 2, measured)** — `patience` gene → discount γ∈[0.80,0.97] + n-step returns
+  shipped (`maw_brain._discounted_returns`/`patience_to_gamma`, wired in `_maw_rl_tick`; chess λ≈0.9
+  interior prior). Measured (1500-step): I1 +0.011, **I2 0.665 ↑, I5 1.284 ↑**, G1 4/4, G5 0.968, no
+  NaN; 20 unit + 2 integ + 50 battery green. No regression; divergence & anti-collapse improved.
+  patience→territory A/B not resolvable at 1500 steps (territory≈1) — deferred to a controlled study.
 - **2026-07-13 (measured)** — v2 shipped + measured (1500-step, 4-colony neural run, seed 7).
   **All objective metrics PASS**: I1 slope +0.019 (↑), I2 divergence 0.555, I3 expressiveness
   0.297, I5 anti-collapse 1.03× (grew — entropy holds), I4 maw[3,3,3,3]/spawn[448,381,427,376],
@@ -37,3 +42,4 @@ Objectives defined in `objective.md`. Dates are absolute.
 |------|---------|-----------|-----------|-----------|------------------|----------|-------|
 | 2026-07-12 | pre-v2 baseline | n/m | ~0.1+ | ~0.15 | n/m | 3/3 | from 520-step log |
 | 2026-07-13 | v2 (RLOO+entropy+warmstart+plasticity+vert+kills) | +0.019 | 0.555 | 0.297 | 1.03× | 4/4 | G5 warm corr 0.968; 1500 steps seed7; all targets pass |
+| 2026-07-13 | Bundle 2 (+ patience→γ n-step returns) | +0.011 | 0.665 | 0.267 | 1.28× | 4/4 | no regression; divergence & anti-collapse ↑; patience→territory A/B deferred (territory≈1 at scale) |

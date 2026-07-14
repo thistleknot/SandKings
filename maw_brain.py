@@ -53,8 +53,30 @@ MAW_UPDATE_EVERY = 8         # flush a maw batch-REINFORCE update every K batch-
 SPAWN_UPDATE_EVERY = 32      # flush a spawn-residual update every K accumulated spawn-steps
 MAW_DIRECTIVE_STRENGTH = 0.5  # bounds how far a directive can tilt an action (neutral at 0.5)
 MAW_RESIDUAL_CLIP = 0.15     # 15% tier "play": max |additive residual| on a spawn action logit
+MAW_GAMMA_LO = 0.80          # patience gene -> discount band (interior; chess-deep-q λ≈0.9 sweet spot)
+MAW_GAMMA_HI = 0.97          # never 0 or 1 — the bias-variance middle beats both endpoints
 
 _HALF_LOG_2PIE = 0.5 * math.log(2.0 * math.pi * math.e)   # per-dim Gaussian entropy constant
+
+
+def patience_to_gamma(patience: float) -> float:
+    """Map the evolved `patience` gene (0..1) to a discount γ in the interior band
+    [MAW_GAMMA_LO, MAW_GAMMA_HI] — never 0 or 1. Sutton&Barto: γ is the temperament knob (long- vs
+    short-horizon); chess-deep-q found the interior λ≈0.9 the sweet spot (TD-Gammon-style bootstrapped
+    returns beat both TD(0) and MC endpoints). Patient colonies weight long-horizon reward more."""
+    p = min(1.0, max(0.0, float(patience)))
+    return MAW_GAMMA_LO + (MAW_GAMMA_HI - MAW_GAMMA_LO) * p
+
+
+def _discounted_returns(rewards, gamma: float):
+    """Backward discounted return G_t = r_t + γ·r_{t+1} + γ²·r_{t+2} + ... over the rollout buffer
+    (S&B §13.4: the REINFORCE return carries γ). Returns a plain list, same length as rewards."""
+    out = [0.0] * len(rewards)
+    g = 0.0
+    for t in range(len(rewards) - 1, -1, -1):
+        g = float(rewards[t]) + gamma * g
+        out[t] = g
+    return out
 
 
 def _gaussian_entropy(log_std: torch.Tensor) -> torch.Tensor:
@@ -232,11 +254,12 @@ class ColonyMawRL:
 
     def __init__(self, obs_dim: int, update_every: int = MAW_UPDATE_EVERY,
                  directive_dim: int = MAW_DIRECTIVE_DIM, warm_start: torch.Tensor = None,
-                 lr: float = MAW_LR):
+                 lr: float = MAW_LR, gamma: float = None):
         self.policy = MawPolicy(obs_dim=obs_dim, directive_dim=directive_dim,
                                 warm_start=warm_start)
         self.opt = self.policy.make_optimizer(lr=lr)
         self.update_every = int(update_every)
+        self.gamma = float(gamma) if gamma is not None else patience_to_gamma(0.5)
         self._log_probs = []          # per-episode log_prob tensors (grad) — transient
         self._rewards = []            # per-episode scalar rewards
         self._pending_lp = None       # log_prob of the action awaiting its reward
@@ -259,7 +282,10 @@ class ColonyMawRL:
         self._rewards.append(float(reward))
         self._pending_lp = None
         if len(self._rewards) >= self.update_every:
-            self.last_loss = self.policy.update(self._log_probs, self._rewards, self.opt)
+            # credit each directive by its γ-discounted downstream return (patience temperament),
+            # then RLOO-baseline the returns in policy.update.
+            returns = _discounted_returns(self._rewards, self.gamma)
+            self.last_loss = self.policy.update(self._log_probs, returns, self.opt)
             self._log_probs, self._rewards = [], []
             self.updates += 1
 

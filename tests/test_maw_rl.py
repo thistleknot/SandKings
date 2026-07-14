@@ -301,6 +301,57 @@ def test_entropy_bonus_resists_collapse():
     assert float(p.log_std.mean()) > ls0, "entropy bonus failed to raise exploration"
 
 
+def test_patience_to_gamma_interior_band():
+    """patience gene maps into the interior discount band [LO,HI] — never 0 or 1 (chess λ≈0.9)."""
+    if not HAVE_TORCH:
+        return _skip()
+    from maw_brain import patience_to_gamma, MAW_GAMMA_LO, MAW_GAMMA_HI
+    assert abs(patience_to_gamma(0.0) - MAW_GAMMA_LO) < 1e-9
+    assert abs(patience_to_gamma(1.0) - MAW_GAMMA_HI) < 1e-9
+    mid = patience_to_gamma(0.5)
+    assert MAW_GAMMA_LO < mid < MAW_GAMMA_HI, "midpoint must be interior"
+    assert patience_to_gamma(0.9) > patience_to_gamma(0.1), "more patience -> larger gamma"
+    assert patience_to_gamma(2.0) == MAW_GAMMA_HI and patience_to_gamma(-1.0) == MAW_GAMMA_LO  # clamped
+
+
+def test_discounted_returns_math():
+    """G_t = r_t + gamma*r_{t+1} + ... computed backward over the buffer."""
+    if not HAVE_TORCH:
+        return _skip()
+    from maw_brain import _discounted_returns
+    r = [1.0, 0.0, 2.0]
+    g = 0.5
+    out = _discounted_returns(r, g)
+    assert abs(out[2] - 2.0) < 1e-9
+    assert abs(out[1] - (0.0 + 0.5 * 2.0)) < 1e-9          # 1.0
+    assert abs(out[0] - (1.0 + 0.5 * 1.0)) < 1e-9          # 1.5
+    assert len(_discounted_returns([], g)) == 0
+
+
+def test_colony_maw_gamma_learns():
+    """The maw wrapper still learns the toy objective with discounting on (patient gamma)."""
+    if not HAVE_TORCH:
+        return _skip()
+    from maw_brain import ColonyMawRL
+    torch.manual_seed(6)
+    rl = ColonyMawRL(obs_dim=4, update_every=8, gamma=0.9)
+    obs = torch.ones(4)
+    target = torch.full((MAW_DIRECTIVE_DIM,), 0.3)
+
+    def dist():
+        d, _ = rl.policy.act(obs, deterministic=True)
+        return float(torch.mean((d - target) ** 2))
+
+    start = dist()
+    reward = 0.0
+    for _ in range(8 * 60):
+        rl.observe_reward(reward)
+        d = rl.act(obs)
+        reward = -float(torch.mean((d - target) ** 2))
+    assert rl.gamma == 0.9 and rl.updates >= 50
+    assert dist() < start * 0.6, f"gamma-discounted maw RL failed to learn: {start:.4f}->{dist():.4f}"
+
+
 def test_apply_directive_verticality():
     """d2 verticality tilts the vertical moves (idx 4,5 = +z,-z); identity at neutral 0.5."""
     if not HAVE_TORCH:

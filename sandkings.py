@@ -2156,7 +2156,7 @@ class SandKingsSimulation:
         if not MAW_RL_ENABLED:
             return
         try:
-            from maw_brain import ColonyMawRL, MAW_LR
+            from maw_brain import ColonyMawRL, MAW_LR, patience_to_gamma
             import torch
         except Exception:
             return
@@ -2189,7 +2189,8 @@ class SandKingsSimulation:
                     float(getattr(g, 'tunnel_preference', 0.5)),   # d2 verticality
                 ], dtype=torch.float32)
                 lr = MAW_LR * (0.5 + float(getattr(g, 'plasticity', 0.5)))
-                rl = ColonyMawRL(obs_dim=int(obs.shape[0]), warm_start=warm, lr=lr)
+                gamma = patience_to_gamma(float(getattr(g, 'patience', 0.5)))  # patience gene -> discount
+                rl = ColonyMawRL(obs_dim=int(obs.shape[0]), warm_start=warm, lr=lr, gamma=gamma)
                 colony.maw_rl = rl
             kills = sum(getattr(getattr(u, 'brain_layer', None), 'kills', 0)
                         for u in colony.units)                     # combat success (richer reward)

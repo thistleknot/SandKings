@@ -120,11 +120,24 @@ Gate unchanged (`MAW_RL_ENABLED` default False → battery byte-identical). Dire
 forward-safe: old checkpoints keep their 6-d policy (recreated only on obs-dim change); new colonies
 get the 3-d warm-started policy.
 
-## Open / future (Bundle 2+)
-- **`patience` gene → discount γ + n-step returns:** credit each directive by a γ-discounted sum of
-  the following cycle-deltas (S&B canonical return), not just the immediate one. Patient colonies value
-  long-horizon territory/pop; impatient ones chase immediate gains. Textbook-grounded, moderate change
-  to `ColonyMawRL.observe_reward`.
+### Bundle 2 (2026-07-13) — `patience` gene → discount γ + n-step returns
+Each maw directive is now credited by its **γ-discounted downstream return** over the rollout buffer
+(`_discounted_returns`, S&B §13.4: the REINFORCE return carries γ), then RLOO-baselined — not just the
+immediate next-cycle delta. `patience_to_gamma` maps the evolved `patience` gene (0..1) into an
+**interior band γ∈[0.80, 0.97]** (never 0 or 1 — chess-deep-q found the interior λ≈0.9 the sweet spot,
+their `l07`–`l09` models). Patient colonies weight long-horizon territory/pop growth; impatient ones
+chase immediate gains — Sutton&Barto's "γ = temperament" made literal. Wired in `_maw_rl_tick`
+(`gamma=patience_to_gamma(genome.patience)`); spawn (fast reactive tier) stays immediate-reward.
+
+**The anti-erosion anchor is intentionally NOT built** (web-council round 1, `docs/council.md`): the
+chess "self-play erodes the sound point" lesson was imported from a single-persistent-net-no-reset
+setting, but drq resets each colony's RL to the sound genome instinct on **respawn**
+(`sandkings.py:6957` builds a fresh `Colony` → fresh warm-started maw_rl) — Baldwinian, the erosion-reset
+chess lacked. Anchor held as insurance for long-lived dominant colonies only.
+
+## Open / future (Bundle 3+)
+- **Anchor / trust-region toward warm-start** (HELD): only if a long-lived dominant colony shows
+  directive drift away from its instinct across many updates with declining reward.
 - **Dreaming / replay (Lin 1992, INSPIRATIONS S4):** Chill-season offline consolidation over the year's
   (obs→directive→reward) transitions.
 - **Drop the random-Kanerva dependence:** re-point RL obs to **raw** state (learned features, frozen
