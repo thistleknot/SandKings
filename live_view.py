@@ -456,6 +456,10 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
         holder = sim.oasis_holder()
         entries.insert(4, ("Oasis: " + (f"Colony {holder}" if holder is not None
                                         else "unclaimed"), (80, 200, 170)))
+        if getattr(sim, 'guppy_pop', None) is not None:   # SPEC_GUPPIES pond readout
+            gp = sim.guppy_pop
+            entries.insert(5, (f"Pond: {gp:.0f} guppies, algae {getattr(sim, 'algae', 0):.0f}",
+                               (120, 200, 235) if gp >= 20 else (230, 170, 90)))
         # BI6: the panel readout - the closed water budget and the daylight
         wl = getattr(sim, 'water_level', 0.6)
         sh = getattr(sim, 'sun_hours', 12)
