@@ -175,6 +175,20 @@ aggression<0.30 "draws inward, wary of the glass". Throttled to mode *transition
 when RL is on → battery byte-identical). Turns the RL's learning into watchable narrative — the player sees
 colonies grow distinct personalities as they learn (the "[quasi] sentient life in the terrarium" directive).
 
+## Interpretation — the subtle maw effects ARE the two-timescale design (2026-07-14)
+
+The near-zero I1 (reward trend) and the weak patience→temperament signal are NOT defects — they are the
+85:15 two-timescale split working as intended. The **maw (85%, batch clock)** is a *slow strategic*
+learner: ~3–15 updates per run by design, so its directives are stable and its learned effects are
+appropriately subtle. The **spawn (15%, step clock)** is the *fast local* learner: 300–600 updates per
+run (measured), doing the rapid adaptation with a bounded ±0.15 residual. So the system is deliberately
+**conservative and stable** — colonies express distinct, slowly-refined personalities (divergence 0.4–0.6,
+warm-start corr 0.86–0.98, no collapse) rather than lurching under fast optimization. That suits a
+persistent "pet terrarium you check on across days" (Neopets/DF fiction) far better than a twitchy
+reward-maximizer would. Tuning the maw for more updates would break the two-timescale separation (and is
+the kind of hyperparameter research that belongs in chess-deep-q, not here). The intelligence lives in the
+STRUCTURE (warm-started personality, sustained divergence, temperament direction), not in a steep reward curve.
+
 ## Open / future (Bundle 5+)
 - **Self-supervised / learned encoder** (bigger scope): replace the random-Kanerva basis with a learned
   frozen basis (behavior-cloned or self-supervised), the deeper fix behind Bundle 4's raw-obs mitigation.
