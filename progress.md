@@ -7,6 +7,12 @@ Objectives defined in `objective.md`. Dates are absolute.
 
 ## RL v2 upgrade (RLOO + entropy + warm-start + plasticity-LR + verticality + kills-reward)
 
+- **2026-07-14 (Bundle 3, measured)** — dreaming / elite-replay consolidation (Lin 1992 / S4). The maw
+  banks lifetime (obs,directive,reward) memories; on Chill it self-distills its top-8 by reward (BC on the
+  mean, log_std untouched) — "distillation > self-play" (chess). Wired to the existing Chill dream hook.
+  **Live-run bug fixed** (stale autograd graph: BC mutates weights while PG log_probs pending → drop the
+  partial PG batch first; regression test added). Measured (1700-step): dreams={1,1,1,1} (fires per Chill),
+  I1 +0.004, I2 0.615, I5 1.248, G1 4/4, G5 0.968, no NaN. 25 unit + 2 integ + 50 battery green.
 - **2026-07-13 (Bundle 2, measured)** — `patience` gene → discount γ∈[0.80,0.97] + n-step returns
   shipped (`maw_brain._discounted_returns`/`patience_to_gamma`, wired in `_maw_rl_tick`; chess λ≈0.9
   interior prior). Measured (1500-step): I1 +0.011, **I2 0.665 ↑, I5 1.284 ↑**, G1 4/4, G5 0.968, no
@@ -43,3 +49,4 @@ Objectives defined in `objective.md`. Dates are absolute.
 | 2026-07-12 | pre-v2 baseline | n/m | ~0.1+ | ~0.15 | n/m | 3/3 | from 520-step log |
 | 2026-07-13 | v2 (RLOO+entropy+warmstart+plasticity+vert+kills) | +0.019 | 0.555 | 0.297 | 1.03× | 4/4 | G5 warm corr 0.968; 1500 steps seed7; all targets pass |
 | 2026-07-13 | Bundle 2 (+ patience→γ n-step returns) | +0.011 | 0.665 | 0.267 | 1.28× | 4/4 | no regression; divergence & anti-collapse ↑; patience→territory A/B deferred (territory≈1 at scale) |
+| 2026-07-14 | Bundle 3 (+ Chill dreaming/elite-replay) | +0.004 | 0.615 | 0.270 | 1.25× | 4/4 | dreams={1,1,1,1}; live-run stale-graph bug fixed; all targets pass |

@@ -1998,6 +1998,12 @@ class SandKingsSimulation:
                 if self.season_index() == 3:  # the maws dream through frost
                     learner.dream(getattr(colony.genome, 'patience', 0.5),
                                   plasticity)
+                    # 85% tier: the maw's real-RL policy consolidates its best memories via
+                    # elite self-distillation, once per colony per year (S4).
+                    mrl = getattr(colony, 'maw_rl', None)
+                    if mrl is not None and getattr(colony, '_maw_dream_year', None) != self.year():
+                        colony._maw_dream_year = self.year()
+                        mrl.dream()
                     dream_key = (self.year(),)
                     if getattr(self, '_dream_logged', None) != dream_key:
                         self._dream_logged = dream_key

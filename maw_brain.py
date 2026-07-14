@@ -55,6 +55,11 @@ MAW_DIRECTIVE_STRENGTH = 0.5  # bounds how far a directive can tilt an action (n
 MAW_RESIDUAL_CLIP = 0.15     # 15% tier "play": max |additive residual| on a spawn action logit
 MAW_GAMMA_LO = 0.80          # patience gene -> discount band (interior; chess-deep-q λ≈0.9 sweet spot)
 MAW_GAMMA_HI = 0.97          # never 0 or 1 — the bias-variance middle beats both endpoints
+MAW_DREAM_ENABLED = True     # Chill-season elite replay (Lin 1992 "the maws dream"; baseline-on)
+MAW_DREAM_BUFFER = 64        # ring buffer of (obs, directive, reward) lifetime memories
+MAW_DREAM_TOPK = 8           # elites (highest-reward memories) replayed per dream
+MAW_DREAM_EPOCHS = 3         # supervised imitation passes over the elites
+MAW_DREAM_LR = 1e-3          # behavior-cloning lr — self-distillation toward own best (chess: distill > self-play)
 
 _HALF_LOG_2PIE = 0.5 * math.log(2.0 * math.pi * math.e)   # per-dim Gaussian entropy constant
 
@@ -266,21 +271,33 @@ class ColonyMawRL:
         self.last_directive = None    # detached directive tensor (spawn read this)
         self.last_loss = None
         self.updates = 0
+        self._mem = []                # (obs, directive, reward) elite-replay memories (ring buffer)
+        self._pending_mem = None      # (obs, directive) awaiting its reward
+        self.dreams = 0
+        self.last_dream_loss = None
 
     def act(self, obs: torch.Tensor) -> torch.Tensor:
-        """Emit a directive for this cycle; remember its log_prob for the next reward."""
+        """Emit a directive for this cycle; remember its log_prob (for the next reward) and the
+        (obs, directive) pair (for Chill-season dreaming)."""
         directive, log_prob = self.policy.act(obs)
         self._pending_lp = log_prob
         self.last_directive = directive.detach()
+        self._pending_mem = (obs.detach().clone(), self.last_directive.clone())
         return self.last_directive
 
     def observe_reward(self, reward: float) -> None:
-        """Book the reward for the previous directive; flush an update every K cycles."""
+        """Book the reward for the previous directive; bank the memory; flush an update every K cycles."""
         if self._pending_lp is None:
             return                    # first cycle: nothing acted yet
         self._log_probs.append(self._pending_lp)
         self._rewards.append(float(reward))
         self._pending_lp = None
+        if self._pending_mem is not None:                 # bank the memory for dreaming
+            o, d = self._pending_mem
+            self._mem.append((o, d, float(reward)))
+            if len(self._mem) > MAW_DREAM_BUFFER:
+                self._mem.pop(0)
+            self._pending_mem = None
         if len(self._rewards) >= self.update_every:
             # credit each directive by its γ-discounted downstream return (patience temperament),
             # then RLOO-baseline the returns in policy.update.
@@ -289,12 +306,42 @@ class ColonyMawRL:
             self._log_probs, self._rewards = [], []
             self.updates += 1
 
+    def dream(self) -> float:
+        """Chill-season offline consolidation (Lin 1992 / INSPIRATIONS S4). ELITE SELF-DISTILLATION:
+        replay the highest-reward (obs -> directive) memories and supervised-imitate them — behavior
+        cloning on the policy MEAN only (log_std untouched, so exploration survives). This is
+        distillation toward the colony's OWN best past, not stale on-policy replay: chess-deep-q found
+        distillation > self-play, and it also pulls the policy back toward its successful region (a soft
+        anti-erosion consolidation). No-op until MAW_DREAM_TOPK memories exist. Returns the BC loss."""
+        if not MAW_DREAM_ENABLED or len(self._mem) < MAW_DREAM_TOPK:
+            return None
+        # BC mutates the policy weights inplace; any pending on-policy PG log_probs were sampled under
+        # the PRE-dream weights, so their autograd graph is now stale (and the actions off-policy). Drop
+        # the partial PG batch before dreaming (mirrors the spawn stale-pending fix) — a few seasonal-
+        # boundary cycles of PG data is negligible, and mixing a weight mutation into a live batch is a bug.
+        self._log_probs, self._rewards = [], []
+        self._pending_lp = None
+        elites = sorted(self._mem, key=lambda m: m[2], reverse=True)[:MAW_DREAM_TOPK]
+        obs = torch.stack([m[0] for m in elites])
+        tgt = torch.stack([m[1] for m in elites])
+        dopt = torch.optim.Adam(self.policy.net.parameters(), lr=MAW_DREAM_LR)
+        loss_v = None
+        for _ in range(MAW_DREAM_EPOCHS):
+            pred = torch.sigmoid(self.policy.net(obs))
+            loss = torch.mean((pred - tgt) ** 2)
+            dopt.zero_grad(); loss.backward(); dopt.step()
+            loss_v = float(loss.detach())
+        self.dreams += 1
+        self.last_dream_loss = loss_v
+        return loss_v
+
     def __getstate__(self):
         # Drop transient grad-carrying tensors so the checkpoint pickles cleanly.
         s = self.__dict__.copy()
         s["_log_probs"] = []
         s["_rewards"] = []
         s["_pending_lp"] = None
+        s["_pending_mem"] = None
         return s
 
 

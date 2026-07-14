@@ -301,6 +301,85 @@ def test_entropy_bonus_resists_collapse():
     assert float(p.log_std.mean()) > ls0, "entropy bonus failed to raise exploration"
 
 
+def test_maw_dream_consolidates_elites():
+    """Dreaming (elite self-distillation) moves the deterministic directive TOWARD the high-reward
+    memories and must NOT touch log_std (exploration preserved)."""
+    if not HAVE_TORCH:
+        return _skip()
+    from maw_brain import ColonyMawRL
+    torch.manual_seed(21)
+    rl = ColonyMawRL(obs_dim=4)
+    obs = torch.ones(4)
+    target = torch.full((MAW_DIRECTIVE_DIM,), 0.85)
+    for _ in range(8):                                        # elites AT target, distractors away
+        rl._mem.append((obs.clone(), target.clone(), 5.0))
+        rl._mem.append((obs.clone(), torch.full((MAW_DIRECTIVE_DIM,), 0.15), -5.0))
+    before = float(torch.mean((rl.policy.act(obs, deterministic=True)[0] - target) ** 2))
+    ls_before = rl.policy.log_std.detach().clone()
+    for _ in range(20):
+        rl.dream()
+    after = float(torch.mean((rl.policy.act(obs, deterministic=True)[0] - target) ** 2))
+    assert after < before, f"dream failed to consolidate toward elites: {before:.4f}->{after:.4f}"
+    assert rl.dreams == 20
+    assert torch.equal(rl.policy.log_std, ls_before), "dreaming must not change log_std"
+
+
+def test_dream_mid_pg_batch_no_stale_graph():
+    """Repro (live-run bug): dreaming mutates policy weights while on-policy PG log_probs are pending;
+    a subsequent PG update must NOT raise the stale-graph autograd error (dream drops the PG buffer)."""
+    if not HAVE_TORCH:
+        return _skip()
+    from maw_brain import ColonyMawRL, MAW_DREAM_TOPK
+    torch.manual_seed(31)
+    rl = ColonyMawRL(obs_dim=4, update_every=8)
+    r = 0.0
+    dreamed = False
+    for i in range(30):
+        rl.observe_reward(r)
+        d = rl.act(torch.randn(4))
+        r = float(d.sum())
+        if not dreamed and len(rl._mem) >= MAW_DREAM_TOPK:
+            rl.dream()                       # mid-stream dream while a PG batch is partially accumulated
+            dreamed = True
+    for _ in range(30):                       # keep running -> PG update() fires; must not raise
+        rl.observe_reward(r); d = rl.act(torch.randn(4)); r = float(d.sum())
+    assert dreamed and rl.updates >= 1 and rl.dreams >= 1
+
+
+def test_maw_dream_noop_when_insufficient():
+    if not HAVE_TORCH:
+        return _skip()
+    from maw_brain import ColonyMawRL
+    rl = ColonyMawRL(obs_dim=4)
+    assert rl.dream() is None and rl.dreams == 0, "dream must no-op below MAW_DREAM_TOPK memories"
+
+
+def test_maw_memory_ring_and_dream_through_cycle():
+    if not HAVE_TORCH:
+        return _skip()
+    from maw_brain import ColonyMawRL, MAW_DREAM_BUFFER
+    rl = ColonyMawRL(obs_dim=4, update_every=10000)          # high threshold: isolate the memory path
+    r = 0.0
+    for _ in range(MAW_DREAM_BUFFER + 20):
+        rl.observe_reward(r); d = rl.act(torch.randn(4)); r = float(d.sum())
+    assert len(rl._mem) == MAW_DREAM_BUFFER, "memory must be a capped ring buffer"
+    assert rl.dream() is not None, "enough memories -> dream runs"
+
+
+def test_colony_maw_rl_pickles_with_memories():
+    if not HAVE_TORCH:
+        return _skip()
+    import pickle
+    from maw_brain import ColonyMawRL
+    rl = ColonyMawRL(obs_dim=6, update_every=10000)
+    r = 0.0
+    for _ in range(12):
+        rl.observe_reward(r); d = rl.act(torch.randn(6)); r = float(d.sum())
+    revived = pickle.loads(pickle.dumps(rl))
+    assert len(revived._mem) == len(rl._mem) and revived._pending_mem is None
+    revived.dream()                                          # must not raise post-revive
+
+
 def test_patience_to_gamma_interior_band():
     """patience gene maps into the interior discount band [LO,HI] — never 0 or 1 (chess λ≈0.9)."""
     if not HAVE_TORCH:

@@ -135,13 +135,31 @@ setting, but drq resets each colony's RL to the sound genome instinct on **respa
 (`sandkings.py:6957` builds a fresh `Colony` → fresh warm-started maw_rl) — Baldwinian, the erosion-reset
 chess lacked. Anchor held as insurance for long-lived dominant colonies only.
 
-## Open / future (Bundle 3+)
-- **Anchor / trust-region toward warm-start** (HELD): only if a long-lived dominant colony shows
-  directive drift away from its instinct across many updates with declining reward.
-- **Dreaming / replay (Lin 1992, INSPIRATIONS S4):** Chill-season offline consolidation over the year's
-  (obs→directive→reward) transitions.
+### Bundle 3 (2026-07-13) — dreaming / elite-replay consolidation (Lin 1992, INSPIRATIONS S4)
+The maw banks a ring buffer (`MAW_DREAM_BUFFER=64`) of its lifetime `(obs, directive, reward)` memories.
+On the **Chill season** (once per colony per year, wired into the existing `learner.dream` hook,
+`sandkings.py` ~2000, "the maws dream through the long frost"), `ColonyMawRL.dream()` runs **elite
+self-distillation**: it takes the `MAW_DREAM_TOPK=8` highest-reward memories and supervised-imitates
+them (`MAW_DREAM_EPOCHS=3` BC passes, `MAW_DREAM_LR=1e-3`) on the policy **mean only** — `log_std`
+untouched so exploration survives. This is distillation toward the colony's OWN best past, NOT stale
+on-policy replay (chess-deep-q: **distillation > self-play**), and it doubles as a soft anti-erosion pull
+(consolidating good directives resists drift) and as **sample-efficiency** (the maw is severely
+update-limited on the batch clock; replay multiplies each real transition's signal).
+
+Live-run bug fixed (caught by measurement, not unit tests): dreaming's BC step mutates the policy weights
+inplace, so any pending on-policy PG log_probs sampled under the pre-dream weights had **stale autograd
+graphs** — `dream()` now drops the partial PG batch first (mirrors the spawn stale-pending fix). Regression
+test `test_dream_mid_pg_batch_no_stale_graph`. Verified: 25 unit + 2 integration + 50 battery green;
+1700-step run dreams={1,1,1,1}, all objective metrics pass, no NaN.
+
+## Open / future (Bundle 4+)
+- **Anchor / trust-region toward warm-start** (HELD): only if the erosion study shows a long-lived
+  dominant colony drifting from its instinct with declining reward. Note Bundle 3's dreaming already adds
+  a soft self-distillation anti-erosion pull, so an explicit anchor may prove unnecessary.
 - **Drop the random-Kanerva dependence:** re-point RL obs to **raw** state (learned features, frozen
   only between batches); self-supervised encoder pretrain.
+- **Controlled `patience`→γ A/B:** a genome-controlled study to confirm patient colonies develop more
+  long-horizon (territory/pop) behavior than impatient ones (not resolvable at 1500-step scale).
 
 ## Design history (explored + dropped — full reasoning in git history)
 - **Frozen foundation-model router (TabFM/TabPFN):** dropped — 7 GB/model, Prior-Labs login gate,
