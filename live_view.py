@@ -107,7 +107,7 @@ EVENT_TINTS = (            # substring -> HUD color (spec R19/R24)
     ("guppies", (120, 200, 235)),
     ("war-drums", (255, 100, 80)),     # maw strategy shifts (learned personality)
     ("burrows", (180, 150, 110)),
-    ("spreads across", (150, 210, 120)),
+    ("across the sands", (150, 210, 120)),
     ("maw learns", (180, 170, 230)),
     ("betrays", (255, 60, 120)),
     ("truce", (120, 220, 120)),
