@@ -7,6 +7,12 @@ Objectives defined in `objective.md`. Dates are absolute.
 
 ## RL v2 upgrade (RLOO + entropy + warm-start + plasticity-LR + verticality + kills-reward)
 
+- **2026-07-14 (Bundle 4 + erosion study, measured)** — richer raw obs (35→39-d: +kills, at_war, wood,
+  **seasonal phase**), reducing random-Kanerva dependence. Measured (1700-step): I1 **+0.0158 (up from
+  +0.004)**, colonies healthier (pops 25–30 vs a pop-1 near-death prior), I2 0.603, G5 0.908, dreams
+  {1,1,1,1}, no NaN; 50/50 battery. **Erosion study (30k steps, 74 maw updates on the longest-lived
+  colony): drift FLAT (0.113→0.117), reward level ROSE, `erosion_detected: false`** → the held
+  anti-erosion anchor is closed as UNNECESSARY (empirically no chess-style erosion; web-council recon).
 - **2026-07-14 (Bundle 3, measured)** — dreaming / elite-replay consolidation (Lin 1992 / S4). The maw
   banks lifetime (obs,directive,reward) memories; on Chill it self-distills its top-8 by reward (BC on the
   mean, log_std untouched) — "distillation > self-play" (chess). Wired to the existing Chill dream hook.
@@ -50,3 +56,5 @@ Objectives defined in `objective.md`. Dates are absolute.
 | 2026-07-13 | v2 (RLOO+entropy+warmstart+plasticity+vert+kills) | +0.019 | 0.555 | 0.297 | 1.03× | 4/4 | G5 warm corr 0.968; 1500 steps seed7; all targets pass |
 | 2026-07-13 | Bundle 2 (+ patience→γ n-step returns) | +0.011 | 0.665 | 0.267 | 1.28× | 4/4 | no regression; divergence & anti-collapse ↑; patience→territory A/B deferred (territory≈1 at scale) |
 | 2026-07-14 | Bundle 3 (+ Chill dreaming/elite-replay) | +0.004 | 0.615 | 0.270 | 1.25× | 4/4 | dreams={1,1,1,1}; live-run stale-graph bug fixed; all targets pass |
+| 2026-07-14 | Bundle 4 (+ richer raw obs: kills/war/wood/season) | +0.0158 | 0.603 | 0.271 | 1.14× | 4/4 | reward trend ↑; colonies healthier (pops 25–30); G5 0.908; dreams fire |
+| 2026-07-14 | erosion study (30k, 74 updates) | level↑ | — | — | drift FLAT | — | erosion_detected=false → anchor NOT needed (closed) |

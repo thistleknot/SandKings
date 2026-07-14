@@ -152,12 +152,24 @@ graphs** — `dream()` now drops the partial PG batch first (mirrors the spawn s
 test `test_dream_mid_pg_batch_no_stale_graph`. Verified: 25 unit + 2 integration + 50 battery green;
 1700-step run dreams={1,1,1,1}, all objective metrics pass, no NaN.
 
-## Open / future (Bundle 4+)
-- **Anchor / trust-region toward warm-start** (HELD): only if the erosion study shows a long-lived
-  dominant colony drifting from its instinct with declining reward. Note Bundle 3's dreaming already adds
-  a soft self-distillation anti-erosion pull, so an explicit anchor may prove unnecessary.
-- **Drop the random-Kanerva dependence:** re-point RL obs to **raw** state (learned features, frozen
-  only between batches); self-supervised encoder pretrain.
+### Bundle 4 (2026-07-14) — richer raw obs (reduce random-Kanerva dependence)
+The maw obs grew from 35-d (32 random-encoder mean + 3 stats) to **39-d**: added `kills` (combat
+success), `at_war` (war footing), `wood` (materials), and **seasonal phase** (`season_index/3` — so
+colonies can learn seasonal strategy). The policy now conditions on real, learnable signal, not just the
+frozen random projection (addresses the "the random encoder is weak" concern). Measured (1700-step): I1
+reward trend **+0.0158 (up from +0.004)** and colonies markedly **healthier** (pops 25–30 vs a near-death
+pop-1 at Bundle 3), divergence 0.603, warm-start corr 0.908, dreams {1,1,1,1}, no NaN; 50/50 battery green.
+
+### Erosion study (2026-07-14) — the anchor is NOT needed (empirically closed)
+Ran a 30k-step study tracking the longest-lived colony's directive over **74 maw updates**
+(`scratchpad/erosion_study.py`): drift-from-instinct FLAT (0.113→0.117), reward LEVEL rose (19.4→20.4),
+`erosion_detected: false`. drq shows **no chess-style self-play erosion** even for a long-lived colony —
+the warm-start + RLOO + entropy + dreaming keep the policy in its successful region without an explicit
+KL/trust-region anchor. The held anchor is closed as unnecessary (web-council reconciliation, `docs/council.md`).
+
+## Open / future (Bundle 5+)
+- **Self-supervised / learned encoder** (bigger scope): replace the random-Kanerva basis with a learned
+  frozen basis (behavior-cloned or self-supervised), the deeper fix behind Bundle 4's raw-obs mitigation.
 - **Controlled `patience`→γ A/B:** a genome-controlled study to confirm patient colonies develop more
   long-horizon (territory/pop) behavior than impatient ones (not resolvable at 1500-step scale).
 

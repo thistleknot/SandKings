@@ -1,8 +1,21 @@
 # Web-Council Ledger — drq maw/spawn RL
 
-**Accepted-arm hit rate:** overall n/a (0 scored) · critique n/a · pipeline n/a · next-question n/a
-Rounds are convened at RL verdict/plateau/novel-territory forks (not per tick). Protocol:
+**Accepted-arm hit rate:** overall 1/1 (1 scored) · critique n/a (held→resolved) · pipeline n/a (vetoed)
+· next-question 1/1. Rounds convened at RL verdict/plateau/novel-territory forks. Protocol:
 `.claude/skills/web-council`.
+
+### Reconciliation — 2026-07-14 (erosion study resolved the round-1 open items)
+Ran the erosion study (`scratchpad/erosion_study.py`, 30k steps, longest-lived colony = **74 maw
+updates**): drift-from-instinct FLAT (0.113→0.117, slope +0.0001/update), reward LEVEL rose
+(19.4→20.4), `erosion_detected: false`.
+- **Proposal C (next-question, the reframe) → HIT.** Predicted the GA/Baldwinian reset means no
+  chess-style erosion; the study confirms no erosion even for a long-lived colony. Lesson (reinforce):
+  when importing a lesson from another repo, first check the *architectural precondition* that made it
+  true there (chess: one persistent net, no reset) still holds here — it didn't.
+- **Proposal A (critique, the anchor) → RESOLVED, not needed.** Its unblock condition (a long-lived
+  dominant colony drifting from instinct with declining reward) was tested and did NOT occur. Holding
+  rather than building was correct. Bundle 3's dreaming adds a soft self-distillation anti-erosion pull
+  anyway. Anchor closed as unnecessary; reopen only on new evidence.
 
 ## Lens briefs (evolving)
 

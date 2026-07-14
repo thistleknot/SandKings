@@ -2176,12 +2176,19 @@ class SandKingsSimulation:
                 base = torch.stack(list(enc.values())).mean(0)
             else:
                 base = torch.zeros(32, dtype=torch.float32)   # HiveMindBrain encoding_dim
-            # append colony STATE so the directive is state-responsive (not blind to
-            # starvation/crowding/territory). Always the same dim (35) for a stable policy.
+            kills = sum(getattr(getattr(u, 'brain_layer', None), 'kills', 0)
+                        for u in colony.units)                     # combat success (obs + reward)
+            # append RAW colony STATE so the directive is state-responsive and less dependent on the
+            # random Kanerva basis — the policy learns from real signal (war footing, season, materials),
+            # not just the frozen random projection. Fixed dim (39) for a stable policy.
             stats = torch.tensor([
                 min(len(colony.units) / 20.0, 2.0),                       # population
                 min(colony.maw.food_stored / 100.0, 3.0),                 # food stores
                 min(len(getattr(colony, 'territory', ())) / 200.0, 3.0),  # territory
+                min(kills / 20.0, 3.0),                                   # combat success
+                1.0 if getattr(colony, 'at_war', False) else 0.0,         # war footing
+                min(float(getattr(colony, 'wood', 0)) / 50.0, 3.0),       # materials on hand
+                self.season_index() / 3.0,                                # seasonal phase (learn seasonal strategy)
             ], dtype=torch.float32)
             obs = torch.cat([base, stats])
             rl = getattr(colony, 'maw_rl', None)
@@ -2198,8 +2205,6 @@ class SandKingsSimulation:
                 gamma = patience_to_gamma(float(getattr(g, 'patience', 0.5)))  # patience gene -> discount
                 rl = ColonyMawRL(obs_dim=int(obs.shape[0]), warm_start=warm, lr=lr, gamma=gamma)
                 colony.maw_rl = rl
-            kills = sum(getattr(getattr(u, 'brain_layer', None), 'kills', 0)
-                        for u in colony.units)                     # combat success (richer reward)
             snap = (float(len(colony.units))                       # population
                     + colony.maw.food_stored / 50.0                # stores
                     + len(getattr(colony, 'territory', ())) / 100.0  # dominance/territory
