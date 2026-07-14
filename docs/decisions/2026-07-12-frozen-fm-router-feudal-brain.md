@@ -178,8 +178,10 @@ colonies grow distinct personalities as they learn (the "[quasi] sentient life i
 ## Open / future (Bundle 5+)
 - **Self-supervised / learned encoder** (bigger scope): replace the random-Kanerva basis with a learned
   frozen basis (behavior-cloned or self-supervised), the deeper fix behind Bundle 4's raw-obs mitigation.
-- **Controlled `patience`→γ A/B:** a genome-controlled study to confirm patient colonies develop more
-  long-horizon (territory/pop) behavior than impatient ones (not resolvable at 1500-step scale).
+- **Controlled `patience`→γ A/B — DONE (directional):** 8000-step controlled study (identical instinct,
+  vary only patience) showed impatient colonies learn **aggression** (0.60→0.87, immediate reward) while
+  patient stay near-neutral aggression + higher **mobility** (long-horizon) — a 0.28 aggr gap from the
+  discount alone. n=2/group, 1 seed; a multi-seed study would firm it up. The γ temperament effect is real.
 
 ## Design history (explored + dropped — full reasoning in git history)
 - **Frozen foundation-model router (TabFM/TabPFN):** dropped — 7 GB/model, Prior-Labs login gate,

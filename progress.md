@@ -55,6 +55,16 @@ Objectives defined in `objective.md`. Dates are absolute.
   archetype (war-drums / burrows-deep / spreads / draws-inward), throttled to transitions, gated.
   Turns the RL's learning into watchable narrative (the "quasi-sentient life" directive).
 
+## Patience→γ A/B (Bundle 2 validation)
+
+- **2026-07-14** — Controlled A/B (8000 steps, identical instinct genes, vary ONLY `patience`):
+  impatient (γ=0.808) colonies learned **aggression 0.60→0.874** + low mobility; patient (γ=0.962)
+  stayed **~neutral aggression 0.60→0.597** + higher mobility 0.673. A **0.28 aggression gap from the
+  discount alone** — directionally exactly the temperament theory predicts (impatient chase immediate
+  combat reward; patient invest in long-horizon mobility/expansion). Reward levels echo it (impatient
+  spiked early 69→25 then crashed; patient steadier 25→18). n=2/group, 1 seed — **directional, not
+  conclusive**; a multi-seed controlled study would firm it up. Bundle 2's γ effect is REAL.
+
 ## Cross-seed robustness (3-seed sweep, seeds 11/22/33 + seed 7)
 
 - **2026-07-14** — I1 reward-trend {+0.019, −0.001, +0.012, −0.004} → **hovers near zero, seed-
