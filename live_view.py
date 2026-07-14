@@ -1189,6 +1189,9 @@ class LiveViewer:
             size = (w * self.cell_size + HUD_WIDTH, max(h * self.cell_size, 400))
             self._screen = pygame.display.set_mode(size)
             pygame.display.set_caption("Sand Kings — Live Terrarium")
+            # Held keys auto-repeat: after 250ms, re-fire every 60ms — so holding an arrow pans
+            # the look cursor continuously (and Shift+arrow jumps 10 cells per repeat).
+            pygame.key.set_repeat(250, 60)
             self._font = pygame.font.SysFont("consolas,courier", 14)
             self._cell_font = pygame.font.SysFont("consolas,couriernew",
                                                   self.cell_size + 3, bold=True)
@@ -1267,8 +1270,9 @@ class LiveViewer:
                 self.runner.sps = self.pacer.steps_per_second  # U4
             elif self.look_mode and key in (pygame.K_UP, pygame.K_DOWN,
                                             pygame.K_LEFT, pygame.K_RIGHT):
-                dx = {pygame.K_LEFT: -1, pygame.K_RIGHT: 1}.get(key, 0)
-                dy = {pygame.K_UP: -1, pygame.K_DOWN: 1}.get(key, 0)
+                step = 10 if (event.mod & pygame.KMOD_SHIFT) else 1   # Shift = jump 10 cells
+                dx = {pygame.K_LEFT: -step, pygame.K_RIGHT: step}.get(key, 0)
+                dy = {pygame.K_UP: -step, pygame.K_DOWN: step}.get(key, 0)
                 self.cursor = (
                     max(0, min(self.sim.world.width - 1, self.cursor[0] + dx)),
                     max(0, min(self.sim.world.height - 1, self.cursor[1] + dy)))
