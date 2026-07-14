@@ -52,6 +52,9 @@ we watch the components, because a high J with a dead component is a failure.
 
 ## Measurement protocol
 
-- Small headless run (fast-iteration budget: width≈48 height≈32 depth≈12, 4 colonies, ≤600 steps).
-- Parse the run's directive logs / summary for I1–I5, G1–G5.
+- **Tool:** `tools/measure_objective.py [STEPS] [SEED]` (default 1700/7) — a headless neural sim with
+  the RL gate on; prints `METRICS_JSON {...}` with I1–I5, G1/G3/G5. Ungameable (reads the directive
+  tensors + genome, not the drama log). Run with the py310 interpreter, never bare `python`.
+- Small headless run (fast-iteration budget: width≈48 height≈32 depth≈12, 4 colonies; ≥1700 steps to
+  cross a maw update). Sweep ≥3 seeds — never trust one seed.
 - Record one dated row per feature in `progress.md` (feature → timestamp → progress description).
