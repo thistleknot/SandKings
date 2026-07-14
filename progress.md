@@ -57,13 +57,14 @@ Objectives defined in `objective.md`. Dates are absolute.
 
 ## Patience→γ A/B (Bundle 2 validation)
 
-- **2026-07-14** — Controlled A/B (8000 steps, identical instinct genes, vary ONLY `patience`):
-  impatient (γ=0.808) colonies learned **aggression 0.60→0.874** + low mobility; patient (γ=0.962)
-  stayed **~neutral aggression 0.60→0.597** + higher mobility 0.673. A **0.28 aggression gap from the
-  discount alone** — directionally exactly the temperament theory predicts (impatient chase immediate
-  combat reward; patient invest in long-horizon mobility/expansion). Reward levels echo it (impatient
-  spiked early 69→25 then crashed; patient steadier 25→18). n=2/group, 1 seed — **directional, not
-  conclusive**; a multi-seed controlled study would firm it up. Bundle 2's γ effect is REAL.
+- **2026-07-14 (4 seeds: 3,5,9,14; identical instinct, vary ONLY `patience`)** — HONEST result: the
+  γ→temperament effect is **directionally present but WEAK and noisy** at the maw's update budget
+  (~11–15 updates). aggression gap (impatient−patient): {+0.28, +0.001, +0.07, +0.03} — positive on
+  3/4 but small; mobility gap (patient−impatient): {+0.13, −0.05, +0.05, +0.26} — positive on 3/4, one
+  reversal. The strong seed-3 run (0.28 aggr gap) was the HIGH end, NOT typical. Reward-level: patient
+  colonies end healthier on 2/3 new seeds. **The mechanism works (γ differs → credit assignment differs),
+  but the behavioral signal is subtle** — like the near-zero I1, a consequence of the update-limited maw.
+  A firm effect would need far more updates (longer runs / smaller batch) or larger n. Not overclaimed.
 
 ## Cross-seed robustness (3-seed sweep, seeds 11/22/33 + seed 7)
 

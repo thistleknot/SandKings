@@ -47,8 +47,11 @@ in `run_tests._GATE_NAMES`.
 
 ## Observability
 
-Drama feed on pond state transitions (throttled): booming → "the oasis shoals silver with guppies";
-collapse → "the guppy shoal thins to nothing"; recovery → "guppies return to the shallows".
+- **Drama feed** on pond state transitions (throttled): booming → "the oasis shoals silver with
+  guppies"; collapse → "the guppy shoal thins to nothing"; recovery → "guppies return to the shallows".
+  Tinted in the HUD (`live_view.EVENT_TINTS`: shoal/guppies → watery blue).
+- **HUD readout** (`live_view.build_hud_entries`): a "Pond: N guppies, algae M" line under the Oasis
+  line (blue when healthy ≥20, amber when thin), shown only when the pond exists. Verified headlessly.
 
 ## Files
 
