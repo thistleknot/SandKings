@@ -273,6 +273,48 @@ def test_spawn_residual_learns():
     assert torch.all(res.abs() <= p.clip + 1e-5), "residual stays bounded after training"
 
 
+def test_warm_start_matches_instinct():
+    """Warm-start ('never tabula rasa'): the untrained deterministic directive EQUALS the
+    genome instinct vector, independent of obs (zero final weights + logit bias)."""
+    if not HAVE_TORCH:
+        return _skip()
+    ws = torch.tensor([0.9, 0.2, 0.6])                 # aggression, mobility, verticality
+    p = MawPolicy(obs_dim=5, directive_dim=3, warm_start=ws)
+    for _ in range(4):
+        d, _ = p.act(torch.randn(5), deterministic=True)
+        assert torch.allclose(d, ws, atol=1e-4), f"warm-start not honored: {d} vs {ws}"
+
+
+def test_entropy_bonus_resists_collapse():
+    """With CONSTANT rewards the RLOO advantage is 0, so only the entropy bonus drives the
+    update — it must LIFT log_std (sustained exploration, the anti-collapse guarantee)."""
+    if not HAVE_TORCH:
+        return _skip()
+    torch.manual_seed(13)
+    p = MawPolicy(obs_dim=4, directive_dim=3)
+    opt = p.make_optimizer(lr=0.1)
+    ls0 = float(p.log_std.mean())
+    obs = torch.ones(4)
+    for _ in range(20):
+        lps = [p.act(obs)[1] for _ in range(8)]
+        p.update(lps, [1.0] * 8, opt)                  # constant reward -> zero advantage
+    assert float(p.log_std.mean()) > ls0, "entropy bonus failed to raise exploration"
+
+
+def test_apply_directive_verticality():
+    """d2 verticality tilts the vertical moves (idx 4,5 = +z,-z); identity at neutral 0.5."""
+    if not HAVE_TORCH:
+        return _skip()
+    from maw_brain import apply_directive
+    probs = torch.full((7,), 1.0 / 7.0)
+    neutral = torch.full((3,), 0.5)
+    assert torch.allclose(apply_directive(probs, neutral), probs, atol=1e-6), "0.5 must be identity"
+    vert = neutral.clone(); vert[2] = 0.95
+    out = apply_directive(probs, vert)
+    assert out[4] > probs[4] and out[5] > probs[5], "high verticality must raise vertical moves"
+    assert abs(float(out.sum()) - 1.0) < 1e-5, "stays a distribution"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

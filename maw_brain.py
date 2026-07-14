@@ -1,28 +1,39 @@
 """The maw's real-RL policy — the 85% tier of the 85:15 maw/spawn split.
 
-Reframe (2026-07-12, see docs/decisions/2026-07-12-frozen-fm-router-feudal-brain.md
-"UPDATE"): NO LLM, NO foundation model. A small **gradient-trained** policy sits on
-top of the FROZEN encoder (HiveMindBrain: frozen ZCA+Kanerva buffers) and learns, by
-REINFORCE against a survival/dominance reward, to emit a colony-level **directive** —
-a vector of continuous "constants" (aggression, expansion, defense, ...) that condition
-the spawn (the 15% tier's bounded residual reads it).
+Reframe (2026-07-12, see docs/decisions/2026-07-12-frozen-fm-router-feudal-brain.md):
+NO LLM, NO foundation model. A small **gradient-trained** policy sits on top of the FROZEN
+encoder (HiveMindBrain: frozen ZCA+Kanerva buffers) and learns, by REINFORCE against a
+survival/dominance reward, to emit a colony-level **directive** — a vector of continuous
+"constants" (aggression, mobility, verticality) that condition the spawn (the 15% tier's
+bounded residual reads it).
+
+v2 upgrade (2026-07-13, same decision doc "v2 RL upgrade"): the estimator and the GA↔RL
+coupling are brought to SOTA + the INSPIRATIONS design laws:
+  * RLOO leave-one-out baseline (unbiased, S&B §13.4; best in the small-group K=8 regime).
+  * Entropy bonus (anti-collapse; AEPO 2510.08141) so colonies keep diverging over a long game.
+  * Warm-start from the colony's genome instinct ("never tabula rasa", chess RL_FINDINGS):
+    the untrained directive EQUALS the genome's aggression/expansion/tunnel instincts.
+  * The evolved `plasticity` gene sets the RL learning rate (the Baldwin effect made literal).
+  * A 3rd directive lever (verticality) + a kills term in the reward.
 
 This is real deep-RL (gradients + reward), distinct from the evolutionary HiveMindBrain
-(which trains under torch.no_grad). The frozen encoder is the "start-intelligent"
-baseline; only this thin policy head + the spawn residual learn.
+(which trains under torch.no_grad). The frozen encoder is the "start-intelligent" baseline;
+only this thin policy head + the spawn residual learn.
 
 Contract:
   Require   - torch available; obs is a finite (obs_dim,) or (B,obs_dim) float tensor.
   Guarantee - act() returns a directive in (0,1)^directive_dim and a scalar log_prob;
               update() applies exactly one REINFORCE step and returns the loss.
-  Maintain  - a running-mean reward baseline for variance reduction.
+  Maintain  - a batch rollout buffer; RLOO/mean baseline for variance reduction.
   Assert    - directive is finite and within (0,1); deterministic act() draws no noise.
 
 Identity-at-neutral: MAW_RL_ENABLED defaults False; the sim never constructs or calls a
 policy while the gate is off, so the regression battery stays byte-identical. The policy
-is also pickle-safe (plain nn.Module + a float baseline), so it round-trips in the
-whole-sim checkpoint.
+is also pickle-safe (plain nn.Module + plain lists), so it round-trips in the whole-sim
+checkpoint.
 """
+import math
+
 import torch
 import torch.nn as nn
 
@@ -30,35 +41,65 @@ import torch.nn as nn
 MAW_RL_ENABLED = False
 
 # --- hyperparameters ---
-MAW_DIRECTIVE_DIM = 6        # colony constants the spawn condition on
+MAW_DIRECTIVE_DIM = 3        # colony constants the spawn condition on: aggression, mobility, verticality
 MAW_HIDDEN = 32
 MAW_LR = 3e-3
 MAW_LOG_STD_INIT = -0.5      # exp(-0.5) ~ 0.61 initial exploration std
 MAW_GRAD_CLIP = 1.0          # clip the noisy REINFORCE gradient norm (between-batch stability)
 MAW_SIGN_SGD = False         # opt-in: quantize the gradient to its sign (signSGD; robust to noise)
+MAW_RLOO = True              # RLOO leave-one-out baseline (unbiased, small-group; S&B §13.4) vs mean+whiten
+MAW_ENTROPY_COEF = 0.01      # entropy bonus: sustain exploration, resist premature collapse (AEPO)
 MAW_UPDATE_EVERY = 8         # flush a maw batch-REINFORCE update every K batch-cycles
 SPAWN_UPDATE_EVERY = 32      # flush a spawn-residual update every K accumulated spawn-steps
 MAW_DIRECTIVE_STRENGTH = 0.5  # bounds how far a directive can tilt an action (neutral at 0.5)
 MAW_RESIDUAL_CLIP = 0.15     # 15% tier "play": max |additive residual| on a spawn action logit
 
+_HALF_LOG_2PIE = 0.5 * math.log(2.0 * math.pi * math.e)   # per-dim Gaussian entropy constant
 
-def _reinforce_update(log_probs, rewards, optimizer, clip=None, sign=None) -> float:
-    """Batch-REINFORCE with a batch-mean baseline (whitened advantage). Shared by the maw
-    policy (85%) and the spawn residual policy (15%). Returns the loss value.
 
-    The between-batch update is STABILIZED (REINFORCE is high-variance): the gradient is
-    either sign-quantized (signSGD, robust to heavy-tailed noise) or norm-clipped. Both are
-    read from the module globals at call time (MAW_SIGN_SGD / MAW_GRAD_CLIP) so a run can flip
-    them; pass clip/sign explicitly to override."""
+def _gaussian_entropy(log_std: torch.Tensor) -> torch.Tensor:
+    """Differential entropy of a diagonal Gaussian: sum_i (log_std_i + 0.5*log(2*pi*e)).
+
+    A function of log_std ONLY (independent of the sampled action), so it can be added to the
+    loss straight from the policy's parameter. Maximizing it lifts log_std → sustained
+    exploration (the anti-collapse term)."""
+    return (log_std + _HALF_LOG_2PIE).sum()
+
+
+def _reinforce_update(log_probs, rewards, optimizer, entropy=None,
+                      clip=None, sign=None, rloo=None) -> float:
+    """Batch-REINFORCE with a variance-reducing baseline. Shared by the maw policy (85%) and the
+    spawn residual policy (15%). Returns the loss value.
+
+    Baseline (S&B §13.4 — any action-independent baseline is unbiased, only variance changes):
+      * RLOO (default, MAW_RLOO): advantage_i = r_i - mean(r_{j != i}), the leave-one-out mean.
+        Unbiased and lowest-variance in the small-group regime (our maw K=8). [Ahmadian et al.]
+      * else: mean-baseline with std whitening (the K<=1 / opt-out fallback).
+
+    Entropy (AEPO / entropy-collapse): if `entropy` (a grad-carrying scalar from the policy's
+    log_std) is given, subtract MAW_ENTROPY_COEF * entropy so the update also lifts exploration.
+
+    The between-batch update is STABILIZED (REINFORCE is high-variance): the gradient is either
+    sign-quantized (signSGD, robust to heavy-tailed noise) or norm-clipped. Both, and the RLOO
+    switch, are read from the module globals at call time so a run can flip them; pass
+    clip/sign/rloo explicitly to override."""
     clip = MAW_GRAD_CLIP if clip is None else clip
     sign = MAW_SIGN_SGD if sign is None else sign
+    rloo = MAW_RLOO if rloo is None else rloo
     lp = torch.stack(list(log_probs))
     r = torch.tensor([float(x) for x in rewards], dtype=lp.dtype, device=lp.device)
-    adv = r - r.mean()
-    std = float(adv.std()) if adv.numel() > 1 else 0.0
-    if std > 1e-8:
-        adv = adv / (std + 1e-8)
+    k = r.numel()
+    if rloo and k > 1:
+        baseline = (r.sum() - r) / (k - 1)        # leave-one-out mean (independent of sample i)
+        adv = r - baseline
+    else:                                          # fallback: mean baseline + std whitening
+        adv = r - r.mean()
+        std = float(adv.std()) if k > 1 else 0.0
+        if std > 1e-8:
+            adv = adv / (std + 1e-8)
     loss = -(lp * adv).mean()
+    if entropy is not None and MAW_ENTROPY_COEF > 0:
+        loss = loss - MAW_ENTROPY_COEF * entropy   # maximize entropy => resist collapse
     optimizer.zero_grad()
     loss.backward()
     if sign:                                          # signSGD: quantize gradient to its sign
@@ -78,35 +119,46 @@ def _reinforce_update(log_probs, rewards, optimizer, clip=None, sign=None) -> fl
 def apply_directive(action_probs, directive, strength: float = MAW_DIRECTIVE_STRENGTH):
     """Tilt a soldier's action distribution by the colony directive (the 85% tier's output).
 
-    IDENTITY at directive==0.5 — the neutral value the untrained policy centers on — so
-    turning the maw on does not jolt behaviour until it has learned. directive[0]
-    ('aggression') multiplies the ATTACK action (index 6) by exp(strength*2*(d0-0.5)) and
-    renormalizes; bounded and reversible. action_probs: (7,) or (B,7); directive: (>=1,).
-    (Later directive dims map to more behaviours; this is the loop-closing first cut.)
-    """
+    IDENTITY at directive==0.5 on every dim — the neutral value the untrained policy centers on
+    (or the genome instinct, post warm-start) — so turning the maw on does not jolt behaviour
+    until it has learned. The 7 actions are 0-5 move [+x,-x,+y,-y,+z,-z] and 6 attack. Levers:
+      d0 aggression  -> ATTACK (idx 6)
+      d1 mobility    -> all MOVE actions (idx 0-5)
+      d2 verticality -> the VERTICAL moves (idx 4,5 = +z,-z) vs planar (tunnel-down vs hold-surface)
+    Each factor is exp(strength*2*(d-0.5)) (==1 at 0.5); bounded and reversible; renormalized.
+    action_probs: (7,) or (B,7); directive: (>=1,)."""
     probs = action_probs.clone()
     d = directive.reshape(-1)
     f_attack = torch.exp(strength * 2.0 * (d[0] - 0.5))                    # d0 aggression -> attack
     f_move = torch.exp(strength * 2.0 * (d[1] - 0.5)) if d.numel() > 1 else torch.ones(())
-    if probs.dim() == 1:                                                   # d1 mobility -> moves 0..5
+    f_vert = torch.exp(strength * 2.0 * (d[2] - 0.5)) if d.numel() > 2 else torch.ones(())
+    if probs.dim() == 1:
         probs[6] = probs[6] * f_attack
         probs[:6] = probs[:6] * f_move
+        probs[4:6] = probs[4:6] * f_vert                                  # +z,-z vertical moves
         return probs / probs.sum()
     probs[:, 6] = probs[:, 6] * f_attack
     probs[:, :6] = probs[:, :6] * f_move
+    probs[:, 4:6] = probs[:, 4:6] * f_vert
     return probs / probs.sum(-1, keepdim=True)
 
 
 class MawPolicy(nn.Module):
     """Gaussian policy head: obs -> directive in (0,1)^D, trained by REINFORCE.
 
-    The pre-squash mean comes from a small MLP; a learned per-dim log_std sets
-    exploration. Actions are sampled in raw space and squashed by sigmoid so the
-    directive is bounded; log_prob is taken in raw space (the policy-gradient signal).
+    The pre-squash mean comes from a small MLP; a learned per-dim log_std sets exploration.
+    Actions are sampled in raw space and squashed by sigmoid so the directive is bounded;
+    log_prob is taken in raw space (the policy-gradient signal).
+
+    Warm-start ("never tabula rasa"): if `warm_start` (a directive in (0,1)^D) is given, the
+    final layer is zero-weights + bias=logit(warm_start), so the untrained deterministic
+    directive equals warm_start regardless of obs — the colony expresses its genome instinct
+    from step 1, and the policy learns to modulate around it (the zero final weights still
+    receive a nonzero gradient through the obs, so learning proceeds normally).
     """
 
     def __init__(self, obs_dim: int, directive_dim: int = MAW_DIRECTIVE_DIM,
-                 hidden: int = MAW_HIDDEN):
+                 hidden: int = MAW_HIDDEN, warm_start: torch.Tensor = None):
         super().__init__()
         self.obs_dim = int(obs_dim)
         self.directive_dim = int(directive_dim)
@@ -114,12 +166,22 @@ class MawPolicy(nn.Module):
             nn.Linear(self.obs_dim, hidden), nn.Tanh(),
             nn.Linear(hidden, self.directive_dim),
         )
+        if warm_start is not None:
+            ws = torch.as_tensor(warm_start, dtype=torch.float32).reshape(-1)[:self.directive_dim]
+            ws = ws.clamp(0.05, 0.95)                       # keep logit finite
+            with torch.no_grad():
+                nn.init.zeros_(self.net[-1].weight)         # directive starts obs-independent...
+                self.net[-1].bias.copy_(torch.log(ws / (1.0 - ws)))   # ...= logit(instinct)
         self.log_std = nn.Parameter(torch.full((self.directive_dim,),
                                                float(MAW_LOG_STD_INIT)))
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         """Pre-squash mean of the policy. obs: (obs_dim,) or (B,obs_dim)."""
         return self.net(obs)
+
+    def entropy(self) -> torch.Tensor:
+        """Grad-carrying scalar entropy of the policy (for the anti-collapse bonus)."""
+        return _gaussian_entropy(self.log_std)
 
     def act(self, obs: torch.Tensor, deterministic: bool = False):
         """Sample a directive. Returns (directive in (0,1)^D, log_prob scalar tensor).
@@ -138,18 +200,19 @@ class MawPolicy(nn.Module):
         return directive, log_prob
 
     def update(self, log_probs, rewards, optimizer: torch.optim.Optimizer) -> float:
-        """One batch-REINFORCE step over a batch of episodes (each = one maw directive
-        and its reward), with a **batch-mean baseline** (standardized advantages).
+        """One batch-REINFORCE step over a batch of episodes (each = one maw directive and its
+        reward), with the RLOO leave-one-out baseline (S&B §13.4) and the entropy bonus.
 
-        Subtracting the batch mean gives every episode a relative signal, so learning
-        does not freeze the way a single-sample EMA baseline does once reward stabilizes.
-        In the sim, a "batch" is K accumulated batch-cycles flushed together.
+        The leave-one-out baseline gives every episode an unbiased relative signal, so learning
+        does not freeze the way a single-sample EMA baseline does once reward stabilizes; the
+        entropy term keeps exploration alive. In the sim, a "batch" is K accumulated
+        batch-cycles flushed together.
 
         log_probs: iterable of per-episode log_prob tensors (with grad).
         rewards:   iterable of per-episode scalar rewards.
         Returns the loss value.
         """
-        return _reinforce_update(log_probs, rewards, optimizer)
+        return _reinforce_update(log_probs, rewards, optimizer, entropy=self.entropy())
 
     def make_optimizer(self, lr: float = MAW_LR) -> torch.optim.Optimizer:
         return torch.optim.Adam(self.parameters(), lr=lr)
@@ -158,17 +221,21 @@ class MawPolicy(nn.Module):
 class ColonyMawRL:
     """Per-colony wrapper around MawPolicy: the two-timescale bookkeeping.
 
-    Each batch-cycle the sim calls `observe_reward(r)` (the reward realized since the
-    LAST directive) then `act(obs)` (emit a new directive). Pairs (log_prob_t, reward_t)
-    accumulate in a rollout buffer that flushes a batch-REINFORCE update every
-    `update_every` cycles. Pickle-safe (MawPolicy + Adam + plain lists), so it rides the
-    whole-sim checkpoint; pending grad tensors are dropped on pickling via __getstate__.
-    """
+    Each batch-cycle the sim calls `observe_reward(r)` (the reward realized since the LAST
+    directive) then `act(obs)` (emit a new directive). Pairs (log_prob_t, reward_t) accumulate
+    in a rollout buffer that flushes a batch-REINFORCE update every `update_every` cycles.
+    Pickle-safe (MawPolicy + Adam + plain lists), so it rides the whole-sim checkpoint; pending
+    grad tensors are dropped on pickling via __getstate__.
+
+    v2: `warm_start` seeds the policy to the colony's genome instinct ("never tabula rasa");
+    `lr` is set from the evolved `plasticity` gene by the caller (the Baldwin effect)."""
 
     def __init__(self, obs_dim: int, update_every: int = MAW_UPDATE_EVERY,
-                 directive_dim: int = MAW_DIRECTIVE_DIM):
-        self.policy = MawPolicy(obs_dim=obs_dim, directive_dim=directive_dim)
-        self.opt = self.policy.make_optimizer()
+                 directive_dim: int = MAW_DIRECTIVE_DIM, warm_start: torch.Tensor = None,
+                 lr: float = MAW_LR):
+        self.policy = MawPolicy(obs_dim=obs_dim, directive_dim=directive_dim,
+                                warm_start=warm_start)
+        self.opt = self.policy.make_optimizer(lr=lr)
         self.update_every = int(update_every)
         self._log_probs = []          # per-episode log_prob tensors (grad) — transient
         self._rewards = []            # per-episode scalar rewards
@@ -238,6 +305,10 @@ class SpawnResidualPolicy(nn.Module):
         nn.init.zeros_(self.net[-1].bias)
         self.log_std = nn.Parameter(torch.full((self.action_dim,), -1.0))
 
+    def entropy(self) -> torch.Tensor:
+        """Grad-carrying scalar entropy (anti-collapse bonus; keeps the spawn 'play' alive)."""
+        return _gaussian_entropy(self.log_std)
+
     def act(self, enc: torch.Tensor, deterministic: bool = False):
         """Return (residual in ±clip, log_prob). deterministic => tanh(mean)*clip, 0 log_prob."""
         mean = self.net(enc)
@@ -250,7 +321,7 @@ class SpawnResidualPolicy(nn.Module):
         return torch.tanh(raw) * self.clip, log_prob    # tanh -> bounded to ±clip
 
     def update(self, log_probs, rewards, optimizer) -> float:
-        return _reinforce_update(log_probs, rewards, optimizer)
+        return _reinforce_update(log_probs, rewards, optimizer, entropy=self.entropy())
 
     def make_optimizer(self, lr: float = MAW_LR) -> torch.optim.Optimizer:
         return torch.optim.Adam(self.parameters(), lr=lr)

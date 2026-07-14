@@ -2156,7 +2156,7 @@ class SandKingsSimulation:
         if not MAW_RL_ENABLED:
             return
         try:
-            from maw_brain import ColonyMawRL
+            from maw_brain import ColonyMawRL, MAW_LR
             import torch
         except Exception:
             return
@@ -2180,11 +2180,23 @@ class SandKingsSimulation:
             obs = torch.cat([base, stats])
             rl = getattr(colony, 'maw_rl', None)
             if rl is None or rl.policy.obs_dim != int(obs.shape[0]):
-                rl = ColonyMawRL(obs_dim=int(obs.shape[0]))   # (re)create on first use / dim change
+                # v2: warm-start the directive to the genome instincts ("never tabula rasa"),
+                # and set the RL learning rate from the evolved plasticity gene (Baldwin effect).
+                g = colony.genome
+                warm = torch.tensor([
+                    float(getattr(g, 'aggression', 0.5)),          # d0 aggression
+                    float(getattr(g, 'expansion_rate', 0.5)),      # d1 mobility
+                    float(getattr(g, 'tunnel_preference', 0.5)),   # d2 verticality
+                ], dtype=torch.float32)
+                lr = MAW_LR * (0.5 + float(getattr(g, 'plasticity', 0.5)))
+                rl = ColonyMawRL(obs_dim=int(obs.shape[0]), warm_start=warm, lr=lr)
                 colony.maw_rl = rl
+            kills = sum(getattr(getattr(u, 'brain_layer', None), 'kills', 0)
+                        for u in colony.units)                     # combat success (richer reward)
             snap = (float(len(colony.units))                       # population
                     + colony.maw.food_stored / 50.0                # stores
                     + len(getattr(colony, 'territory', ())) / 100.0  # dominance/territory
+                    + kills * 0.5                                  # kills: winning fights pays
                     + (2.0 if colony.maw.alive else 0.0))          # survival
             prev = getattr(colony, '_maw_rl_prev', None)
             if prev is not None:
@@ -2196,9 +2208,10 @@ class SandKingsSimulation:
                 colony._maw_rl_logged = rl.updates
                 _d = colony.maw_directive
                 _loss = rl.last_loss if rl.last_loss is not None else 0.0
+                _vert = f" vert={float(_d[2]):.2f}" if _d.numel() > 2 else ""
                 self._log_event(
                     f"{self._house_name(colony)} maw learns: aggr={float(_d[0]):.2f} "
-                    f"mob={float(_d[1]):.2f} (upd {rl.updates}, loss {_loss:.2f})")
+                    f"mob={float(_d[1]):.2f}{_vert} (upd {rl.updates}, loss {_loss:.2f})")
 
     def _log_event(self, message: str):
         """Append to the drama feed (SPEC T9) and the chronicle (D4).

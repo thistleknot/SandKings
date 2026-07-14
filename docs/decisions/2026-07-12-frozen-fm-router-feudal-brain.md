@@ -86,13 +86,49 @@ On each maw update: `HOUSE maw learns: aggr=X mob=Y (upd N, loss L)` in the dram
 The **GA / neuroevolution is intact** — RL is additive and gated, a within-lifetime layer under
 the across-generation GA. Not to be removed.
 
-## Open / future
-- **Drop the random-Kanerva dependence:** re-point the RL obs to **raw** state so the nets learn
-  their own features (frozen only between batches). Offered, not yet done.
-- **"Start intelligent":** behavior-clone the rule-based instincts into the base policy (warm start),
-  and/or self-supervised encoder pretraining (learned frozen basis).
-- **Richer reward / more levers:** kills/deaths, threat-in-obs, more directive dims — the reward is
-  the research tail (tuning turns "the RL runs" into "the RL visibly improves").
+## v2 RL upgrade (2026-07-13) — SOTA estimator + GA↔RL coupling
+
+Grounded in **S&B §13.4** (REINFORCE-with-baseline: an action-independent baseline is unbiased
+and variance-reducing; the canonical return carries γ; the policy step-size is problem-dependent),
+2024-25 **RLOO** (leave-one-out baseline, unbiased, best in the small-group regime — our maw batch
+is K=8), the **entropy-collapse** literature (AEPO 2510.08141: on-policy entropy declines
+monotonically → premature deterministic collapse), and the **INSPIRATIONS** design laws
+(chess `RL_FINDINGS` "never tabula rasa, small & inspectable"; Sutton&Barto "γ = patience gene";
+Baldwin "LR = plasticity gene").
+
+- **RLOO leave-one-out baseline** (`_reinforce_update`, `MAW_RLOO=True`): advantage_i = r_i −
+  mean(r_{j≠i}). Unbiased (S&B §13.4), lower-variance than the old GRPO-style mean/std whitening at
+  K=8. Whitening retained as the K≤1 / opt-out fallback.
+- **Entropy bonus** (`MAW_ENTROPY_COEF=0.01`): `loss -= coef·H(policy)`, H the diagonal-Gaussian
+  differential entropy (a function of `log_std` only). Sustains exploration so **colonies keep
+  diverging over a long game** instead of collapsing to one strategy — a gameplay requirement
+  (the "pet you check on across days"). Applied to both maw and spawn policies.
+- **Warm-start from genome instinct** ("never tabula rasa"): `MawPolicy(warm_start=…)` sets the final
+  layer to **zero weights + bias=logit(instinct)** so the untrained deterministic directive **equals
+  the colony's genome instincts**, not neutral 0.5. Map: d0←`aggression`, d1←`expansion_rate`,
+  d2←`tunnel_preference`. Colonies express personality from step 1; RL modulates from there.
+- **`plasticity` gene → learning rate** (Baldwin): `ColonyMawRL(lr=MAW_LR·(0.5+genome.plasticity))`.
+  The GA's evolved learning-speed gene now actually sets the RL step size — learning and evolution
+  couple. (S&B: α^θ is the hard, problem-dependent knob → let selection tune it.)
+- **3rd directive lever = verticality** (`MAW_DIRECTIVE_DIM` 6→**3**, killing dead capacity, honoring
+  "small & inspectable"): `apply_directive` d2 tilts the vertical moves (idx 4,5: ±z) vs planar,
+  identity at 0.5. Colonies that tunnel-down vs hold-surface become visibly distinct in the z-slice.
+- **Richer reward** — colony **kills delta** added to the maw reward snap (`+0.5·Σ unit.brain_layer.kills`),
+  so the 85% tier learns that winning fights (not only pop/food/territory) pays.
+
+Gate unchanged (`MAW_RL_ENABLED` default False → battery byte-identical). Directive-dim reduction is
+forward-safe: old checkpoints keep their 6-d policy (recreated only on obs-dim change); new colonies
+get the 3-d warm-started policy.
+
+## Open / future (Bundle 2+)
+- **`patience` gene → discount γ + n-step returns:** credit each directive by a γ-discounted sum of
+  the following cycle-deltas (S&B canonical return), not just the immediate one. Patient colonies value
+  long-horizon territory/pop; impatient ones chase immediate gains. Textbook-grounded, moderate change
+  to `ColonyMawRL.observe_reward`.
+- **Dreaming / replay (Lin 1992, INSPIRATIONS S4):** Chill-season offline consolidation over the year's
+  (obs→directive→reward) transitions.
+- **Drop the random-Kanerva dependence:** re-point RL obs to **raw** state (learned features, frozen
+  only between batches); self-supervised encoder pretrain.
 
 ## Design history (explored + dropped — full reasoning in git history)
 - **Frozen foundation-model router (TabFM/TabPFN):** dropped — 7 GB/model, Prior-Labs login gate,

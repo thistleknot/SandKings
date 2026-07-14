@@ -64,8 +64,9 @@ def test_gate_on_sets_directive():
             sim.step()
         got = [c for c in sim.colonies if getattr(c, 'maw_directive', None) is not None]
         assert got, "gate on: expected at least one maw_directive after a batch boundary"
+        from maw_brain import MAW_DIRECTIVE_DIM
         for c in got:
-            assert tuple(c.maw_directive.shape) == (6,), c.maw_directive.shape
+            assert tuple(c.maw_directive.shape) == (MAW_DIRECTIVE_DIM,), c.maw_directive.shape
             assert getattr(c, 'maw_rl', None) is not None
         # the spawn residual (15%) is created as soon as a neural soldier acts under the gate
         assert any(getattr(c, 'spawn_rl', None) is not None for c in sim.colonies), \
