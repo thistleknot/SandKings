@@ -252,6 +252,42 @@ SEED_COUNT = 12              # crops sown per keeper_seed
 # The Closed Biome & the Panel (SPEC_BIOME BI1-BI5): a global water budget and
 # sunlight the keeper sets behind the glass; weather EMERGES from them
 WATER_LEVEL_DEFAULT = 0.6    # free-water fraction 0..1 (default-neutral)
+
+# Guppies (SPEC_GUPPIES): a consumer-resource pond in the oasis, seeded from world-gen.
+# algae grows (sunlight/water) -> guppies eat + breed -> surplus becomes harvestable FOOD voxels.
+GUPPIES_ENABLED = False      # module default False (battery byte-identical); entrypoint flips on (opt-out --no-guppies)
+GUPPY_TICK = 20              # dynamics cadence (steps)
+GUPPY_SEED = 40.0            # starting guppy stock (from the get go)
+ALGAE_SEED = 60.0           # starting algae stock
+GUPPY_CAP = 150.0           # guppy carrying capacity
+ALGAE_CAP = 100.0           # algae carrying capacity
+ALGAE_REGROW = 0.25         # algae regrowth fraction toward cap per tick (x water availability)
+GUPPY_GRAZE = 0.10          # algae grazed per guppy per tick (x algae fraction)
+GUPPY_BREED = 0.25          # max per-capita birth rate (x food fraction x room) — guppies mate when fed
+GUPPY_DEATH = 0.05          # natural per-capita mortality per tick
+GUPPY_YIELD_FRAC = 0.04     # fraction of the stock that surfaces as harvestable catch per tick
+GUPPY_YIELD_MIN = 20.0      # no catch below this stock (let the shoal rebuild)
+GUPPY_FOOD_CAP = 10         # max standing guppy-food voxels in the oasis (don't flood the tank)
+
+
+def guppy_dynamics(guppy: float, algae: float, water: float):
+    """Pure oasis-pond step (SPEC_GUPPIES): a consumer-resource model. Returns
+    (guppy, algae, catch) for one GUPPY_TICK. Deterministic; bounded to [0, cap] by clamps.
+    `water` (the closed-budget water_level) throttles algae growth so drought thins the pond.
+    `catch` is the harvestable surplus (the sim turns it into FOOD voxels); the caller removes the
+    actually-deposited fish from the stock."""
+    water = min(1.0, max(0.2, float(water)))
+    algae = algae + ALGAE_REGROW * (ALGAE_CAP - algae) * water \
+        - GUPPY_GRAZE * guppy * (algae / ALGAE_CAP)
+    algae = min(ALGAE_CAP, max(0.0, algae))
+    food_frac = algae / ALGAE_CAP
+    guppy = guppy + GUPPY_BREED * guppy * food_frac * (1.0 - guppy / GUPPY_CAP) \
+        - GUPPY_DEATH * guppy
+    guppy = min(GUPPY_CAP, max(0.0, guppy))
+    catch = int(GUPPY_YIELD_FRAC * guppy) if guppy > GUPPY_YIELD_MIN else 0
+    return guppy, algae, catch
+
+
 SUN_HOURS_DEFAULT = 12       # daylight hours/day
 SUN_MIN, SUN_MAX = 4, 20     # panel sunlight range
 BIOME_TICK = 20              # emergent-weather cadence
@@ -2109,6 +2145,7 @@ class SandKingsSimulation:
 
         # 5a. WILD INCURSIONS (T48): DF-invader monsters trample through
         self._fauna_tick()
+        self._guppy_tick()                   # the oasis pond ecosystem (SPEC_GUPPIES; gated baseline-on)
 
         # 5a-keeper. THE KEEPER (K4/K8/K9/K10): carvings, script, gifts
         self._keeper_tick()
@@ -2152,6 +2189,23 @@ class SandKingsSimulation:
             self._succession_tick()          # advance any live succession windows
             self._population_tick()           # fill-in when sparse, bud when crowded
         self._maw_rl_tick()                  # 85% tier: maw real-RL directive (gated)
+
+    def _maw_strategy_mode(self, d):
+        """Map a maw directive (aggression, mobility, verticality) to a strategic ARCHETYPE for the
+        drama feed — so the player watches the learned personality surface as narrative. Returns a
+        flavor phrase when the directive strongly enters an archetype, else None (no drama)."""
+        a = float(d[0])
+        m = float(d[1]) if d.numel() > 1 else 0.5
+        v = float(d[2]) if d.numel() > 2 else 0.5
+        if a > 0.72:
+            return "beats the war-drums"
+        if v > 0.72:
+            return "burrows into the deep"
+        if m > 0.72:
+            return "spreads across the sands"
+        if a < 0.30:
+            return "draws inward, wary of the glass"
+        return None
 
     def _maw_rl_tick(self):
         """85% tier - per-colony maw REAL-RL (batch-REINFORCE) directive, on the batch
@@ -2224,6 +2278,11 @@ class SandKingsSimulation:
                 self._log_event(
                     f"{self._house_name(colony)} maw learns: aggr={float(_d[0]):.2f} "
                     f"mob={float(_d[1]):.2f}{_vert} (upd {rl.updates}, loss {_loss:.2f})")
+                # narrate a STRATEGY SHIFT — the learned personality becomes visible drama
+                _mode = self._maw_strategy_mode(_d)
+                if _mode and _mode != getattr(colony, '_maw_mode', None):
+                    colony._maw_mode = _mode
+                    self._log_event(f"{self._house_name(colony)} {_mode}")
 
     def _log_event(self, message: str):
         """Append to the drama feed (SPEC T9) and the chronicle (D4).
@@ -2338,6 +2397,58 @@ class SandKingsSimulation:
             if (mx - cx) ** 2 + (my - cy) ** 2 <= (OASIS_RADIUS + 2) ** 2:
                 return colony.colony_id
         return None
+
+    # ---- Guppies: the oasis pond ecosystem (SPEC_GUPPIES) --------------------
+    def _oasis_food_count(self) -> int:
+        """Standing FOOD voxels in the oasis box (approx the disc) — the cap on the shoal's catch."""
+        w, h, _ = self.world.dimensions
+        cx, cy = w // 2, h // 2
+        r = OASIS_RADIUS
+        sub = self.world.voxels[max(0, cx - r):cx + r + 1, max(0, cy - r):cy + r + 1, :]
+        return int(np.count_nonzero(sub == VoxelType.FOOD.value))
+
+    def _guppy_drama(self, now: float) -> None:
+        """Announce pond state transitions (boom / collapse / recovery) — throttled to changes."""
+        state = 'boom' if now > 0.7 * GUPPY_CAP else ('gone' if now < 5.0 else 'mid')
+        prev = getattr(self, '_guppy_state', None)
+        if state != prev:
+            self._guppy_state = state
+            if state == 'boom':
+                self._log_event("The oasis shoals silver with guppies")
+            elif state == 'gone':
+                self._log_event("The guppy shoal thins to nothing")
+            elif prev == 'gone':
+                self._log_event("Guppies return to the shallows")
+
+    def _guppy_tick(self) -> None:
+        """SPEC_GUPPIES: the oasis pond. Algae grows (sunlight/water), guppies eat + breed, and the
+        surplus surfaces as harvestable FOOD voxels in the oasis (a commons any colony forages).
+        Gated: GUPPIES_ENABLED default False -> returns immediately (battery byte-identical, no RNG).
+        Seeds the pond on first tick so a fresh OR resumed world gains one from the get go."""
+        if not GUPPIES_ENABLED or self.step_count % GUPPY_TICK != 0:
+            return
+        guppy = getattr(self, 'guppy_pop', None)
+        if guppy is None:                          # seed the pond
+            self.guppy_pop = GUPPY_SEED
+            self.algae = ALGAE_SEED
+            guppy = GUPPY_SEED
+        water = getattr(self, 'water_level', WATER_LEVEL_DEFAULT)
+        guppy, algae, catch = guppy_dynamics(guppy, getattr(self, 'algae', ALGAE_SEED), water)
+        deposited = 0
+        if catch > 0:                              # surface the catch as oasis FOOD voxels
+            w, h, d = self.world.dimensions
+            cx, cy = w // 2, h // 2
+            room = max(0, GUPPY_FOOD_CAP - self._oasis_food_count())
+            for _ in range(min(catch, room)):
+                x = int(np.clip(cx + random.randint(-OASIS_RADIUS, OASIS_RADIUS), 1, w - 2))
+                y = int(np.clip(cy + random.randint(-OASIS_RADIUS, OASIS_RADIUS), 1, h - 2))
+                z = self.world.surface_z(x, y) + 1
+                if z < d and self.world.voxels[x, y, z] == VoxelType.AIR.value:
+                    self.world.voxels[x, y, z] = VoxelType.FOOD.value
+                    deposited += 1
+        self.guppy_pop = max(0.0, guppy - deposited)   # only the landed catch leaves the pond
+        self.algae = algae
+        self._guppy_drama(self.guppy_pop)
 
     # ---- HYDRO: persistent water flow simulation (SPEC_HYDRO) ----------------
     def _water_field(self):
@@ -8113,6 +8224,9 @@ def main():
                         help='Disable the 85:15 real-RL brain (baseline: ON — the maw learns a '
                              'colony directive (85%%), the spawn learn a bounded local residual '
                              '(15%%); needs neural).')
+    parser.add_argument('--no-guppies', action='store_true',
+                        help='Disable the oasis guppy pond (baseline: ON — algae grows, guppies '
+                             'breed, and the surplus surfaces as harvestable food; SPEC_GUPPIES).')
     args = parser.parse_args()
     
     print("="*60)
@@ -8208,6 +8322,13 @@ def main():
         globals()['MAW_RL_ENABLED'] = True
         print("[MAW-RL] 85:15 real-RL active - the maw directs (85%), the spawn play (15%); "
               "both learn from survival (--no-maw-rl to disable)")
+
+    # The oasis guppy pond is BASELINE (on unless --no-guppies). Module default GUPPIES_ENABLED
+    # stays False so the regression battery is byte-identical; the game flips it on here.
+    if not getattr(args, 'no_guppies', False):
+        globals()['GUPPIES_ENABLED'] = True
+        print("[GUPPIES] the oasis pond lives - algae feeds the shoal, guppies breed, and the "
+              "surplus surfaces as food to harvest (--no-guppies to disable)")
 
     if args.live:
         # When run as a script this module is '__main__'; alias it so

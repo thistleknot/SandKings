@@ -167,6 +167,14 @@ Ran a 30k-step study tracking the longest-lived colony's directive over **74 maw
 the warm-start + RLOO + entropy + dreaming keep the policy in its successful region without an explicit
 KL/trust-region anchor. The held anchor is closed as unnecessary (web-council reconciliation, `docs/council.md`).
 
+### Observability (2026-07-14) — the learned personality as drama ("dazzle me")
+Beyond the per-update `maw learns: aggr/mob/vert` line, the maw now narrates a **strategy shift** when a
+colony's learned directive crosses into an archetype (`_maw_strategy_mode`): aggression>0.72 "beats the
+war-drums", verticality>0.72 "burrows into the deep", mobility>0.72 "spreads across the sands",
+aggression<0.30 "draws inward, wary of the glass". Throttled to mode *transitions* (no spam), gated (only
+when RL is on → battery byte-identical). Turns the RL's learning into watchable narrative — the player sees
+colonies grow distinct personalities as they learn (the "[quasi] sentient life in the terrarium" directive).
+
 ## Open / future (Bundle 5+)
 - **Self-supervised / learned encoder** (bigger scope): replace the random-Kanerva basis with a learned
   frozen basis (behavior-cloned or self-supervised), the deeper fix behind Bundle 4's raw-obs mitigation.

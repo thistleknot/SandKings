@@ -39,6 +39,30 @@ Objectives defined in `objective.md`. Dates are absolute.
   Bundle-2 candidate: **anchor/trust-region the maw policy toward its warm-start instinct** so RL
   refines without eroding. λ≈0.9 interior prior for the patience→γ mapping (their `l07`–`l09` models).
 
+## Guppies — oasis pond ecosystem (SPEC_GUPPIES)
+
+- **2026-07-14** — Added a consumer-resource pond seeded in the oasis from world-gen (baseline-ON,
+  opt-out `--no-guppies`): algae grows (sunlight/water), guppies eat + **breed** (logistic, food-
+  modulated), surplus surfaces as harvestable FOOD voxels colonies forage (a commons; Ostrom). Pure
+  `guppy_dynamics` pinned by an 8-test battery (bounded / persists / recovers-after-crash / drought-
+  thins / catch-floor + gate-off byte-identical + gate-on lives). Equilibria: ~99 guppies @ water 0.6,
+  ~107 @ 1.0 (boom drama in wet seasons), ~86 in drought; catch ~3 food/tick. Full battery 51/51;
+  live entrypoint smoke clean.
+
+## Observability — learned personality as drama
+
+- **2026-07-14** — The maw narrates a **strategy shift** when its learned directive crosses an
+  archetype (war-drums / burrows-deep / spreads / draws-inward), throttled to transitions, gated.
+  Turns the RL's learning into watchable narrative (the "quasi-sentient life" directive).
+
+## Cross-seed robustness (3-seed sweep, seeds 11/22/33 + seed 7)
+
+- **2026-07-14** — I1 reward-trend {+0.019, −0.001, +0.012, −0.004} → **hovers near zero, seed-
+  dependent** (honest: the update-limited maw — 3 batch updates/1700 steps — MAINTAINS/slightly grows
+  reward, not a dramatic optimizer). I2 divergence {0.40–0.60}, I5 anti-collapse {0.73–1.03}, G5
+  warm-start {0.86–0.98}, G1 4/4, no NaN — **all targets hold on every seed**. The RL is robust, not
+  seed-lucky; the reward-trend near-zero is the honest ceiling at this update budget.
+
 ## Baseline (pre-v2, real-RL 85:15 as shipped)
 
 - **2026-07-12** — 520-step run: maw updates [1,1,1], spawn updates [66,94,107]; 3 colonies
