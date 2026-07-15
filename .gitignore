@@ -212,3 +212,14 @@ corpus/wikitext/
 terrarium*.db
 *.parquet
 terrarium_saga.txt
+
+# Generated artifacts — not committed (regenerable; keep the repo lean)
+# Rendered demo/preview animations (regenerate via the live view / render tools)
+*.gif
+.frames_*_temp/
+# Dynamically generated model files (regenerate: tools/fit_learned_basis.py, etc.)
+*.npz
+*.pt
+*.pth
+*.ckpt
+*.pkl
