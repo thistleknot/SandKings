@@ -20,15 +20,19 @@ must adapt by season. This directly feeds the maw RL (its obs already carries se
 
 Each season favours a different food: aquatic (Flood/Growth) → insects (Dust) → beast-bounty/lean (Chill).
 
-## Cross-couplings (the holistic synthesis — Phase 2)
+## Cross-couplings (the holistic synthesis — Phase 2, SHIPPED 2026-07-14)
 
-- **crops → crickets**: a large swarm damages nearby `CROP`/`CROP_RIPE` (a pest); the keeper's seeds feed
-  the crickets.
-- **crickets → guppies**: crickets near water fall in (amplified during a flood) → a guppy food/breeding
-  boost; guppies' diet extends to **crickets + crop droppings + in-water plant growth**.
-- **fauna → crickets**: an active incursion culls the swarm (predator control).
-- **weather**: flood drowns crickets but washes them to the guppies; drought thins guppies+crops while
-  crickets thrive; frost kills crickets and surges fauna.
+- **crops → crickets**: cricket `forage` = standing crop density; a big swarm (>0.5·CAP) nibbles up to
+  `CRICKET_CROP_DMG` crops/tick (a pest) — the keeper's seeds feed the crickets. (`_cricket_tick`.)
+- **crickets → guppies**: a normalized `_cricket_influx` (=swarm fraction × `CRICKET_INFLUX`, amplified to
+  `CRICKET_FLOOD_INFLUX` during a flood) + a crop-`GUPPY_DROPPINGS` term feed the shoal via
+  `guppy_dynamics(..., extra_food=...)` — guppies' diet now extends beyond algae to crickets + droppings.
+- **fauna → crickets**: active `CRICKET_PREDATORS` beasts (spider/bird/scorpion/anteater) cull the swarm
+  by `CRICKET_CULL` each (predator control).
+- **weather**: flood drowns crickets but washes them to the guppies (feast); drought thins guppies+crops
+  while crickets thrive (dry-boost); frost kills crickets and surges fauna.
+Verified: `test_guppy_extra_food_lifts_breeding` (extra_food lifts breeding + 3-arg back-compat), full
+battery 53/53 byte-identical, live smoke clean.
 
 ## Snares (Phase 3)
 

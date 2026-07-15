@@ -48,6 +48,11 @@ Objectives defined in `objective.md`. Dates are absolute.
   baseline-on (`--no-crickets`). Verified: 8-test dynamics battery (bounded/persist/dry-boom/flood+frost
   crash/catch-floor/gate-off-no-state/gate-on-lives), full battery 53/53 byte-identical, live smoke clean.
   Design/plan: `SPEC_FOOD_WEB.md`. Next: Phase 2 cross-couplings + guppy diet + weather rotation.
+- **2026-07-14 (Phase 2)** — Cross-couplings (the holistic web): cricket `forage`=standing crop density;
+  a big swarm nibbles crops (pest); `_cricket_influx` (flood-amplified) + crop droppings feed guppies via
+  `guppy_dynamics(extra_food=...)` (diet beyond algae); `CRICKET_PREDATORS` beasts cull the swarm. Verified:
+  `test_guppy_extra_food_lifts_breeding` (+ 3-arg back-compat), full battery 53/53 byte-identical, live
+  smoke clean. Next: Phase 3 snares, Phase 4 maw forage-mode lever + HUD/drama.
 
 ## Guppy predator (3-tier) — EXPLORED then REJECTED (superseded by the holistic web)
 

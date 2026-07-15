@@ -270,17 +270,18 @@ GUPPY_YIELD_MIN = 20.0      # no catch below this stock (let the shoal rebuild)
 GUPPY_FOOD_CAP = 10         # max standing guppy-food voxels in the oasis (don't flood the tank)
 
 
-def guppy_dynamics(guppy: float, algae: float, water: float):
-    """Pure oasis-pond step (SPEC_GUPPIES): a consumer-resource model. Returns
+def guppy_dynamics(guppy: float, algae: float, water: float, extra_food: float = 0.0):
+    """Pure oasis-pond step (SPEC_GUPPIES / SPEC_FOOD_WEB): a consumer-resource model. Returns
     (guppy, algae, catch) for one GUPPY_TICK. Deterministic; bounded to [0, cap] by clamps.
     `water` (the closed-budget water_level) throttles algae growth so drought thins the pond.
-    `catch` is the harvestable surplus (the sim turns it into FOOD voxels); the caller removes the
-    actually-deposited fish from the stock."""
+    `extra_food` in [0,1] (Phase 2) is a diet supplement beyond algae — crickets washed into the water
+    + crop droppings + in-water plant growth — so a cricket boom lifts the shoal. `catch` is the
+    harvestable surplus (the sim turns it into FOOD voxels); the caller removes the deposited fish."""
     water = min(1.0, max(0.2, float(water)))
     algae = algae + ALGAE_REGROW * (ALGAE_CAP - algae) * water \
         - GUPPY_GRAZE * guppy * (algae / ALGAE_CAP)
     algae = min(ALGAE_CAP, max(0.0, algae))
-    food_frac = algae / ALGAE_CAP
+    food_frac = min(1.0, algae / ALGAE_CAP + max(0.0, float(extra_food)))
     guppy = guppy + GUPPY_BREED * guppy * food_frac * (1.0 - guppy / GUPPY_CAP) \
         - GUPPY_DEATH * guppy
     guppy = min(GUPPY_CAP, max(0.0, guppy))
@@ -304,6 +305,13 @@ CRICKET_FROST = 0.45         # fraction lost per tick in the Chill frost
 CRICKET_YIELD_FRAC = 0.05    # fraction of the swarm that surfaces as harvestable catch per tick
 CRICKET_YIELD_MIN = 15.0     # no catch below this stock (let the swarm rebuild)
 CRICKET_FOOD_CAP = 12        # max cricket-food voxels deposited per tick (don't carpet the map)
+# Phase 2 cross-couplings (the holistic web):
+CRICKET_INFLUX = 0.08        # baseline fraction (normalized) of the swarm that washes into water -> guppy food
+CRICKET_FLOOD_INFLUX = 0.30  # amplified during a flood — crickets swept in -> a guppy feast
+CRICKET_CULL = 0.15          # fraction of the swarm culled per active cricket-predator beast per tick
+CRICKET_PREDATORS = ('spider', 'small_spider', 'bird', 'scorpion', 'anteater')  # beasts that eat crickets
+CRICKET_CROP_DMG = 4         # max crops a big swarm nibbles per tick (crickets are a pest)
+GUPPY_DROPPINGS = 0.15       # max guppy diet-supplement from crop droppings (normalized)
 
 
 def cricket_dynamics(cricket: float, forage: float, dry: bool, flood: bool, frost: bool):
@@ -2470,7 +2478,11 @@ class SandKingsSimulation:
             self.algae = ALGAE_SEED
             guppy = GUPPY_SEED
         water = getattr(self, 'water_level', WATER_LEVEL_DEFAULT)
-        guppy, algae, catch = guppy_dynamics(guppy, getattr(self, 'algae', ALGAE_SEED), water)
+        # Phase 2 diet: crickets washed into the water + crop droppings feed the shoal beyond algae
+        extra = getattr(self, '_cricket_influx', 0.0)
+        droppings = min(GUPPY_DROPPINGS, 0.01 * len(getattr(self, 'crops', {})))
+        guppy, algae, catch = guppy_dynamics(guppy, getattr(self, 'algae', ALGAE_SEED),
+                                             water, extra_food=extra + droppings)
         deposited = 0
         if catch > 0:                              # surface the catch as oasis FOOD voxels
             w, h, d = self.world.dimensions
@@ -2531,8 +2543,23 @@ class SandKingsSimulation:
         dry = self._is_dry() or season == 2
         flood = getattr(self, 'flood_until', 0) > step
         frost = season == 3 or getattr(self, 'cold_until', 0) > step
-        forage = 0.6                                # Phase 1 proxy; Phase 2 -> standing crop density
+        forage = min(1.0, 0.3 + 0.015 * len(getattr(self, 'crops', {})))  # standing plant matter (crops)
         cricket, catch = cricket_dynamics(cricket, forage, dry, flood, frost)
+        # fauna cull (predator control): cricket-eating beasts thin the swarm
+        predators = sum(1 for b in self._fauna() if b.species in CRICKET_PREDATORS)
+        if predators:
+            cricket = max(0.0, cricket * (1.0 - min(0.6, CRICKET_CULL * predators)))
+        # crickets -> guppies: a slice washes into the water (flood amplifies) -> feeds the shoal
+        self._cricket_influx = min(1.0, (cricket / CRICKET_CAP) *
+                                   (CRICKET_FLOOD_INFLUX if flood else CRICKET_INFLUX))
+        # crickets are a CROP PEST: a big swarm nibbles standing crops (the keeper's seeds feed them)
+        crops = getattr(self, 'crops', None)
+        if cricket > 0.5 * CRICKET_CAP and crops:
+            for pos in random.sample(list(crops), min(len(crops), CRICKET_CROP_DMG)):
+                x, y, z = pos
+                if self.world.voxels[x, y, z] in (VoxelType.CROP.value, VoxelType.CROP_RIPE.value):
+                    self.world.voxels[x, y, z] = VoxelType.TILLED.value
+                self.crops.pop(pos, None)
         deposited = 0
         if catch > 0:                               # surface the catch as land FOOD voxels (map-wide)
             w, h, d = self.world.dimensions

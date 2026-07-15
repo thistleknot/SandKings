@@ -63,6 +63,17 @@ def test_catch_only_above_floor():
     assert c_high > 0, "a thriving swarm must yield a catch"
 
 
+def test_guppy_extra_food_lifts_breeding():
+    """Phase 2 coupling: crickets/droppings washed in (extra_food) breed MORE guppies; 3-arg call
+    is byte-identical to extra_food=0 (back-compat with the shipped guppy tests)."""
+    from sandkings import guppy_dynamics
+    g0, a0, w = 40.0, 30.0, 0.6                       # low algae so the supplement matters
+    g_plain, _, _ = guppy_dynamics(g0, a0, w, extra_food=0.0)
+    g_fed, _, _ = guppy_dynamics(g0, a0, w, extra_food=0.5)
+    assert g_fed > g_plain, f"extra food must lift guppy breeding: {g_plain:.3f} vs {g_fed:.3f}"
+    assert guppy_dynamics(g0, a0, w) == guppy_dynamics(g0, a0, w, extra_food=0.0), "3-arg back-compat"
+
+
 def test_gate_off_no_state():
     import random
     import numpy as np
