@@ -38,6 +38,33 @@ ZCA_COV_DECAY = 0.99          # running-covariance EMA (tracks non-stationary st
 ZCA_OBSERVE_EVERY = 8         # fold ZCA stats every N forwards (throttle the O(dim^2)
 #                               covariance update; whitening only needs a running estimate)
 
+# LEARNED shared basis (SPEC_REPR / Bundle 5): the random Kanerva codebook covers the whitened
+# state manifold ~28x worse than a learned one (half its prototypes are dead, distance^2~42 collapses
+# the sparse code to near-uniform mush). When on, every fresh brain loads a SHARED frozen ZCA +
+# k-means codebook (learned_basis.npz, fit by tools/fit_learned_basis.py); the readout still evolves and
+# the codebook stays SHARED, so grafting/GA are untouched. Gate default False -> random basis (battery
+# byte-identical); the game flips it on (opt-out --no-learned-basis).
+LEARNED_BASIS_ENABLED = False
+_LEARNED_BASIS = None          # cached (mean, W, protos) numpy arrays, loaded once
+
+
+def _load_learned_basis():
+    """Load and cache learned_basis.npz (next to this module). Returns (mean, W, protos) float32
+    numpy arrays, or None if the file is missing/unreadable (falls back to the random basis)."""
+    global _LEARNED_BASIS
+    if _LEARNED_BASIS is not None:
+        return _LEARNED_BASIS if _LEARNED_BASIS != () else None
+    import os
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learned_basis.npz")
+    try:
+        import numpy as _np
+        d = _np.load(path)
+        _LEARNED_BASIS = (d["mean"], d["W"], d["protos"])
+    except Exception:
+        _LEARNED_BASIS = ()        # sentinel: tried, missing
+        return None
+    return _LEARNED_BASIS
+
 
 class ZCAWhitener(nn.Module):
     """Running ZCA whitening of the input state (SPEC_REPR): decorrelate + scale so
@@ -56,7 +83,10 @@ class ZCAWhitener(nn.Module):
 
     @torch.no_grad()
     def observe(self, x: torch.Tensor):
-        """Fold one raw input into the running mean + covariance; refit periodically."""
+        """Fold one raw input into the running mean + covariance; refit periodically. A learned,
+        frozen ZCA (Bundle 5) skips this so its whitening stays matched to the learned codebook."""
+        if getattr(self, '_frozen', False):
+            return
         self.n += 1
         delta = x - self.mean
         self.mean += delta / self.n
@@ -156,6 +186,21 @@ class HiveMindBrain(nn.Module):
         with torch.no_grad():
             self.readout.weight.normal_(std=0.05)
             self.readout.bias.zero_()
+
+        # Bundle 5: overwrite the random ZCA + Kanerva codebook with the SHARED LEARNED basis when on.
+        # Only the frozen buffers change; the readout stays evolvable and the codebook stays shared, so
+        # mutate/mate/graft/prune are untouched. Falls back to the random basis if the file is missing.
+        if LEARNED_BASIS_ENABLED:
+            basis = _load_learned_basis()
+            if basis is not None:
+                mean, W, protos = basis
+                with torch.no_grad():
+                    self.zca.mean.copy_(torch.as_tensor(mean, dtype=self.zca.mean.dtype))
+                    self.zca.W.copy_(torch.as_tensor(W, dtype=self.zca.W.dtype))
+                    self.zca._frozen = True                      # keep whitening matched to the codebook
+                    p = torch.as_tensor(protos, dtype=self.kanerva.protos.dtype)
+                    self.kanerva.protos.copy_(p)
+                    self.kanerva.proto_sq.copy_((p * p).sum(dim=1))
 
         # per-prototype win-frequency EMA, backing prototype pruning
         self.proto_usage = ActivationStats()

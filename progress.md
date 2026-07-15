@@ -39,6 +39,15 @@ Objectives defined in `objective.md`. Dates are absolute.
   Bundle-2 candidate: **anchor/trust-region the maw policy toward its warm-start instinct** so RL
   refines without eroding. λ≈0.9 interior prior for the patience→γ mapping (their `l07`–`l09` models).
 
+## Guppy predator (3-tier) — EXPLORED then REJECTED (no value)
+
+- **2026-07-14** — Explored a pike predator (algae→guppy→pike) as a held item. Pure-dynamics battery
+  (`scratchpad/explore_predator.py`): the discrete logistic-damped predator-prey is **bounded but damps
+  to a FIXED point** (guppy 99→75, CoV 0.00 — no oscillation); stronger predation just crushes guppies to
+  ~10 (killing the harvestable food, the whole point of the pond). No boom-bust dynamism to justify it,
+  and it degrades the reliable-food commons. Per explore→measure→incorporate-IF-value: **not incorporated**
+  — the 2-tier pond stands. (The loop correctly rejecting a thread.)
+
 ## Guppies — oasis pond ecosystem (SPEC_GUPPIES)
 
 - **2026-07-14** — Added a consumer-resource pond seeded in the oasis from world-gen (baseline-ON,
@@ -54,6 +63,17 @@ Objectives defined in `objective.md`. Dates are absolute.
 - **2026-07-14** — The maw narrates a **strategy shift** when its learned directive crosses an
   archetype (war-drums / burrows-deep / spreads / draws-inward), throttled to transitions, gated.
   Turns the RL's learning into watchable narrative (the "quasi-sentient life" directive).
+
+## Bundle 5 — LEARNED shared encoder basis (the biggest intelligence lever)
+
+- **2026-07-14** — EXPLORED first (`scratchpad/explore_codebook.py`): the random Kanerva codebook covers
+  the whitened state manifold **28× worse** than learned (quant-err 42 vs 1.5; **half of 256 prototypes
+  dead**), collapsing the sparse code to near-uniform mush — encoding effective-rank **1.48/32**, 64% of
+  distinct state-pairs producing identical encodings. INCORPORATED: a shared frozen ZCA+k-means codebook
+  (`tools/fit_learned_basis.py`→`learned_basis.npz`, 48KB), gated baseline-ON (`--no-learned-basis`).
+  Result: effective-rank **1.48→3.57** (2.4× more discriminative), collapsed pairs 64%→48%. **GA proven
+  intact** (`tests/test_learned_basis.py`, 4 tests: mutate touches only the readout; graft preserves the
+  shared codebook). Battery 52/52 byte-identical (gate off → random). Downstream A/B: [pending].
 
 ## Patience→γ A/B (Bundle 2 validation)
 

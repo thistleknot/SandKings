@@ -8227,6 +8227,10 @@ def main():
     parser.add_argument('--no-guppies', action='store_true',
                         help='Disable the oasis guppy pond (baseline: ON — algae grows, guppies '
                              'breed, and the surplus surfaces as harvestable food; SPEC_GUPPIES).')
+    parser.add_argument('--no-learned-basis', action='store_true',
+                        help='Use the random Kanerva codebook instead of the learned shared encoder '
+                             'basis (baseline: ON — a ZCA+codebook fit to the state manifold, ~28x '
+                             'better coverage; needs learned_basis.npz + neural).')
     args = parser.parse_args()
     
     print("="*60)
@@ -8298,6 +8302,14 @@ def main():
     # (rule-based leaves every probe at 50%). Only the runnable game turns this on;
     # the genome default use_neural=False keeps the test battery rule-based.
     if not getattr(args, 'no_neural', False) and NEURAL_AVAILABLE:
+        # The LEARNED shared encoder basis is BASELINE (on unless --no-learned-basis). Flip it BEFORE
+        # seeding brains so fresh brains load the learned ZCA+codebook (module default False keeps the
+        # regression battery on the random codebook, byte-identical). GA is untouched (readout evolves).
+        import neural_hive as _nh
+        if not getattr(args, 'no_learned_basis', False) and _nh._load_learned_basis() is not None:
+            _nh.LEARNED_BASIS_ENABLED = True
+            print("[REPR] learned shared encoder basis active - ZCA+codebook fit to the state manifold "
+                  "(28x better coverage than random; --no-learned-basis to disable)")
         seeded = 0
         for colony in sim.colonies:
             colony.genome.use_neural = True

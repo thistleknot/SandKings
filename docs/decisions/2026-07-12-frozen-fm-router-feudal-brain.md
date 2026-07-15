@@ -189,9 +189,24 @@ reward-maximizer would. Tuning the maw for more updates would break the two-time
 the kind of hyperparameter research that belongs in chess-deep-q, not here). The intelligence lives in the
 STRUCTURE (warm-started personality, sustained divergence, temperament direction), not in a steep reward curve.
 
-## Open / future (Bundle 5+)
-- **Self-supervised / learned encoder** (bigger scope): replace the random-Kanerva basis with a learned
-  frozen basis (behavior-cloned or self-supervised), the deeper fix behind Bundle 4's raw-obs mitigation.
+### Bundle 5 (2026-07-14) — LEARNED shared encoder basis (the random codebook was near-degenerate)
+Explored first (`scratchpad/explore_codebook.py`): the random Kanerva codebook covers the whitened state
+manifold **28× worse** than a learned one (quant-err 42 vs 1.5; **half its 256 prototypes are dead**), and
+at distance²≈42 the Gaussian activations collapse the sparse code to **near-uniform mush** — encoding
+effective-rank **1.48/32**, 64% of distinct state-pairs producing identical encodings. So the readout (and
+the GA on top of it) was learning from an almost information-free code.
+
+Fixed by fitting a **shared, frozen** basis offline (`tools/fit_learned_basis.py` → `learned_basis.npz`,
+48 KB): a ZCA whitener + k-means codebook over real soldier states. Every fresh brain loads the SAME basis
+(gated `neural_hive.LEARNED_BASIS_ENABLED`), so the codebook stays shared (grafting semantics intact) and
+**only the frozen buffers change — the readout still evolves, so mutate/mate/graft/prune/fold are
+untouched** (proven by `tests/test_learned_basis.py`: mutate changes only the readout; graft preserves the
+shared codebook). Result: encoding effective-rank **1.48 → 3.57** (2.4× more discriminative), collapsed
+pairs 64%→48%. Gate default False → random basis (battery byte-identical, 51/51); the game flips it on
+(opt-out `--no-learned-basis`). Regenerate the basis with `tools/fit_learned_basis.py` if the state
+encoding changes.
+
+## Open / future (Bundle 6+)
 - **Controlled `patience`→γ A/B — DONE (4 seeds; weak/directional):** the γ→temperament effect is
   directionally present (impatient→aggression, patient→mobility/health on ~3/4 seeds) but **weak and
   noisy** — aggr gaps {+0.28,+0.00,+0.07,+0.03}, mob gaps {+0.13,−0.05,+0.05,+0.26}. The mechanism works;

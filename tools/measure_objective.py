@@ -28,6 +28,8 @@ SEED = int(sys.argv[2]) if len(sys.argv) > 2 else 7
 def build_sim(seed):
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
     sandkings.MAW_RL_ENABLED = True
+    if os.environ.get("DRQ_LEARNED_BASIS") == "1":   # A/B the learned encoder basis (Bundle 5)
+        import neural_hive; neural_hive.LEARNED_BASIS_ENABLED = True
     sim = SandKingsSimulation(width=48, height=32, depth=12, num_colonies=4)
     for c in sim.colonies:
         c.genome.use_neural = True
