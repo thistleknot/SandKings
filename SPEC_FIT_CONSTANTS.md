@@ -529,8 +529,8 @@ average), and `STEPS` (stronger weather/diversity signal); the checkpoint makes
 re-runs cheap by skipping already-evaluated `(vector, seed)` pairs.
 
 **FC11.2 — Invocation.**
-- Host (per the Windows Python rule — never bare `python`):
-  `C:/Users/user/py310/Scripts/python.exe fit_constants.py`
+- Host (use a Python 3.10 interpreter with the deps installed):
+  `python fit_constants.py`
 - Docker (sandking image, `SDL_VIDEODRIVER=dummy` already set): run the module the
   same way inside the container.
 - Optional `argparse` CLI exposing `--n-iters`, `--n-seeds`, `--steps`, `--db`;

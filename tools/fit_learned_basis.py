@@ -6,8 +6,8 @@ The random Kanerva codebook covers the whitened state manifold ~28x worse than a
   - k-means prototype centroids in that whitened space.
 The readout stays evolvable (GA untouched); the codebook stays SHARED (grafting semantics preserved).
 
-Run from the repo root with the py310 interpreter:
-    C:/Users/user/py310/Scripts/python.exe tools/fit_learned_basis.py
+Run from the repo root with a Python 3.10 interpreter:
+    python tools/fit_learned_basis.py
 Writes learned_basis.npz next to sandkings.py.
 """
 import os

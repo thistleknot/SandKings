@@ -4,8 +4,8 @@ Runs a headless neural sim with the RL gate on, snapshots each colony's directiv
 prints the objective.md metrics (I1-I5, G1/G3/G5) as one JSON line. Ungameable: reads the actual
 directive tensors + genome, not the drama log. This is the tool behind progress.md's metric rows.
 
-Usage (from the repo root, on Windows use the py310 interpreter, never bare `python`):
-    C:/Users/user/py310/Scripts/python.exe tools/measure_objective.py [STEPS] [SEED]
+Usage (from the repo root, with a Python 3.10 interpreter):
+    python tools/measure_objective.py [STEPS] [SEED]
 Defaults: STEPS=1700, SEED=7. Prints "METRICS_JSON {...}".
 """
 import json
