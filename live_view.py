@@ -88,6 +88,7 @@ BEAST_GLYPHS = {
 BEAST_PREDATORS = frozenset(('spider', 'scorpion', 'snake', 'anteater', 'bird', 'hornets', 'cat', 'guppy'))
 PREDATOR_COLOR = (235, 95, 70)      # warm red — a threat
 NEUTRAL_BEAST_COLOR = (150, 175, 150)  # cool grey-green — harmless
+TAMED_BEAST_COLOR = (120, 220, 160)  # bright friendly green — a domesticated beast (SPEC_DOMESTICATION)
 BEAST_COLOR = (200, 80, 220)        # legacy violet (fallback / BLOCKS mode)
 # A World Alive: the pond shoal + rafts, drawn by the renderer from sim scalars/flags (no sim state)
 FISH_GLYPHS = ("›", "‹", "◦")       # a darting shoal over the oasis/water (count ∝ guppy_pop)
@@ -1770,7 +1771,8 @@ class LiveViewer:
             if depth is None:
                 continue
             bx, by = beast.position[0], beast.position[1]
-            klass = PREDATOR_COLOR if beast.species in BEAST_PREDATORS else NEUTRAL_BEAST_COLOR
+            klass = (TAMED_BEAST_COLOR if getattr(beast, 'owner', -1) >= 0
+                     else (PREDATOR_COLOR if beast.species in BEAST_PREDATORS else NEUTRAL_BEAST_COLOR))
             color = tuple(int(c * depth_shade(depth)) for c in klass)
             if tiles_mode:
                 spr = self._sprite('beast', beast.species, None, cell)

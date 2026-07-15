@@ -215,6 +215,13 @@ GUPPY_BITE_MAX = 0.15            # max per-tick chance a near-water exposed unit
 GUPPY_BITE_K = 0.35              # bite-chance scaling with how far over threshold the shoal is
 GUPPY_BITE_DAMAGE = 6            # damage a shoal bite deals an exposed unit
 GUPPY_SURFACE_P = 0.2            # chance/tick a few big guppies surface as huntable predator Beasts
+# Domestication (SPEC_DOMESTICATION, gated): a unit adjacent to a WILD beast may tame it — danger-scaled
+# (harmless beasts easy; predators near-impossible; you don't tame a lion). A tamed beast carries a getattr
+# `owner` (colony_id) and no longer hunts its owner's spawn. Byte-identical off (the tame-tick is gated; the
+# friend-or-foe checks are owner-inert until something is tamed).
+DOMESTICATION_ENABLED = False    # module default False (battery byte-identical); entrypoint flips on (--no-domestication)
+TAME_BASE = 0.03                 # base tame chance per adjacent attempt for a harmless (hunt_range 0) beast
+TAME_DANGER_CEIL = 65.0          # hunt_range scale: p = TAME_BASE*(1 - hunt_range/CEIL); cat(60)~impossible, hornets(30) hard, ant/beetle(0) easy
 
 # Sentience Arc constants (SPEC_SENTIENCE.md S1-S4)
 RESONANCE_RANGE = 6          # Chebyshev radius of thought contagion
@@ -5383,6 +5390,8 @@ class SandKingsSimulation:
                         self.world.set_voxel(*unit.position, VoxelType.CORPSE)
 
         beasts = self._fauna()
+        if DOMESTICATION_ENABLED:
+            self._taming_tick()             # SPEC_DOMESTICATION: units may tame adjacent wild beasts
         # DF-invader principle: at most ONE wild incursion at a time. Crickets (SPEC_FOOD_WEB) are
         # AMBIENT prey, not an incursion, so they don't count toward the gate or block a wild spawn.
         if not any(b.species != 'cricket' for b in beasts):
@@ -5469,14 +5478,39 @@ class SandKingsSimulation:
             if not moved:
                 return
 
+    def _taming_tick(self) -> None:
+        """SPEC_DOMESTICATION: a unit adjacent to a WILD beast may tame it, danger-scaled — harmless beasts
+        (hunt_range 0: ant/beetle/rabbit) are easy, predators are near-impossible (you don't tame a lion).
+        A tamed beast carries `owner` (colony_id) and stops hunting its owner. Gated → byte-identical off."""
+        for beast in self._fauna():
+            if getattr(beast, 'owner', -1) >= 0:
+                continue                                 # already tamed
+            p = TAME_BASE * (1.0 - beast.hunt_range / TAME_DANGER_CEIL)
+            if p <= 0.0:
+                continue                                 # beyond the danger ceiling: untameable
+            bx, by, bz = beast.position
+            for colony in self.colonies:
+                if not colony.is_alive():
+                    continue
+                near = any(max(abs(u.position[0] - bx), abs(u.position[1] - by),
+                               abs(u.position[2] - bz)) <= 1 for u in colony.units)
+                if near and random.random() < p:
+                    beast.owner = colony.colony_id
+                    beast.provoked = False
+                    self._log_event(f"House {self._house_name(colony)} tames a {beast.species}!")
+                    break
+
     def _beast_ai(self, beast: 'Beast'):
         """Per-species behavior; every colony smells the intruder."""
         for colony in self.colonies:
             self.pheromones.deposit(beast.position, colony.colony_id,
                                     PheromoneType.DANGER, 1.0)
         bx, by, bz = beast.position
+        owner = getattr(beast, 'owner', -1)     # a tamed beast never hunts its owner (byte-inert when -1)
         nearest, ndist = None, float('inf')
         for colony in self.colonies:
+            if colony.colony_id == owner:
+                continue
             for unit in colony.units:
                 dist = (abs(unit.position[0] - bx) + abs(unit.position[1] - by)
                         + abs(unit.position[2] - bz))
@@ -5530,8 +5564,11 @@ class SandKingsSimulation:
         if beast not in self._fauna():
             return
         bx, by, bz = beast.position
+        owner = getattr(beast, 'owner', -1)     # a tamed beast never strikes its owner (byte-inert when -1)
         adjacent = []
         for colony in self.colonies:
+            if colony.colony_id == owner:
+                continue
             for unit in colony.units:
                 if max(abs(unit.position[0] - bx), abs(unit.position[1] - by),
                        abs(unit.position[2] - bz)) <= 1:
@@ -8899,6 +8936,9 @@ def main():
     parser.add_argument('--no-guppy-predator', action='store_true',
                         help='Disable predatory guppies (baseline: ON — an overgrown shoal snaps at exposed '
                              'spawn near the water and surfaces as huntable beasts; SPEC_FAUNA_ECOLOGY).')
+    parser.add_argument('--no-domestication', action='store_true',
+                        help='Disable taming (baseline: ON — a unit adjacent to a wild beast may tame it, '
+                             'danger-scaled; a tamed beast stops hunting its owner; SPEC_DOMESTICATION).')
     parser.add_argument('--no-crickets', action='store_true',
                         help='Disable the cricket swarm (baseline: ON — the terrestrial food guild; '
                              'breeds on plant matter, booms in Dust, dies in flood/frost; SPEC_FOOD_WEB).')
@@ -9061,6 +9101,13 @@ def main():
         globals()['GUPPY_PREDATOR_ENABLED'] = True
         print("[SHOAL] an overgrown shoal turns predatory - big guppies drag exposed spawn into the water "
               "and surface as huntable beasts (--no-guppy-predator to disable)")
+
+    # Domestication is BASELINE (on unless --no-domestication). Module default False keeps the battery
+    # byte-identical; a unit adjacent to a wild beast may tame it (danger-scaled).
+    if not getattr(args, 'no_domestication', False):
+        globals()['DOMESTICATION_ENABLED'] = True
+        print("[TAME] spawn can domesticate wild beasts - harmless ones easily, predators barely; a tamed "
+              "beast no longer hunts its owner (--no-domestication to disable)")
 
     # The terrestrial cricket swarm is BASELINE (on unless --no-crickets). Module default
     # CRICKETS_ENABLED stays False so the regression battery is byte-identical; the game flips it on.
