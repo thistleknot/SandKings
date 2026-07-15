@@ -252,6 +252,12 @@ POISON_TTL = 12                  # ticks a poison cell lingers before it dissipa
 POISON_RADIUS = 2                # Chebyshev radius of the cloud a shell blooms into
 POISON_TICK = 3                  # cadence: poison acts/decays every N steps
 POISON_RELOAD = 60               # steps between poison lobs (slower than the catapult; a special munition)
+# Stigmergy (SPEC_CHEMICAL_WAR CW3a): forager pheromone trail-following (ant-colony optimization). Revives
+# the FOOD_TRAIL channel — foragers lay scent toward food and, when they see none, follow kin scent. This is
+# the substrate covert false-trails (CW3b) exploit. Gated -> byte-identical off.
+STIGMERGY_ENABLED = False         # module default False (battery byte-identical); entrypoint flips (--no-stigmergy)
+STIGMERGY_DEPOSIT = 1.0           # FOOD_TRAIL strength laid per outbound forage step (evaporates at the layer rate)
+COVERT_LURE_STRENGTH = 6.0        # CW3b: a covert FALSE FOOD_TRAIL a poison bomb plants in the enemy's channel
 
 # Sentience Arc constants (SPEC_SENTIENCE.md S1-S4)
 RESONANCE_RANGE = 6          # Chebyshev radius of thought contagion
@@ -4143,6 +4149,12 @@ class SandKingsSimulation:
             if EFFECTS_ENABLED:                       # the shell arcs across the board
                 self._spawn_effect('shot', colony.maw.position, target.maw.position)
             self._seed_poison(target.maw.position, POISON_RADIUS)
+            # CW3b covert track: plant a FALSE FOOD_TRAIL in the TARGET's OWN channel at the cloud, so the
+            # enemy's scent-following foragers (CW3a) are lured INTO the poison — Cortés deception. Inert
+            # unless stigmergy is live (foragers must follow trails to be misled). Gated by the caller.
+            if STIGMERGY_ENABLED:
+                self.pheromones.deposit(target.maw.position, target.colony_id,
+                                        PheromoneType.FOOD_TRAIL, COVERT_LURE_STRENGTH)
             self._log_event(f"House {self._house_name(colony)} lobs a poison bomb at "
                             f"House {self._house_name(target)} — a sickly cloud blooms!")
 
@@ -8561,6 +8573,17 @@ class SandKingsSimulation:
                     unit.forage_target = target
                 if target is not None:
                     acted = self._step_toward(unit, target, colony)
+                    # CW3a stigmergy: a forager shuttling to food lays a FOOD_TRAIL breadcrumb (ACO). Gated.
+                    if acted and STIGMERGY_ENABLED:
+                        self.pheromones.deposit(unit.position, colony.colony_id,
+                                                PheromoneType.FOOD_TRAIL, STIGMERGY_DEPOSIT)
+                elif STIGMERGY_ENABLED:
+                    # No food in sight or memory: follow the strongest kin FOOD_TRAIL scent (revives the
+                    # dead channel; also what a covert FALSE trail (CW3b) hijacks). Gated -> byte-identical off.
+                    g = self.pheromones.get_gradient(unit.position, colony.colony_id,
+                                                     PheromoneType.FOOD_TRAIL, self.world)
+                    if g is not None and any(g):
+                        acted = self._step_toward(unit, (x + g[0], y + g[1], z + g[2]), colony)
 
             # (4b) Fish: a worker beside water draws the shoal into food (SPEC_FLORA;
             # wild water food still outranks farming). No-op when FISHING_ENABLED is off.
@@ -9220,6 +9243,10 @@ def main():
     parser.add_argument('--no-poison', action='store_true',
                         help='Disable chemical warfare (baseline: ON — a siege house lobs a poison shell that '
                              'blooms a decaying cloud at its war target; SPEC_CHEMICAL_WAR).')
+    parser.add_argument('--no-stigmergy', action='store_true',
+                        help='Disable forager pheromone trail-following (baseline: ON — ants lay FOOD_TRAIL '
+                             'scent toward food and follow kin trails when they see none; enemies can plant '
+                             'covert FALSE trails that lure foragers into poison; SPEC_CHEMICAL_WAR CW3).')
     parser.add_argument('--no-crickets', action='store_true',
                         help='Disable the cricket swarm (baseline: ON — the terrestrial food guild; '
                              'breeds on plant matter, booms in Dust, dies in flood/frost; SPEC_FOOD_WEB).')
@@ -9403,6 +9430,10 @@ def main():
     if not getattr(args, 'no_poison', False):
         globals()['POISON_ENABLED'] = True
         print("[TOX] siege houses lob decaying poison clouds at their war targets (--no-poison)")
+    # Stigmergy is BASELINE (on unless --no-stigmergy). Module default False keeps the battery byte-identical.
+    if not getattr(args, 'no_stigmergy', False):
+        globals()['STIGMERGY_ENABLED'] = True
+        print("[ANT] foragers lay & follow FOOD_TRAIL scent; enemies plant covert false trails (--no-stigmergy)")
 
     # The terrestrial cricket swarm is BASELINE (on unless --no-crickets). Module default
     # CRICKETS_ENABLED stays False so the regression battery is byte-identical; the game flips it on.

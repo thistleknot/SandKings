@@ -52,13 +52,37 @@ instant hit). Deterministic → byte-identical off. This is the second siege eng
 **Acceptance CW2.** A catapult-teched house at war with an in-range target: after `POISON_RELOAD` steps an
 effect 'shot' is in flight AND a poison cloud exists at the target maw. Gate off → neither appears.
 
-## CW3 — Covert pheromone tracks (the deception; the trap springs) — PHASE B
+## CW3 — Stigmergy + covert pheromone tracks (the deception; the trap springs) — PHASE B
 
-A saboteur deposits a FALSE `FOOD_TRAIL` into the ENEMY colony's own pheromone channel, leading FROM the
-enemy's foragers TOWARD a poison cloud (or a killbox) — the enemy's own chemical guidance betrays them
-("covert pheromone tracks that cause confusion and lead to death or a trap"). Gated (same `POISON_ENABLED`
-umbrella or its own flag), byte-identical off. Reuses `PheromoneLayer.deposit(pos, enemy_id, FOOD_TRAIL, s)`.
-Detailed spec on build. (Deferred to Phase B — poison must exist as the trap first.)
+**Root cause found on build:** the `FOOD_TRAIL` channel was scaffolded but DEAD — `get_gradient` had zero
+callers and every deposit was write-only; foragers target the nearest food VOXEL by distance
+(`_find_food_target`), never the scent. A false trail would lure nobody. So CW3 first REVIVES stigmergy
+(ant-colony optimization), then plants the false trail on top. Split in two, gate `STIGMERGY_ENABLED`
+(baseline-ON, `--no-stigmergy`, in `_GATE_NAMES`), byte-identical off.
+
+### CW3a — Stigmergy revival (forager trail-following)
+In the forage step (sandkings.py step 4), gated on `STIGMERGY_ENABLED`:
+- a forager shuttling toward a real food target lays a `FOOD_TRAIL` breadcrumb (`STIGMERGY_DEPOSIT`) at its
+  position each step (the outbound scent trail);
+- a forager with NO visible/remembered food follows the strongest kin `FOOD_TRAIL` gradient
+  (`PheromoneLayer.get_gradient`, finally given a caller) one step toward it.
+Control flow: the deposit is inside `if acted and STIGMERGY_ENABLED`; the follow is a new
+`elif STIGMERGY_ENABLED` after the existing `if target is not None`. Gate off → both skipped → the forage
+path is byte-identical (no new RNG). Grounded in ACO/stigmergy: successful foragers reinforce trails,
+searchers exploit them, and the pheromone layer's `decay_rate` evaporates stale trails.
+
+### CW3b — Covert false trail (the Cortés deception)
+In `_poison_bomb_tick`, after the cloud blooms and gated on `STIGMERGY_ENABLED`: deposit a strong FALSE
+`FOOD_TRAIL` (`COVERT_LURE_STRENGTH`) into the TARGET colony's OWN channel at the cloud — the enemy's
+scent-following foragers (CW3a) are drawn INTO the poison by their own chemical guidance ("covert pheromone
+tracks that lead to death or a trap"). Reuses `PheromoneLayer.deposit(pos, target_id, FOOD_TRAIL, s)`. Inert
+unless stigmergy is live (a false trail only misleads foragers that follow trails). Poison-bomb-gated.
+
+**Acceptance CW3 (`tests/test_chemical_war.py`).**
+- CW3a: a lost forager (no food in range) with a planted `FOOD_TRAIL` gradient steps UP the gradient (toward
+  the scent) when the gate is on; with the gate off it does not (byte-identical forage path).
+- CW3b: a poison bomb plants a strong FOOD_TRAIL in the TARGET's channel at the cloud (the covert lure).
+- Full battery byte-identical with `STIGMERGY_ENABLED` off.
 
 ## Constants (sandkings.py)
 

@@ -100,6 +100,76 @@ def test_gate_off_no_poison_in_step():
     assert getattr(sim, 'poison', {}) == {} or sim.poison == {}, "gate off -> no poison ever seeded"
 
 
+def _food_trail_sum(sim):
+    from sandkings import PheromoneType
+    return float(sim.pheromones.trails[..., PheromoneType.FOOD_TRAIL.value].sum())
+
+
+def test_stigmergy_lays_trail_when_on():
+    """CW3a: with stigmergy ON, foragers lay FOOD_TRAIL scent (the dead channel is revived); OFF, foraging
+    leaves the channel untouched. Differential over the same seed isolates the stigmergy contribution."""
+    if not HAVE:
+        return _skip()
+    prev = sandkings.STIGMERGY_ENABLED
+    try:
+        sandkings.STIGMERGY_ENABLED = False
+        off = _food_trail_sum(_sim_run(30))
+        sandkings.STIGMERGY_ENABLED = True
+        on = _food_trail_sum(_sim_run(30))
+    finally:
+        sandkings.STIGMERGY_ENABLED = prev
+    assert on > off, "stigmergy ON must lay more FOOD_TRAIL scent than OFF (revived channel)"
+
+
+def _sim_run(n):
+    random.seed(0); np.random.seed(0)
+    sim = SandKingsSimulation(width=44, height=28, depth=12, num_colonies=2)
+    for _ in range(n):
+        sim.step()
+    return sim
+
+
+def test_stigmergy_follows_gradient():
+    """CW3a: get_gradient (finally given a caller) points a scentless forager toward the strongest kin trail."""
+    if not HAVE:
+        return _skip()
+    from sandkings import PheromoneType
+    sim = _sim()
+    colony = sim.colonies[0]
+    cid = colony.colony_id
+    # plant a trail one cell in +x from an air cell; the gradient must point +x
+    base = (10, 10, sim.world.surface_z(10, 10))
+    sim.pheromones.deposit((base[0] + 1, base[1], base[2]), cid, PheromoneType.FOOD_TRAIL, 5.0)
+    g = sim.pheromones.get_gradient(base, cid, PheromoneType.FOOD_TRAIL, sim.world)
+    assert g is not None and g[0] == 1, "the gradient guides the forager toward the planted scent (+x)"
+
+
+def test_covert_lure_planted_in_enemy_channel():
+    """CW3b: a poison bomb plants a strong FALSE FOOD_TRAIL in the TARGET's OWN channel at the cloud (the
+    Cortés lure that draws the enemy's scent-followers into the poison)."""
+    if not HAVE:
+        return _skip()
+    from sandkings import PheromoneType, COVERT_LURE_STRENGTH
+    prev = sandkings.STIGMERGY_ENABLED
+    try:
+        sandkings.STIGMERGY_ENABLED = True
+        sim = _sim()
+        attacker, target = sim.colonies[0], sim.colonies[1]
+        ax, ay, az = attacker.maw.position
+        target.maw.position = (min(ax + 5, sim.world.dimensions[0] - 2), ay, az)
+        attacker.techs = set(getattr(attacker, 'techs', set())) | {'catapult'}
+        sim._diplomacy().war_target[attacker.colony_id] = target.colony_id
+        sim.step_count = POISON_RELOAD
+        sim.poison = {}
+        tmx, tmy, tmz = target.maw.position
+        before = sim.pheromones.get_strength((tmx, tmy, tmz), target.colony_id, PheromoneType.FOOD_TRAIL)
+        sim._poison_bomb_tick()
+        after = sim.pheromones.get_strength((tmx, tmy, tmz), target.colony_id, PheromoneType.FOOD_TRAIL)
+    finally:
+        sandkings.STIGMERGY_ENABLED = prev
+    assert after - before >= COVERT_LURE_STRENGTH - 1e-6, "the covert lure is planted in the enemy's channel"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
