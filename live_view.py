@@ -1793,6 +1793,8 @@ class LiveViewer:
                 continue
             if e.get('kind') == 'shot':
                 self._blit_glyph("•", (255, 225, 130), pos[0] * cell, pos[1] * cell)
+            elif e.get('kind') == 'bolt':          # SE1: a fast steel ballista bolt
+                self._blit_glyph("»", (200, 205, 215), pos[0] * cell, pos[1] * cell)
             else:
                 col = (60, 150, 240) if e.get('kind') == 'splash' else (255, 90, 30)
                 pygame.draw.rect(self._screen, col,

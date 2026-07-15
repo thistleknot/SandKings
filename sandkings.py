@@ -258,6 +258,13 @@ POISON_RELOAD = 60               # steps between poison lobs (slower than the ca
 STIGMERGY_ENABLED = False         # module default False (battery byte-identical); entrypoint flips (--no-stigmergy)
 STIGMERGY_DEPOSIT = 1.0           # FOOD_TRAIL strength laid per outbound forage step (evaporates at the layer rate)
 COVERT_LURE_STRENGTH = 6.0        # CW3b: a covert FALSE FOOD_TRAIL a poison bomb plants in the enemy's channel
+# Siege engines (SPEC_SIEGE): the medieval siege train beyond the catapult. Gated capabilities of a
+# catapult-teched house (NOT new tech rows -> tech RNG unchanged). Gated -> byte-identical off.
+SIEGE_ENGINES_ENABLED = False    # module default False (battery byte-identical); entrypoint flips (--no-siege)
+BALLISTA_RELOAD = 25             # steps between bolts (faster than the catapult's 40)
+BALLISTA_DAMAGE = 20             # direct maw damage per bolt (high single-target; no splash)
+BALLISTA_RANGE = 44              # flat trajectory reaches across the whole board
+BOLT_SPEED = 6                   # a bolt flies faster than a lobbed shot (SHOT_SPEED = 3)
 
 # Sentience Arc constants (SPEC_SENTIENCE.md S1-S4)
 RESONANCE_RANGE = 6          # Chebyshev radius of thought contagion
@@ -2078,6 +2085,10 @@ class SandKingsSimulation:
         # 3c-p. CHEMICAL WAR (SPEC_CHEMICAL_WAR CW2): a siege house lobs a poison shell at its war target
         if POISON_ENABLED:
             self._poison_bomb_tick()
+
+        # 3c-b. SIEGE ENGINES (SPEC_SIEGE SE1): a siege house looses a fast ballista bolt at its war target
+        if SIEGE_ENGINES_ENABLED:
+            self._ballista_tick()
 
         # 3c-c. CALTROPS (SPEC_TECH TE13): loose tacks prick whoever crosses
         self._caltrop_tick()
@@ -4029,14 +4040,15 @@ class SandKingsSimulation:
         Deterministic (no RNG); gated -> byte-identical off."""
         alive = []
         for e in self._effects():
-            if e['kind'] == 'shot' and e['target'] is not None:
+            if e['kind'] in ('shot', 'bolt') and e['target'] is not None:
+                speed = BOLT_SPEED if e['kind'] == 'bolt' else SHOT_SPEED   # a ballista bolt flies faster
                 px, py, pz = e['pos']
                 tx, ty, _tz = e['target']
-                if max(abs(tx - px), abs(ty - py)) <= SHOT_SPEED:
+                if max(abs(tx - px), abs(ty - py)) <= speed:
                     e['kind'] = 'blast'; e['pos'] = e['target']; e['ttl'] = BLAST_TTL   # arrived -> burst
                 else:
-                    e['pos'] = (px + int(np.sign(tx - px)) * SHOT_SPEED,
-                                py + int(np.sign(ty - py)) * SHOT_SPEED, pz)
+                    e['pos'] = (px + int(np.sign(tx - px)) * speed,
+                                py + int(np.sign(ty - py)) * speed, pz)
                 alive.append(e)
             else:
                 e['ttl'] -= 1
@@ -4157,6 +4169,35 @@ class SandKingsSimulation:
                                         PheromoneType.FOOD_TRAIL, COVERT_LURE_STRENGTH)
             self._log_event(f"House {self._house_name(colony)} lobs a poison bomb at "
                             f"House {self._house_name(target)} — a sickly cloud blooms!")
+
+    def _ballista_tick(self) -> None:
+        """SE1 (SPEC_SIEGE): a siege house looses a fast, direct BOLT at its war target — high single-target
+        maw damage, no splash, no fire (the anti-armor engine; contrast the catapult's lobbed area shot). A
+        visible 'bolt' flies faster than a lobbed shot. Gated caller (SIEGE_ENGINES_ENABLED) -> byte-identical
+        off. Requires the catapult (siege) tech; reuses diplomacy.war_target delivery."""
+        if self.step_count % BALLISTA_RELOAD or not self.step_count:
+            return
+        diplomacy = getattr(self, 'diplomacy', None)
+        if diplomacy is None:
+            return
+        for colony in self.colonies:
+            if (not colony.is_alive()
+                    or 'catapult' not in getattr(colony, 'techs', ())):
+                continue
+            target_id = diplomacy.war_target.get(colony.colony_id)
+            target = self._colony_by_id(target_id) if target_id is not None else None
+            if target is None or not target.is_alive():
+                continue
+            mx, my, _ = colony.maw.position
+            tx, ty, _ = target.maw.position
+            if max(abs(tx - mx), abs(ty - my)) > BALLISTA_RANGE:
+                continue
+            dmg = int(round(BALLISTA_DAMAGE * (0.5 + 0.5 * self._prof(colony, 'catapult'))))
+            target.maw.take_damage(dmg)
+            if EFFECTS_ENABLED:                       # a fast steel bolt streaks across the board
+                self._spawn_effect('bolt', colony.maw.position, target.maw.position)
+            self._log_event(f"House {self._house_name(colony)}'s ballista looses a bolt at "
+                            f"House {self._house_name(target)}!")
 
     def _plunder_techs(self, fallen: Colony):
         """T3 conquest-steal: the aggressor at war with a fallen house seizes
@@ -9247,6 +9288,9 @@ def main():
                         help='Disable forager pheromone trail-following (baseline: ON — ants lay FOOD_TRAIL '
                              'scent toward food and follow kin trails when they see none; enemies can plant '
                              'covert FALSE trails that lure foragers into poison; SPEC_CHEMICAL_WAR CW3).')
+    parser.add_argument('--no-siege', action='store_true',
+                        help='Disable siege engines beyond the catapult (baseline: ON — a siege house looses a '
+                             'fast direct ballista bolt at its war target; SPEC_SIEGE).')
     parser.add_argument('--no-crickets', action='store_true',
                         help='Disable the cricket swarm (baseline: ON — the terrestrial food guild; '
                              'breeds on plant matter, booms in Dust, dies in flood/frost; SPEC_FOOD_WEB).')
@@ -9434,6 +9478,10 @@ def main():
     if not getattr(args, 'no_stigmergy', False):
         globals()['STIGMERGY_ENABLED'] = True
         print("[ANT] foragers lay & follow FOOD_TRAIL scent; enemies plant covert false trails (--no-stigmergy)")
+    # Siege engines are BASELINE (on unless --no-siege). Module default False keeps the battery byte-identical.
+    if not getattr(args, 'no_siege', False):
+        globals()['SIEGE_ENGINES_ENABLED'] = True
+        print("[SIEGE] siege houses loose fast ballista bolts across the board (--no-siege)")
 
     # The terrestrial cricket swarm is BASELINE (on unless --no-crickets). Module default
     # CRICKETS_ENABLED stays False so the regression battery is byte-identical; the game flips it on.
