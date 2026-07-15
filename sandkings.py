@@ -288,6 +288,42 @@ def guppy_dynamics(guppy: float, algae: float, water: float):
     return guppy, algae, catch
 
 
+# Crickets (SPEC_FOOD_WEB): a persistent LAND population — the terrestrial guppy-analog. Breed on plant
+# matter, boom in the dry Dust season, drown in floods, die in the Chill frost; the surplus surfaces as
+# harvestable land FOOD voxels (and a fraction feeds the guppies — Phase 2). The 2nd of three
+# weather-rotated food guilds (aquatic guppies↑wet, terrestrial crickets↑dry, fauna-bounty↑dark).
+CRICKETS_ENABLED = False     # module default False (battery byte-identical); entrypoint flips on (opt-out --no-crickets)
+CRICKET_TICK = 20            # dynamics cadence (steps)
+CRICKET_SEED = 30.0          # starting cricket stock
+CRICKET_CAP = 120.0          # cricket carrying capacity
+CRICKET_BREED = 0.28         # max per-capita birth rate (x forage x room)
+CRICKET_DEATH = 0.06         # natural per-capita mortality per tick
+CRICKET_DRY_BOOST = 1.6      # breeding multiplier when dry (Dust) — crickets love the dry heat
+CRICKET_DROWN = 0.5          # fraction lost per tick during a flood (washed into the water)
+CRICKET_FROST = 0.45         # fraction lost per tick in the Chill frost
+CRICKET_YIELD_FRAC = 0.05    # fraction of the swarm that surfaces as harvestable catch per tick
+CRICKET_YIELD_MIN = 15.0     # no catch below this stock (let the swarm rebuild)
+CRICKET_FOOD_CAP = 12        # max cricket-food voxels deposited per tick (don't carpet the map)
+
+
+def cricket_dynamics(cricket: float, forage: float, dry: bool, flood: bool, frost: bool):
+    """Pure land-swarm step (SPEC_FOOD_WEB): the terrestrial consumer-resource model. Returns
+    (cricket, catch). `forage` in [0,1] is the standing plant matter the swarm breeds on (Phase 1: a
+    fixed proxy; Phase 2: real crop density). Dry (Dust) boosts breeding; a flood drowns the swarm and
+    the Chill frost kills it. Deterministic; bounded to [0, CRICKET_CAP]."""
+    forage = min(1.0, max(0.0, float(forage)))
+    breed = CRICKET_BREED * (CRICKET_DRY_BOOST if dry else 1.0)
+    cricket = cricket + breed * cricket * forage * (1.0 - cricket / CRICKET_CAP) \
+        - CRICKET_DEATH * cricket
+    if flood:
+        cricket -= CRICKET_DROWN * cricket
+    if frost:
+        cricket -= CRICKET_FROST * cricket
+    cricket = min(CRICKET_CAP, max(0.0, cricket))
+    catch = int(CRICKET_YIELD_FRAC * cricket) if cricket > CRICKET_YIELD_MIN else 0
+    return cricket, catch
+
+
 SUN_HOURS_DEFAULT = 12       # daylight hours/day
 SUN_MIN, SUN_MAX = 4, 20     # panel sunlight range
 BIOME_TICK = 20              # emergent-weather cadence
@@ -2146,6 +2182,7 @@ class SandKingsSimulation:
         # 5a. WILD INCURSIONS (T48): DF-invader monsters trample through
         self._fauna_tick()
         self._guppy_tick()                   # the oasis pond ecosystem (SPEC_GUPPIES; gated baseline-on)
+        self._cricket_tick()                 # the terrestrial cricket swarm (SPEC_FOOD_WEB; gated baseline-on)
 
         # 5a-keeper. THE KEEPER (K4/K8/K9/K10): carvings, script, gifts
         self._keeper_tick()
@@ -2449,6 +2486,67 @@ class SandKingsSimulation:
         self.guppy_pop = max(0.0, guppy - deposited)   # only the landed catch leaves the pond
         self.algae = algae
         self._guppy_drama(self.guppy_pop)
+
+    def _cricket_drama(self, now: float) -> None:
+        """Announce cricket-swarm boom/collapse transitions (throttled to changes)."""
+        state = 'swarm' if now > 0.7 * CRICKET_CAP else ('gone' if now < 4.0 else 'mid')
+        prev = getattr(self, '_cricket_state', None)
+        if state != prev:
+            self._cricket_state = state
+            if state == 'swarm':
+                self._log_event("Crickets swarm the dunes")
+            elif state == 'gone':
+                self._log_event("The cricket swarm falls silent")
+            elif prev == 'gone':
+                self._log_event("Crickets chirp again in the scrub")
+
+    def _spawn_cricket_pack(self) -> None:
+        """Spawn a few visible cricket Beasts (ambient neutral prey, NOT an incursion) at a random
+        surface spot so the swarm is seen and colonies can hunt them. Capped so they never crowd."""
+        if sum(1 for b in self._fauna() if b.species == 'cricket') >= 6:
+            return
+        _, hp, atk, pack, hunt, bounty = FAUNA['cricket']
+        w, h, d = self.world.dimensions
+        cx, cy = random.randint(2, w - 3), random.randint(2, h - 3)
+        for _ in range(random.randint(*pack)):
+            x = int(np.clip(cx + random.randint(-3, 3), 1, w - 2))
+            y = int(np.clip(cy + random.randint(-3, 3), 1, h - 2))
+            z = min(self.world.surface_z(x, y) + 1, d - 1)
+            self._fauna().append(Beast('cricket', (x, y, z), hp, atk, hunt,
+                                       bounty, spawned_at=self.step_count))
+
+    def _cricket_tick(self) -> None:
+        """SPEC_FOOD_WEB: the terrestrial cricket swarm. Breeds on plant matter, weather-modulated
+        (booms dry/Dust, drowns in a flood, dies in the Chill frost); surplus surfaces as harvestable
+        land FOOD voxels (map-wide, foraged by any colony). Gated CRICKETS_ENABLED default False ->
+        returns immediately (battery byte-identical, no RNG). Seeds on first tick (fresh or resumed)."""
+        if not CRICKETS_ENABLED or self.step_count % CRICKET_TICK != 0:
+            return
+        cricket = getattr(self, 'cricket_pop', None)
+        if cricket is None:
+            self.cricket_pop = CRICKET_SEED
+            cricket = CRICKET_SEED
+        step = self.step_count
+        season = self.season_index()
+        dry = self._is_dry() or season == 2
+        flood = getattr(self, 'flood_until', 0) > step
+        frost = season == 3 or getattr(self, 'cold_until', 0) > step
+        forage = 0.6                                # Phase 1 proxy; Phase 2 -> standing crop density
+        cricket, catch = cricket_dynamics(cricket, forage, dry, flood, frost)
+        deposited = 0
+        if catch > 0:                               # surface the catch as land FOOD voxels (map-wide)
+            w, h, d = self.world.dimensions
+            for _ in range(min(catch, CRICKET_FOOD_CAP)):
+                x = random.randint(1, w - 2)
+                y = random.randint(1, h - 2)
+                z = self.world.surface_z(x, y) + 1
+                if z < d and self.world.voxels[x, y, z] == VoxelType.AIR.value:
+                    self.world.voxels[x, y, z] = VoxelType.FOOD.value
+                    deposited += 1
+        self.cricket_pop = max(0.0, cricket - deposited)
+        if self.cricket_pop > 0.5 * CRICKET_CAP and random.random() < 0.15:
+            self._spawn_cricket_pack()              # show the thriving swarm as huntable beasts
+        self._cricket_drama(self.cricket_pop)
 
     # ---- HYDRO: persistent water flow simulation (SPEC_HYDRO) ----------------
     def _water_field(self):
@@ -4993,13 +5091,15 @@ class SandKingsSimulation:
                         self.world.set_voxel(*unit.position, VoxelType.CORPSE)
 
         beasts = self._fauna()
-        if not beasts:
-            # DF-invader principle: at most ONE incursion at a time
+        # DF-invader principle: at most ONE wild incursion at a time. Crickets (SPEC_FOOD_WEB) are
+        # AMBIENT prey, not an incursion, so they don't count toward the gate or block a wild spawn.
+        if not any(b.species != 'cricket' for b in beasts):
             if self.step_count and self.step_count % MARAUDER_INTERVAL == 0:
                 dark = self.season_index() in (2, 3)
                 if random.random() < (FAUNA_SPAWN_P_DARK if dark
                                       else FAUNA_SPAWN_P):
                     self._spawn_incursion()
+        if not beasts:
             return
         for beast in beasts[:]:
             if (beast.fleeing
@@ -8227,6 +8327,9 @@ def main():
     parser.add_argument('--no-guppies', action='store_true',
                         help='Disable the oasis guppy pond (baseline: ON — algae grows, guppies '
                              'breed, and the surplus surfaces as harvestable food; SPEC_GUPPIES).')
+    parser.add_argument('--no-crickets', action='store_true',
+                        help='Disable the cricket swarm (baseline: ON — the terrestrial food guild; '
+                             'breeds on plant matter, booms in Dust, dies in flood/frost; SPEC_FOOD_WEB).')
     parser.add_argument('--no-learned-basis', action='store_true',
                         help='Use the random Kanerva codebook instead of the learned shared encoder '
                              'basis (baseline: ON — a ZCA+codebook fit to the state manifold, ~28x '
@@ -8341,6 +8444,13 @@ def main():
         globals()['GUPPIES_ENABLED'] = True
         print("[GUPPIES] the oasis pond lives - algae feeds the shoal, guppies breed, and the "
               "surplus surfaces as food to harvest (--no-guppies to disable)")
+
+    # The terrestrial cricket swarm is BASELINE (on unless --no-crickets). Module default
+    # CRICKETS_ENABLED stays False so the regression battery is byte-identical; the game flips it on.
+    if not getattr(args, 'no_crickets', False):
+        globals()['CRICKETS_ENABLED'] = True
+        print("[CRICKETS] the dunes chirp - crickets breed on plant matter, boom in the dry Dust, "
+              "and surface as harvestable food (the land guild; --no-crickets to disable)")
 
     if args.live:
         # When run as a script this module is '__main__'; alias it so

@@ -39,7 +39,17 @@ Objectives defined in `objective.md`. Dates are absolute.
   Bundle-2 candidate: **anchor/trust-region the maw policy toward its warm-start instinct** so RL
   refines without eroding. λ≈0.9 interior prior for the patience→γ mapping (their `l07`–`l09` models).
 
-## Guppy predator (3-tier) — EXPLORED then REJECTED (no value)
+## Food web (SPEC_FOOD_WEB) — weather-rotated RPS ecosystem
+
+- **2026-07-14 (Phase 1)** — Crickets: a persistent LAND population (terrestrial guppy-analog, the 2nd of
+  three weather-rotated guilds). Pure `cricket_dynamics` (logistic on plant matter, `DRY_BOOST` in Dust,
+  drown-in-flood/die-in-frost) → land FOOD voxels + occasional visible cricket Beasts (ambient prey; the
+  single-incursion gate now ignores crickets, byte-identical when absent). Gated `CRICKETS_ENABLED`
+  baseline-on (`--no-crickets`). Verified: 8-test dynamics battery (bounded/persist/dry-boom/flood+frost
+  crash/catch-floor/gate-off-no-state/gate-on-lives), full battery 53/53 byte-identical, live smoke clean.
+  Design/plan: `SPEC_FOOD_WEB.md`. Next: Phase 2 cross-couplings + guppy diet + weather rotation.
+
+## Guppy predator (3-tier) — EXPLORED then REJECTED (superseded by the holistic web)
 
 - **2026-07-14** — Explored a pike predator (algae→guppy→pike) as a held item. Pure-dynamics battery
   (`scratchpad/explore_predator.py`): the discrete logistic-damped predator-prey is **bounded but damps
