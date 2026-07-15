@@ -43,9 +43,16 @@ byte-identical) until a beast is tamed.
 `live_view.py` tints an owned beast `TAMED_BEAST_COLOR` (bright friendly green) instead of the predator/neutral
 danger class, so a domesticated beast reads as *yours* at a glance.
 
-## Deferred (DM3 upkeep / DM4 roles)
+## DM3 — Feeding upkeep (`_tame_upkeep`, gated) — IMPLEMENTED
 
-- **DM3 Upkeep economy:** tamed beasts consume colony food per interval; unfed → revert to wild / starve.
+Every `TAME_UPKEEP_INTERVAL` steps a tamed beast eats `TAME_UPKEEP` of its owner's food. An owner that cannot
+feed it (`food_stored < TAME_UPKEEP`) for `TAME_STARVE_LIMIT` consecutive intervals loses it — the beast goes
+feral (`owner → -1`, event "an unfed {species} slips its leash"). A dead/absent owner also frees it. Husbandry
+is a real cost — you must maintain a food system. Gated + owner-guarded → byte-identical off. Constants:
+`TAME_UPKEEP=3.0`, `TAME_UPKEEP_INTERVAL=100`, `TAME_STARVE_LIMIT=3`.
+
+## Deferred (DM4 roles)
+
 - **DM4 Roles (reusing existing labor primitives):** ants → dig (`tunnel`) + forage (`_credit_labor`) guided by
   the (currently unused) `FOOD_TRAIL` pheromone channel; bees → sow (`_farm_step`) + **honey** (new harvestable
   store); hornets → air-support combat; livestock (rabbit/squirrel/rodent/beetle) → slaughter for stock feed.

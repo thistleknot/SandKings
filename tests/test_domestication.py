@@ -97,6 +97,23 @@ def test_gate_off_never_tames():
         sandkings.TAME_BASE = prev
 
 
+def test_upkeep_feeds_or_frees():
+    """DM3: a fed owner pays upkeep and keeps the beast; a starving owner loses it after the starve limit."""
+    if not HAVE:
+        return _skip()
+    from sandkings import TAME_UPKEEP, TAME_STARVE_LIMIT
+    sim, colony, unit, beast = _sim_with_beast('ant')
+    beast.owner = colony.colony_id
+    colony.maw.food_stored = 100.0
+    sim._tame_upkeep()
+    assert getattr(beast, 'owner', -1) == colony.colony_id, "a fed tame is kept"
+    assert abs(colony.maw.food_stored - (100.0 - TAME_UPKEEP)) < 1e-6, "upkeep is charged to the owner"
+    colony.maw.food_stored = 0.0
+    for _ in range(TAME_STARVE_LIMIT):
+        sim._tame_upkeep()
+    assert getattr(beast, 'owner', -1) == -1, "an unfed tame goes feral after the starve limit"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

@@ -222,6 +222,9 @@ GUPPY_SURFACE_P = 0.2            # chance/tick a few big guppies surface as hunt
 DOMESTICATION_ENABLED = False    # module default False (battery byte-identical); entrypoint flips on (--no-domestication)
 TAME_BASE = 0.03                 # base tame chance per adjacent attempt for a harmless (hunt_range 0) beast
 TAME_DANGER_CEIL = 65.0          # hunt_range scale: p = TAME_BASE*(1 - hunt_range/CEIL); cat(60)~impossible, hornets(30) hard, ant/beetle(0) easy
+TAME_UPKEEP = 3.0                # food a tamed beast costs its owner per upkeep interval (husbandry has a cost)
+TAME_UPKEEP_INTERVAL = 100       # steps between upkeep charges
+TAME_STARVE_LIMIT = 3            # unfed intervals before a tamed beast goes feral (owner reverts to -1)
 
 # Sentience Arc constants (SPEC_SENTIENCE.md S1-S4)
 RESONANCE_RANGE = 6          # Chebyshev radius of thought contagion
@@ -5392,6 +5395,8 @@ class SandKingsSimulation:
         beasts = self._fauna()
         if DOMESTICATION_ENABLED:
             self._taming_tick()             # SPEC_DOMESTICATION: units may tame adjacent wild beasts
+            if self.step_count % TAME_UPKEEP_INTERVAL == 0:
+                self._tame_upkeep()         # DM3: feed the tamed beasts or they go feral
         # DF-invader principle: at most ONE wild incursion at a time. Crickets (SPEC_FOOD_WEB) are
         # AMBIENT prey, not an incursion, so they don't count toward the gate or block a wild spawn.
         if not any(b.species != 'cricket' for b in beasts):
@@ -5499,6 +5504,28 @@ class SandKingsSimulation:
                     beast.provoked = False
                     self._log_event(f"House {self._house_name(colony)} tames a {beast.species}!")
                     break
+
+    def _tame_upkeep(self) -> None:
+        """SPEC_DOMESTICATION DM3: a tamed beast eats its owner's food each upkeep interval; an owner that
+        cannot feed it for TAME_STARVE_LIMIT intervals loses it — the beast goes feral (owner -> -1). Gated
+        (only called under DOMESTICATION_ENABLED) and owner-guarded, so it is byte-identical off."""
+        for beast in self._fauna():
+            owner_id = getattr(beast, 'owner', -1)
+            if owner_id < 0:
+                continue
+            owner = self._colony_by_id(owner_id)
+            if owner is None or not owner.is_alive():
+                beast.owner = -1                          # the house is gone -> feral
+                continue
+            if owner.maw.food_stored >= TAME_UPKEEP:
+                owner.maw.food_stored -= TAME_UPKEEP
+                beast._starve = 0
+            else:
+                beast._starve = getattr(beast, '_starve', 0) + 1
+                if beast._starve >= TAME_STARVE_LIMIT:
+                    beast.owner = -1
+                    beast._starve = 0
+                    self._log_event(f"An unfed {beast.species} slips its leash and turns feral!")
 
     def _beast_ai(self, beast: 'Beast'):
         """Per-species behavior; every colony smells the intruder."""
