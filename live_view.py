@@ -81,6 +81,8 @@ POISON_GLYPH = "§"                  # poison-cloud overlay (SPEC_CHEMICAL_WAR C
 POISON_COLOR = (120, 210, 60)       # sickly chemical green
 SIEGE_TOWER_GLYPH = "⊓"             # mobile siege tower (SPEC_SIEGE SE2)
 SIEGE_TOWER_COLOR = (170, 120, 70)  # timber brown
+PROPHET_COLOR = (200, 150, 245)     # mad prophet — pale channeling violet (SPEC_REVELATION R2)
+SOOTHSAYER_COLOR = (245, 220, 130)  # ordained soothsayer — devout gold
 SIGN_SKY = {                        # night-sky signs (SPEC_REVELATION R1): glyph + tint by kind
     'writing':     ("‡", (180, 200, 255)),   # strange writing — cold starlight
     'omen_war':    ("†", (255, 90, 80)),     # a portent of war — blood red
@@ -935,6 +937,7 @@ def build_legend_compact() -> List[Tuple[str, Tuple[int, int, int]]]:
         ("magenta=retreat", (255, 0, 255)), ("gold=envoy", (255, 200, 60)),
         ("copper=armor", COPPER_TINT), ("underline=thrall", HUD_FG),
         ("pulse maw=siege", (235, 40, 30)),
+        ("violet=prophet", PROPHET_COLOR), ("gold=soothsayer", SOOTHSAYER_COLOR),
     ]
 
     def namekey(entry):                         # sort by the NAME, skipping a leading glyph/symbol
@@ -1739,6 +1742,9 @@ class LiveViewer:
                         color = tuple(int(c * depth_shade(depth)) for c in COPPER_TINT)
                     else:
                         color = hud_text_color(fill)
+                    if getattr(unit, 'is_priest', False):   # R2: the priestly caste, marked apart by kind
+                        color = (PROPHET_COLOR if getattr(unit, 'priest_kind', '') == 'prophet'
+                                 else SOOTHSAYER_COLOR)
                     thrall = getattr(unit, 'laboring_for', -1) >= 0   # a captive laboring for a captor
                     self._blit_glyph(char, color, ux * cell, uy * cell, underline=thrall)
                 else:

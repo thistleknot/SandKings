@@ -279,6 +279,19 @@ LITERACY_GAIN = 0.02             # literacy gained per step a colony studies a s
 LITERACY_DEVOUT_MULT = 2.0       # the devout (worshipped / high sentiment) read faster
 DECODE_THRESHOLD = 1.0           # literacy at which a colony decodes the sign
 SIGN_NUDGE = 0.15                # magnitude of a stat/sentiment nudge on decode
+# Priesthood (SPEC_REVELATION R2): a small caste, below managers, that channels the signs. TWO kinds — mad
+# PROPHETS (fast decode, high Cthulhu-break risk, born of colony madness) and ordained SOOTHSAYERS (stable
+# decode, levy a tithe, born of devotion). Gated -> byte-identical off.
+PRIESTHOOD_ENABLED = False        # module default False (battery byte-identical); entrypoint flips (--no-priests)
+PRIEST_MAX_FRAC = 0.15           # priests stay a small caste (<= this fraction of a colony's units)
+PRIEST_TICK = 20                 # cadence of ordination + tithe
+PROPHET_MADNESS_MIN = 0.2        # colony madness above which a unit may become a mad prophet
+PROPHET_DECODE_MULT = 3.0        # a prophet's channeling accelerates the colony's decode strongly
+PROPHET_MADNESS_RISK = 0.01      # madness the colony gains per prophet per priest-tick (the channeling cost)
+PROPHET_BREAK_MADNESS = 0.5      # colony madness at which a prophet BREAKS (Cthulhu — dies raving)
+SOOTHSAYER_SENTIMENT_MIN = 0.66  # keeper_sentiment above which a devout unit may be ordained a soothsayer
+SOOTHSAYER_DECODE_MULT = 1.5     # soothsayers accelerate decode modestly (stable clergy)
+SOOTHSAYER_TITHE = 0.5           # food a soothsayer gathers to the maw per priest-tick (the political tithe)
 
 # Sentience Arc constants (SPEC_SENTIENCE.md S1-S4)
 RESONANCE_RANGE = 6          # Chebyshev radius of thought contagion
@@ -2109,6 +2122,10 @@ class SandKingsSimulation:
         # 3c-r. REVELATION (SPEC_REVELATION R1): a sign burns in the sky; the maws learn to decode it
         if REVELATION_ENABLED:
             self._revelation_tick()
+
+        # 3c-pr. PRIESTHOOD (SPEC_REVELATION R2): ordain prophets/soothsayers; channel, break, tithe
+        if PRIESTHOOD_ENABLED:
+            self._priest_tick()
 
         # 3c-c. CALTROPS (SPEC_TECH TE13): loose tacks prick whoever crosses
         self._caltrop_tick()
@@ -4331,6 +4348,8 @@ class SandKingsSimulation:
             gain = LITERACY_GAIN
             if getattr(colony, 'worshipped', False) or getattr(colony, 'keeper_sentiment', 0.5) >= 0.66:
                 gain *= LITERACY_DEVOUT_MULT
+            if PRIESTHOOD_ENABLED:               # R2: priests channel the sign, accelerating the decode
+                gain *= self._colony_decode_mult(colony)
             lit = min(1.0, getattr(colony, 'literacy', 0.0) + gain)
             colony.literacy = lit
             if lit >= DECODE_THRESHOLD:
@@ -4341,6 +4360,62 @@ class SandKingsSimulation:
         # RETIRE: the sign fades after its duration
         if self.step_count - sign['since'] >= SIGN_DURATION:
             self.sky_sign = None
+
+    def _colony_decode_mult(self, colony: Colony) -> float:
+        """R2 (SPEC_REVELATION): the priest channeling multiplier on a colony's decode speed. Mad prophets
+        channel hardest; else ordained soothsayers; else no priest bonus. Pure read."""
+        prophets = sum(1 for u in colony.units if getattr(u, 'is_priest', False)
+                       and getattr(u, 'priest_kind', '') == 'prophet')
+        if prophets:
+            return PROPHET_DECODE_MULT
+        sooth = sum(1 for u in colony.units if getattr(u, 'is_priest', False)
+                    and getattr(u, 'priest_kind', '') == 'soothsayer')
+        return SOOTHSAYER_DECODE_MULT if sooth else 1.0
+
+    def _priest_tick(self) -> None:
+        """R2 (SPEC_REVELATION): ordain and run the priest caste. On PRIEST_TICK cadence a living colony may
+        ordain ONE priest, up to PRIEST_MAX_FRAC of its units — a mad PROPHET if the colony is maddened, else
+        a devout SOOTHSAYER. Every tick: prophets CHANNEL (colony madness += risk) and one BREAKS if madness
+        is dire (Cthulhu — dies raving, the pressure valve before the whole house cracks); soothsayers gather
+        a TITHE to the maw. Deterministic (no RNG) -> byte-identical off (gated caller)."""
+        for colony in self.colonies:
+            if not colony.is_alive() or not colony.units:
+                continue
+            priests = [u for u in colony.units if getattr(u, 'is_priest', False)]
+            # ORDAIN (cadence): grow the caste toward, but never beyond, its cap
+            if self.step_count % PRIEST_TICK == 0 and self.step_count:
+                cap = max(1, int(PRIEST_MAX_FRAC * len(colony.units)))
+                if len(priests) < cap:
+                    laity = [u for u in colony.units if not getattr(u, 'is_priest', False)]
+                    if laity:
+                        mad = getattr(colony, 'madness', 0.0)
+                        devout = (getattr(colony, 'keeper_sentiment', 0.5) >= SOOTHSAYER_SENTIMENT_MIN
+                                  or getattr(colony, 'worshipped', False))
+                        kind = 'prophet' if mad >= PROPHET_MADNESS_MIN else ('soothsayer' if devout else None)
+                        if kind is not None:
+                            ordinand = laity[0]                # deterministic pick
+                            ordinand.is_priest = True
+                            ordinand.priest_kind = kind
+                            priests.append(ordinand)
+                            self._log_event(f"House {self._house_name(colony)} ordains a {kind} — "
+                                            f"one who reads beyond the glass")
+            # CHANNEL + BREAK: prophets pay the madness cost of touching the great mind
+            n_prophets = sum(1 for u in priests if getattr(u, 'priest_kind', '') == 'prophet')
+            if n_prophets:
+                colony.madness = float(np.clip(getattr(colony, 'madness', 0.0)
+                                               + PROPHET_MADNESS_RISK * n_prophets, 0.0, 1.0))
+                if colony.madness >= PROPHET_BREAK_MADNESS:
+                    for u in list(colony.units):           # one prophet breaks (Cthulhu) per tick
+                        if getattr(u, 'is_priest', False) and getattr(u, 'priest_kind', '') == 'prophet':
+                            colony.remove_unit(u)
+                            self.world.set_voxel(*u.position, VoxelType.CORPSE)
+                            self._log_event(f"A prophet of House {self._house_name(colony)} breaks channeling "
+                                            f"the great mind and dies raving")
+                            break
+            # TITHE: soothsayers gather offerings to the maw (the political tax)
+            for u in priests:
+                if getattr(u, 'priest_kind', '') == 'soothsayer' and u in colony.units:
+                    colony.maw.eat(SOOTHSAYER_TITHE)
 
     def _plunder_techs(self, fallen: Colony):
         """T3 conquest-steal: the aggressor at war with a fallen house seizes
@@ -9437,6 +9512,9 @@ def main():
     parser.add_argument('--no-revelation', action='store_true',
                         help='Disable revelation (baseline: ON — signs burn in the night sky; the maws learn '
                              'to decode them for tech, omens, and divine edicts; SPEC_REVELATION).')
+    parser.add_argument('--no-priests', action='store_true',
+                        help='Disable the priest caste (baseline: ON — mad prophets channel the signs (fast '
+                             'decode, Cthulhu-break risk) and devout soothsayers levy a tithe; SPEC_REVELATION R2).')
     parser.add_argument('--no-crickets', action='store_true',
                         help='Disable the cricket swarm (baseline: ON — the terrestrial food guild; '
                              'breeds on plant matter, booms in Dust, dies in flood/frost; SPEC_FOOD_WEB).')
@@ -9632,6 +9710,10 @@ def main():
     if not getattr(args, 'no_revelation', False):
         globals()['REVELATION_ENABLED'] = True
         print("[SKY] signs burn in the night sky; the maws learn to decode them for boons (--no-revelation)")
+    # Priesthood is BASELINE (on unless --no-priests). Module default False keeps the battery byte-identical.
+    if not getattr(args, 'no_priests', False):
+        globals()['PRIESTHOOD_ENABLED'] = True
+        print("[PRIEST] mad prophets channel the signs (Cthulhu-risk); soothsayers tithe (--no-priests)")
 
     # The terrestrial cricket swarm is BASELINE (on unless --no-crickets). Module default
     # CRICKETS_ENABLED stays False so the regression battery is byte-identical; the game flips it on.

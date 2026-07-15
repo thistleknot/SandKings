@@ -94,6 +94,90 @@ def test_omen_and_edict_payoffs_nudge_state():
     assert col.keeper_sentiment > 0.4, "a divine edict raises keeper favor"
 
 
+def _priest_sim():
+    """A sim stepped enough to have units in a colony (for ordination tests)."""
+    random.seed(0); np.random.seed(0)
+    sim = SandKingsSimulation(width=44, height=28, depth=12, num_colonies=2)
+    for _ in range(20):
+        sim.step()
+    colony = next((c for c in sim.colonies if c.units), None)
+    return sim, colony
+
+
+def test_maddened_colony_ordains_prophet():
+    """R2: a maddened colony ordains a mad PROPHET who accelerates decode and raises colony madness."""
+    if not HAVE:
+        return _skip()
+    from sandkings import PRIEST_TICK, PROPHET_MADNESS_MIN, PROPHET_DECODE_MULT
+    sim, colony = _priest_sim()
+    if colony is None:
+        return _skip()
+    colony.madness = PROPHET_MADNESS_MIN + 0.05
+    colony.keeper_sentiment = 0.5
+    sim.step_count = PRIEST_TICK
+    sim._priest_tick()
+    prophets = [u for u in colony.units if getattr(u, 'priest_kind', '') == 'prophet']
+    assert prophets, "a maddened colony ordains a prophet"
+    assert sim._colony_decode_mult(colony) == PROPHET_DECODE_MULT, "a prophet accelerates the colony's decode"
+
+
+def test_devout_colony_ordains_soothsayer_who_tithes():
+    """R2: a devout, un-maddened colony ordains a SOOTHSAYER who gathers a tithe to the maw."""
+    if not HAVE:
+        return _skip()
+    from sandkings import PRIEST_TICK, SOOTHSAYER_SENTIMENT_MIN, SOOTHSAYER_TITHE
+    sim, colony = _priest_sim()
+    if colony is None:
+        return _skip()
+    colony.madness = 0.0
+    colony.keeper_sentiment = SOOTHSAYER_SENTIMENT_MIN + 0.1
+    sim.step_count = PRIEST_TICK
+    sim._priest_tick()                       # ordains
+    sooth = [u for u in colony.units if getattr(u, 'priest_kind', '') == 'soothsayer']
+    assert sooth, "a devout colony ordains a soothsayer"
+    food0 = colony.maw.food_stored
+    sim.step_count = PRIEST_TICK + 1         # a non-ordain tick -> pure tithe
+    sim._priest_tick()
+    assert colony.maw.food_stored >= food0 + SOOTHSAYER_TITHE - 1e-6, "the soothsayer tithes food to the maw"
+
+
+def test_prophet_breaks_at_dire_madness():
+    """R2: at PROPHET_BREAK_MADNESS a prophet BREAKS channeling the great mind (Cthulhu) and is removed."""
+    if not HAVE:
+        return _skip()
+    from sandkings import PROPHET_BREAK_MADNESS
+    sim, colony = _priest_sim()
+    if colony is None or not colony.units:
+        return _skip()
+    victim = colony.units[0]
+    victim.is_priest = True; victim.priest_kind = 'prophet'
+    colony.madness = PROPHET_BREAK_MADNESS + 0.05
+    n0 = len(colony.units)
+    sim.step_count = 5                       # a non-ordain tick -> channel + break only
+    sim._priest_tick()
+    assert victim not in colony.units, "the prophet breaks and dies raving"
+    assert len(colony.units) == n0 - 1, "the broken prophet is removed"
+
+
+def test_priest_gate_off_no_ordination():
+    """Gate OFF: even a maddened colony ordains no priest through the step loop (byte-identical path)."""
+    if not HAVE:
+        return _skip()
+    prev = sandkings.PRIESTHOOD_ENABLED
+    try:
+        sandkings.PRIESTHOOD_ENABLED = False
+        sim, colony = _priest_sim()
+        if colony is None:
+            return _skip()
+        colony.madness = 0.9
+        for _ in range(sandkings.PRIEST_TICK + 2):
+            sim.step()
+        assert not any(getattr(u, 'is_priest', False) for c in sim.colonies for u in c.units), \
+            "gate off -> no priest is ever ordained"
+    finally:
+        sandkings.PRIESTHOOD_ENABLED = prev
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

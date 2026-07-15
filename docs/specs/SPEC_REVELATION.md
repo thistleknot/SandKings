@@ -63,12 +63,29 @@ board (a row of the sign glyph), tinted by kind — the maw's Plato's-cave proje
   once (in `decoded_by`) with the kind's payoff applied (tech added / stat raised / sentiment raised).
 - The sign retires after `SIGN_DURATION`.
 
-## R2 — The priest caste (channelers) — PHASE 2
+## R2 — The priest caste (channelers)
 
-A small per-unit `is_priest` role (not a 4th UnitType), below managers. Priests CHANNEL: they sharply
-accelerate their colony's `literacy` (decode faster) but carry madness-risk (SPEC_MADNESS) — those who can't
-handle the "great mind beyond the glass" break (Cthulhu). Soothsayers charge a political tithe and guide
-policy. Detailed spec on build.
+A small per-unit `is_priest` role (getattr-guarded, not a 4th UnitType) with `priest_kind ∈ {prophet,
+soothsayer}` — below managers. TWO kinds (user's choice):
+- **Mad prophets** — ordained when a colony's `madness >= PROPHET_MADNESS_MIN`. They channel the great mind:
+  decode ×`PROPHET_DECODE_MULT` (fast), but each priest-tick raises colony `madness` by `PROPHET_MADNESS_RISK`
+  per prophet, and at `PROPHET_BREAK_MADNESS` one prophet BREAKS (Cthulhu — dies raving, a pressure valve that
+  fires below the MAD-2 house-death threshold).
+- **Ordained soothsayers** — ordained when the colony is devout (`keeper_sentiment >= SOOTHSAYER_SENTIMENT_MIN`
+  or `worshipped`) and not maddened. Stable: decode ×`SOOTHSAYER_DECODE_MULT`, no madness cost, and each gathers
+  a `SOOTHSAYER_TITHE` to the maw (the political tax).
+
+`_priest_tick` (gated `PRIESTHOOD_ENABLED`, cadence `PRIEST_TICK`): ordain one priest per colony up to
+`PRIEST_MAX_FRAC` of its units (prophet if maddened else soothsayer if devout), then channel/break/tithe every
+tick. `_colony_decode_mult` feeds the R1 study step (gated) so priests are literally THE decoders.
+Deterministic (no RNG); ordination picks the first lay unit. Gate off → no priests, no decode bonus, no madness
+cost → byte-identical. `live_view` tints prophets violet, soothsayers gold (pure read).
+
+**Acceptance R2 (`tests/test_revelation.py`).**
+- A maddened colony ordains a prophet; a devout colony ordains a soothsayer; the caste never exceeds the cap.
+- A prophet raises the colony's decode multiplier and its madness; at `PROPHET_BREAK_MADNESS` a prophet breaks
+  (unit removed). A soothsayer tithes food to the maw.
+- Gate off → no ordination, full battery byte-identical.
 
 ## R3 — Aztec sacrifice — PHASE 3
 
