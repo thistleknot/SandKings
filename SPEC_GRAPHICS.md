@@ -32,10 +32,16 @@ blink) carrying the visual hierarchy, a toggleable sidebar legend, and procedura
 - Verified: headless frame renders (SDL-dummy → PNG) show terrain receding and creatures popping; the
   `test_live_view` suite + full battery green (the hornets-glyph test updated to `∴`).
 
-## Open (Phases 2–3)
+## Phase 2 — Toggleable sidebar legend (SHIPPED)
 
-- **Phase 2 — Toggleable sidebar legend**: render `build_legend_entries()` into a narrow side strip
-  (reusing `legend_layout`'s column-wrapping) so `L` no longer takes over the map.
+`L` no longer takes over the map. The legend is now an opaque **sidebar strip** (`LEGEND_SIDEBAR_W`,
+`_draw_legend_sidebar`) drawn over the map's LEFT edge *after* the map, so the terrarium stays visible on
+the right. It shows a **condensed** legend (`build_legend_compact`: creatures with danger colors, key
+terrain, the reading key) in a single compact column (`legend_layout`, 11px font). The full
+`build_legend_entries` is retained (tests + future use).
+
+## Open (Phase 3)
+
 - **Phase 3 — Procedural top-down sprite tiles** (`RenderStyle.TILES`): extend the `iso_sprites.py` forge
   to bake representational 16×16 top-down sprites (bug/beast/maw/food/water), colony-tinted and cached —
   a soldier LOOKS like a mandibled bug, a guppy like a fish.

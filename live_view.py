@@ -50,6 +50,7 @@ HUD_FG = (220, 220, 220)
 EVENT_LINES = 4            # drama-feed entries shown in the HUD (spec R15)
 GLYPH_BG_DIM = 0.45        # background dimming under glyphs (spec R18)
 GLYPH_MIN_CELL = 8         # px; below this glyphs are illegible -> BLOCKS
+LEGEND_SIDEBAR_W = 250     # px; the toggleable legend sidebar strip (overlays the map's left edge)
 GLYPHS = {                 # DF-style terrain glyphs (spec R18/R22)
     VoxelType.AIR.value: " ",
     VoxelType.SAND.value: "░",
@@ -865,20 +866,47 @@ def build_legend_entries() -> List[Tuple[str, Tuple[int, int, int]]]:
         entries.append((f" {symbol}  {carve_names.get(key, key)}",
                         CARVE_COLORS.get(symbol, (255, 235, 170))))
     entries.append(("", HUD_FG))
-    entries.append(("-- reading the terrarium --", (150, 150, 160)))
-    entries.append((" ● worker  ◆ soldier  ▲ scout (colony-colored)", HUD_FG))
-    entries.append((" bright figures = life; dim = terrain", (150, 150, 160)))
-    entries.append((" red beast = predator; grey = harmless", PREDATOR_COLOR))
-    entries.append((" copper tint = armored", COPPER_TINT))
+    entries.append(("-- reading it --", (150, 150, 160)))
+    entries.append((" bright = life, dim = terrain", (150, 150, 160)))
+    entries.append((" red beast = predator", PREDATOR_COLOR))
+    entries.append((" grey beast = harmless", NEUTRAL_BEAST_COLOR))
+    entries.append((" copper = armored", COPPER_TINT))
     entries.append((" magenta = retreating", (255, 0, 255)))
-    entries.append((" gold = tribute envoy", (255, 200, 60)))
-    entries.append((" underlined = thrall (captive labor)", HUD_FG))
-    entries.append((" pulsing red maw = under siege", (235, 40, 30)))
+    entries.append((" gold = envoy", (255, 200, 60)))
+    entries.append((" underline = thrall", HUD_FG))
+    entries.append((" red-pulse maw = siege", (235, 40, 30)))
     entries.append(("", HUD_FG))
     entries.append(("-- keeper verbs --", (150, 150, 160)))
     entries.append((" o  open the door -> breach", (150, 150, 160)))
     entries.append(("L close   I inspect cursor", (140, 140, 150)))
     return entries
+
+
+def build_legend_compact() -> List[Tuple[str, Tuple[int, int, int]]]:
+    """A CONDENSED legend for the toggleable sidebar — just the on-screen essentials (creatures, key
+    terrain, the reading key), sized to fit one narrow column. Pure; enumerated from the glyph dicts."""
+    palette = build_voxel_palette()
+    e: List[Tuple[str, Tuple[int, int, int]]] = [
+        ("== LEGEND (L to close) ==", (230, 210, 140)), ("-- creatures --", (150, 150, 160))]
+    for ut, g in UNIT_GLYPHS.items():
+        e.append((f" {g}  {ut.name.lower()}", HUD_FG))
+    e.append((f" {MAW_GLYPH}  maw (queen)", MAW_COLOR))
+    for sp, g in BEAST_GLYPHS.items():
+        k = PREDATOR_COLOR if sp in BEAST_PREDATORS else NEUTRAL_BEAST_COLOR
+        e.append((f" {g}  {sp}", k))
+    e.append(("-- terrain --", (150, 150, 160)))
+    for v in (VoxelType.FOOD, VoxelType.WATER, VoxelType.CROP_RIPE, VoxelType.CORPSE,
+              VoxelType.SAND, VoxelType.TUNNEL_WALL, VoxelType.WEB):
+        e.append((f" {GLYPHS[v.value]}  {VOXEL_LEGEND.get(v.value, v.name.lower())}",
+                  tuple(int(c) for c in palette[v.value])))
+    e.append(("-- reading it --", (150, 150, 160)))
+    e.append((" red beast=predator", PREDATOR_COLOR))
+    e.append((" grey beast=harmless", NEUTRAL_BEAST_COLOR))
+    e.append((" magenta=retreating", (255, 0, 255)))
+    e.append((" gold=envoy copper=armor", (255, 200, 60)))
+    e.append((" underline=thrall", HUD_FG))
+    e.append((" red-pulse maw=siege", (235, 40, 30)))
+    return e
 
 
 LEGEND_LINE_H = 16     # px between legend rows (matches the historical single-column spacing)
@@ -1498,6 +1526,7 @@ class LiveViewer:
         for f in (self._cell_font, self._maw_font, self._cell_font_ul):
             f.set_bold(True)
         self._cell_font_ul.set_underline(True)
+        self._legend_font = pygame.font.SysFont("consolas,courier", 11)  # compact legend sidebar
 
     def _blink_on(self, period_ms: int = 400) -> bool:
         """Blink phase from the wall clock — reserved for rare urgent alerts (a maw under siege)."""
@@ -1541,9 +1570,8 @@ class LiveViewer:
         if self.saga_open:
             self._render_saga(w * cell, max(h * cell, 400))
             return
-        if self.legend_open:
-            self._render_legend(w * cell, max(h * cell, 400))
-            return
+        # NB: the legend is a toggleable SIDEBAR overlay (drawn after the map, below), not a
+        # full-screen takeover — so the terrarium stays visible while it is open.
 
         # R33 follow: the leash updates cursor and z before drawing
         if self.inspected is not None and self.follow:
@@ -1567,6 +1595,8 @@ class LiveViewer:
                 if line:
                     self._screen.blit(self._font.render(line, True, color),
                                       (hud_x, 10 + i * 18))
+            if self.legend_open:
+                self._draw_legend_sidebar(max(h * cell, 400))
             pygame.display.flip()
             return
 
@@ -1753,6 +1783,8 @@ class LiveViewer:
                 text = self._font.render(line, True, color)
                 self._screen.blit(text, (hud_x, 10 + i * 18))
 
+        if self.legend_open:
+            self._draw_legend_sidebar(max(h * cell, 400))
         pygame.display.flip()
 
     def _render_manager(self, area_w: int, area_h: int) -> None:
@@ -1899,25 +1931,21 @@ class LiveViewer:
                     cxp, cyp = iso_project(x, y, z + 1, tw, zs, ox, oy)
                     self._screen.blit(forge_cursor(tw), (cxp, cyp))
 
-    def _render_legend(self, area_w: int, area_h: int) -> None:
-        """Legend screen over the map area (R34)."""
-        self._screen.fill(HUD_BG)
-        pygame.draw.rect(self._screen, (36, 36, 30),
-                         pygame.Rect(0, 0, area_w, area_h), 1)
-        entries = build_legend_entries()
-        positions = legend_layout(len(entries), area_w, area_h)
+    def _draw_legend_sidebar(self, area_h: int) -> None:
+        """Toggleable legend SIDEBAR (R34): an opaque strip over the map's LEFT edge so the terrarium
+        stays visible (not a full-screen takeover). Column-wrapped to the narrow width; drawn after the
+        map, before the flip. Uses a compact font so the whole legend fits."""
+        w = LEGEND_SIDEBAR_W
+        panel = pygame.Surface((w, area_h))
+        panel.set_alpha(238)
+        panel.fill(HUD_BG)
+        self._screen.blit(panel, (0, 0))
+        pygame.draw.rect(self._screen, (70, 70, 55), pygame.Rect(0, 0, w, area_h), 1)
+        entries = build_legend_compact()
+        positions = legend_layout(len(entries), w, area_h, line_h=12, top=5, left=6)
         for (line, color), (x, y) in zip(entries, positions):
             if line:
-                self._screen.blit(self._font.render(line, True, color), (x, y))
-        hud_x = area_w + 12
-        for i, (line, color) in enumerate(build_hud_entries(
-                self.sim, self.pacer.steps_per_second,
-                self.paused, self.z_level, self.capturing,
-                self.view_mode, PHEROMONE_OVERLAYS[self.overlay_index])):
-            if line:
-                self._screen.blit(self._font.render(line, True, color),
-                                  (hud_x, 10 + i * 18))
-        pygame.display.flip()
+                self._screen.blit(self._legend_font.render(line, True, color), (x, y))
 
     def _visible_depth(self, position: Tuple[int, int, int]) -> Optional[int]:
         """Depth an entity renders at in the active view mode, None if hidden.
