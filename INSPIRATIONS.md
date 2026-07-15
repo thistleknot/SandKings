@@ -232,6 +232,25 @@ This is the lineage, mapped to the specs and mechanics each one shaped.
   the maw's real intelligence test (its `patience` gene / season-phase obs are the substrate).
   (Extends **The Nile** inundation-agriculture note: the flood that drowns you leaves the silt
   that feeds you — if you planned for it.)
+- **Sparta & the Helots / Rome & the servile wars (subjugation and sabotage go hand in hand)**: an
+  imposed order is never one-sided. Sparta held a Helot underclass many times its number only by
+  *structural terror* — the krypteia, an iron fist that stilled revolt now but bred the resentment that
+  made the fist perpetual and costly. Rome's tributary order likewise bought a Pax that Spartacus and the
+  servile wars periodically tore open. The terrarium's tribute order becomes this two-sided loop: the
+  vassal **withholds and sabotages** its tribute, the overlord **pays to repress** (the fist — sustainable
+  only while it can afford it), and each repression breeds a *persistent* memory that shortens the next
+  fuse — so a strong enough might CAN hold the order, but never for free, and revolt is always fueling.
+  (SPEC_REPRESSION RR1–RR4, extending SPEC_SUZERAIN §SZ4 and SPEC_SUBJUGATION's thrall defiance.)
+- **Minoan vs Mycenaean / the fiat wage & the anarchist (the wage outlasts the whip)**: two ways to rule
+  the subjugated. The **Mycenaean** way is the fortress citadel — the militarized warrior-aristocracy that
+  extracts by the whip; overt, brittle, and prone to the revolt that eventually consumed the citadels. The
+  **Minoan** way is the mercantile thalassocracy — soft, trade-based, extracting by the purse; when a fiat
+  economy replaces the whip, subjugation *diffuses* into wage-slavery, and resistance diffuses with it into
+  the **anarchist's** foot-drag — small, permanent, never revolting. So the overlord's disposition sets the
+  order's fate: an aggressive house rules by the whip and falls to revolt; a peaceable house rules by the
+  wage and endures, paying only the standing drag of a class it quietly exploits. The wage outlasts the
+  whip. (SPEC_DIFFUSE_RESISTANCE WW1–WW3; the codex `commerce` lesson already teaches it; ties the
+  emergent castle/fortress structures to the whip-order overlord.)
 
 ## Kindred Games (researched 2026-07 — fuel for future features)
 

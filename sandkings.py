@@ -366,6 +366,11 @@ SUZERAIN_ENABLED = False        # module default False (battery byte-identical);
 # subjugation_memory that shortens each next fuse (krypteia). Deterministic; folded into _tribute_tick.
 REPRESSION_ENABLED = False      # module default False (battery byte-identical); entrypoint flips on (opt-out --no-repression)
 
+# Wage vs Whip (SPEC_DIFFUSE_RESISTANCE, Phase 6): the overlord's disposition (aggression) sets the extraction
+# style — the whip (aggressive: fast krypteia -> revolt, Mycenae/Sparta) vs the wage (peaceable: softened grudge
+# -> durable order + a small permanent foot-drag, Minoan). Modulates the Phase-5 loop; deterministic.
+DIFFUSE_RESISTANCE_ENABLED = False  # module default False (battery byte-identical); entrypoint flips on (opt-out --no-diffuse-resistance)
+
 
 def cricket_dynamics(cricket: float, forage: float, dry: bool, flood: bool, frost: bool):
     """Pure land-swarm step (SPEC_FOOD_WEB): the terrestrial consumer-resource model. Returns
@@ -6592,10 +6597,11 @@ class SandKingsSimulation:
                 c.tributary_to = -1               # the overlord is gone -> freed
                 self._bump_suzerain_epoch()
                 continue
-            # RR1/RR3 setup: gate-off keeps withhold=0 and resentment=TRIBUTE_RESENTMENT (byte-identical).
+            # RR1/RR3 setup: gate-off keeps withhold=0, resentment=TRIBUTE_RESENTMENT, memory_mult=1 (byte-identical).
             grudge = getattr(c, 'overlord_grudge', 0.0)
             withhold = 0.0
             resentment = TRIBUTE_RESENTMENT
+            memory_mult = 1.0
             if REPRESSION_ENABLED:
                 from politics import (REPRESSION_COST_FOOD, REPRESSION_CALM, REPRESSION_RESENTMENT,
                                       MEMORY_ACCEL_K, SABOTAGE_WITHHOLD_K, SABOTAGE_WITHHOLD_CAP,
@@ -6610,6 +6616,14 @@ class SandKingsSimulation:
                         overlord.maw.food_stored = max(0.0, overlord.maw.food_stored - spoil)
                         self._log_event(f"House {self._house_name(c)} sabotages the stores of "
                                         f"overlord House {self._house_name(overlord)}")
+                # WW1-WW3: the overlord's disposition sets the extraction style — whip (aggressive) vs wage (soft).
+                if DIFFUSE_RESISTANCE_ENABLED:
+                    from politics import WHIP_MEMORY_K, WAGE_GRUDGE_FLOOR, DIFFUSE_DRAG
+                    hardness = getattr(overlord.genome, 'aggression', 0.5)
+                    hardness = 0.0 if hardness < 0.0 else (1.0 if hardness > 1.0 else hardness)
+                    withhold = min(0.95, withhold + DIFFUSE_DRAG * (1.0 - hardness))         # WW3 diffuse foot-drag
+                    resentment *= WAGE_GRUDGE_FLOOR + (1.0 - WAGE_GRUDGE_FLOOR) * hardness    # WW2 soft order endures
+                    memory_mult = 1.0 + WHIP_MEMORY_K * hardness                             # WW1 whip -> revolt
             amount = TRIBUTE_RATE * c.maw.food_stored * (1.0 - withhold)  # RR1 withhold (0 when gate off)
             if amount > 0:
                 c.maw.food_stored = max(0.0, c.maw.food_stored - amount)
@@ -6618,11 +6632,12 @@ class SandKingsSimulation:
             d.rel(c.colony_id, overlord_id).adjust(TRIBUTE_TRUST_HIT)
             self._log_event(f"House {self._house_name(c)} renders tribute to "
                             f"overlord House {self._house_name(overlord)}")
-            # RR2 iron fist: an overlord that can afford it pays to suppress the grudge, breeding krypteia memory.
+            # RR2 iron fist: an overlord that can afford it pays to suppress the grudge, breeding krypteia memory
+            # (WW1: a whip overlord's memory compounds faster via memory_mult).
             if REPRESSION_ENABLED and overlord.maw.food_stored >= REPRESSION_COST_FOOD:
                 overlord.maw.food_stored -= REPRESSION_COST_FOOD
                 c.overlord_grudge = max(0.0, c.overlord_grudge - REPRESSION_CALM)
-                c.subjugation_memory = getattr(c, 'subjugation_memory', 0.0) + REPRESSION_RESENTMENT
+                c.subjugation_memory = getattr(c, 'subjugation_memory', 0.0) + REPRESSION_RESENTMENT * memory_mult
                 self._log_event(f"House {self._house_name(overlord)}'s iron fist stills "
                                 f"House {self._house_name(c)}")
             if c.overlord_grudge >= REVOLT_RESENTMENT:
@@ -8838,6 +8853,11 @@ def main():
                              'vassal withholds and spoils tribute, the overlord pays to suppress the grudge '
                              '(iron fist), and repression breeds a simmering memory that shortens each next '
                              'fuse; turnover becomes emergent; SPEC_REPRESSION).')
+    parser.add_argument('--no-diffuse-resistance', action='store_true',
+                        help='Disable wage-vs-whip extraction styles (baseline: ON — an aggressive overlord '
+                             'rules by the whip (fast krypteia -> revolt, Mycenae/Sparta), a peaceable one by '
+                             'the wage (softened grudge -> durable order + a small permanent foot-drag, Minoan); '
+                             'the wage outlasts the whip; SPEC_DIFFUSE_RESISTANCE).')
     parser.add_argument('--no-learned-basis', action='store_true',
                         help='Use the random Kanerva codebook instead of the learned shared encoder '
                              'basis (baseline: ON — a ZCA+codebook fit to the state manifold, ~28x '
@@ -9018,6 +9038,14 @@ def main():
         globals()['REPRESSION_ENABLED'] = True
         print("[FIST] the tribute order turns two-sided — vassals withhold and sabotage, the overlord pays to "
               "repress, and the iron fist breeds resentment that shortens each next fuse (--no-repression)")
+
+    # Wage-vs-whip extraction styles are BASELINE (on unless --no-diffuse-resistance). Module global only;
+    # default False keeps the battery byte-identical. Shapes the Phase-5 loop, so it only bites with repression on.
+    if not getattr(args, 'no_diffuse_resistance', False):
+        globals()['DIFFUSE_RESISTANCE_ENABLED'] = True
+        print("[STYLE] the overlord's disposition sets the order — the whip (aggressive: fast revolt, Mycenae) "
+              "or the wage (peaceable: durable but foot-dragged, Minoan); the wage outlasts the whip "
+              "(--no-diffuse-resistance)")
 
     if args.live:
         # When run as a script this module is '__main__'; alias it so
