@@ -371,6 +371,14 @@ REPRESSION_ENABLED = False      # module default False (battery byte-identical);
 # -> durable order + a small permanent foot-drag, Minoan). Modulates the Phase-5 loop; deterministic.
 DIFFUSE_RESISTANCE_ENABLED = False  # module default False (battery byte-identical); entrypoint flips on (opt-out --no-diffuse-resistance)
 
+# Fitness-based live selection (SPEC_SELECTION, Evolution Proper Phase 1): the live GA's parent pick is uniform
+# random.choice(survivors) today (no fitness pressure). Under the gate, a fitness-weighted tournament replaces it
+# so the strong seed the next arrival — survival of the fittest. Off -> random.choice verbatim (byte-identical).
+FITNESS_SELECTION_ENABLED = False  # module default False (battery byte-identical); entrypoint flips on (opt-out --no-fitness-selection)
+FITNESS_TOURNAMENT_K = 3           # contenders sampled per tournament (selection pressure knob)
+FITNESS_TERRITORY_W = 2.0          # fitness weight on territory size (expansion)
+FITNESS_LONGEVITY_W = 5.0          # fitness weight on lineage depth (generation = survival across respawns)
+
 
 def cricket_dynamics(cricket: float, forage: float, dry: bool, flood: bool, frost: bool):
     """Pure land-swarm step (SPEC_FOOD_WEB): the terrestrial consumer-resource model. Returns
@@ -7587,17 +7595,38 @@ class SandKingsSimulation:
             self._respawn_colony(colony_id)
             del self.pending_respawns[colony_id]
 
+    def _colony_fitness(self, colony) -> float:
+        """SEL1 (SPEC_SELECTION): live fitness for parent selection — composite capability plus expansion
+        (territory) and longevity (lineage depth). Pure read, getattr-guarded for pre-feature pickles."""
+        terr = len(getattr(colony, 'territory', ()) or ())
+        gen = getattr(colony, 'generation', 1)
+        return (composite_power(colony)
+                + FITNESS_TERRITORY_W * terr
+                + FITNESS_LONGEVITY_W * gen)
+
+    def _select_parent(self, survivors):
+        """SEL2 (SPEC_SELECTION): fitness-weighted tournament parent pick — K random contenders, the fittest
+        wins. Replaces the uniform random.choice so the live GA selects for fitness. Called only under the gate;
+        the gate-off path keeps random.choice (byte-identical)."""
+        k = min(FITNESS_TOURNAMENT_K, len(survivors))
+        contenders = random.sample(survivors, k)
+        return max(contenders, key=self._colony_fitness)
+
     def _respawn_colony(self, colony_id: int):
         """Fill a dead colony's slot in place with a fresh arrival (SPEC T6).
 
         Same colony_id keeps the color and pheromone channel; genome comes
-        from a mutated random survivor (fresh randomized genome if none).
+        from a mutated survivor (fresh randomized genome if none). SPEC_SELECTION
+        (gated): the surviving parent is chosen by fitness tournament, not uniformly.
         """
         w, h, d = self.world.dimensions
         survivors = [c for c in self.colonies if c.is_alive()]
         crossed = None  # (parent_a, parent_b) if sexual reproduction happened
         if survivors:
-            parent = random.choice(survivors)
+            if FITNESS_SELECTION_ENABLED:
+                parent = self._select_parent(survivors)   # SEL2: survival of the fittest
+            else:
+                parent = random.choice(survivors)         # gate off: byte-identical
             # T40 mutation catalysis: a lineage seated in mild radiation
             # evolves faster (priced in ambient harm)
             from machines import RAD_MILD, RAD_MUTATION_MULT
@@ -8858,6 +8887,11 @@ def main():
                              'rules by the whip (fast krypteia -> revolt, Mycenae/Sparta), a peaceable one by '
                              'the wage (softened grudge -> durable order + a small permanent foot-drag, Minoan); '
                              'the wage outlasts the whip; SPEC_DIFFUSE_RESISTANCE).')
+    parser.add_argument('--no-fitness-selection', action='store_true',
+                        help='Disable fitness-based parent selection (baseline: ON — a dead colony\'s slot is '
+                             'seeded by a fitness-weighted tournament among survivors instead of a uniform '
+                             'random pick, so the strong seed the next arrival — survival of the fittest; '
+                             'SPEC_SELECTION).')
     parser.add_argument('--no-learned-basis', action='store_true',
                         help='Use the random Kanerva codebook instead of the learned shared encoder '
                              'basis (baseline: ON — a ZCA+codebook fit to the state manifold, ~28x '
@@ -9046,6 +9080,13 @@ def main():
         print("[STYLE] the overlord's disposition sets the order — the whip (aggressive: fast revolt, Mycenae) "
               "or the wage (peaceable: durable but foot-dragged, Minoan); the wage outlasts the whip "
               "(--no-diffuse-resistance)")
+
+    # Fitness-based selection is BASELINE (on unless --no-fitness-selection). Module global only; default False
+    # keeps the battery byte-identical (gate off -> the original random.choice parent pick).
+    if not getattr(args, 'no_fitness_selection', False):
+        globals()['FITNESS_SELECTION_ENABLED'] = True
+        print("[EVO] survival of the fittest — a dead house's nest is seeded by a fitness tournament among the "
+              "living, not a coin flip; the strong beget the next arrival (--no-fitness-selection)")
 
     if args.live:
         # When run as a script this module is '__main__'; alias it so
