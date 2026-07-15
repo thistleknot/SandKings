@@ -211,6 +211,28 @@ This is the lineage, mapped to the specs and mechanics each one shaped.
   just faster. (SPEC_ENLIGHTENMENT, enabled by the ~×ENLIGHTENED_TECH_MULT /
   ~×ENLIGHTENED_CODEX_MULT constants.)
 
+- **The Aztecs meets Hernán Cortés (endemic war → conquest → new order)**: war as the
+  natural state of things under scarcity — "dog-eat-dog." Roughly-equal colonies war
+  perpetually (an Aztec *flower-war*: raiding for captives and, when starving, for the
+  flesh of the fallen — cannibalizing each other), each too matched to dominate, UNTIL a
+  stronger power arrives and **enforces a new order**: a hegemon (the Triple Alliance) or an
+  outside conqueror (Cortés) that ends the endemic warring by imposing an imperial tribute
+  order — subjugation, vassalage, extraction. The terrarium already has the pieces (war,
+  corpse-as-food cannibalism, subjugation/thralls, coalitions-against-a-hegemon, enlightenment
+  as a colony that ascends past its keeper) — this is the through-line that binds them:
+  **scarcity drives war, war drives conquest, conquest imposes order, until the order decays
+  and the warring resumes.** The current war trigger is inverted from this (colonies raid when
+  they HOARD past the war-chest, and STAND DOWN when starving); the Aztec/Cortés reading wants
+  the desperate, starving colony to raid — war from hunger, not only from surplus.
+- **The cycles of the moon (seasonal planning as the intelligence test)**: the flood comes on a
+  calendar (Flood → Growth → Dust → Chill). A colony that FISHES the oasis and forages the
+  shrubs for early food, then reads the cycle and stores an annual harvest against the Chill,
+  survives; one that does not plan starves when the cold comes — and a starving colony makes
+  war (above). Learning the annual cycle — prepare in abundance for the coming scarcity — is
+  the maw's real intelligence test (its `patience` gene / season-phase obs are the substrate).
+  (Extends **The Nile** inundation-agriculture note: the flood that drowns you leaves the silt
+  that feeds you — if you planned for it.)
+
 ## Kindred Games (researched 2026-07 — fuel for future features)
 
 - **RimWorld's AI Storyteller** (Cassandra Classic / Phoebe Chillax / Randy
