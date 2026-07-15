@@ -172,6 +172,7 @@ FAUNA = {
     'fly':      (0.0, 3, 1, (4, 8), 0, 1),   # wingless flies: weak swarm prey
     'mouse':    (0.0, 20, 3, (1, 1), 0, 5),  # a mouse: bites back, good food
     'beetle':   (0.0, 40, 4, (1, 2), 0, 4),  # sturdy harmless burrower — good livestock / tame candidate
+    'bee':      (0.0, 6, 2, (3, 5), 0, 1),   # harmless pollinator — tamed, makes honey (DM4)
     'guppy':    (0.0, 30, 8, (1, 3), 5, 3),  # a predatory big guppy — surfaces when the shoal is overgrown
     'cat':      (0.0, 400, 60, (1, 1), 60, 12),
     'hornets':  (0.0, 8, 4, (6, 10), 30, 1),  # T48b keeper-wrath scourge: released, never a random incursion
@@ -192,13 +193,14 @@ FAUNA_EVENTS = {
     'fly': "Wingless flies tumble onto the sand, twitching",
     'mouse': "A mouse is dropped in, whiskers trembling",
     'beetle': "A beetle trundles across the sand, mandibles clicking",
+    'bee': "A drift of bees hums in from beyond the glass",
     'guppy': "The oasis boils — the shoal has grown teeth!",
     'cat': "Something enormous pads across the sand...",
 }
 
 # AR1: the keeper's roster, classified by intent (single source of truth;
 # dashboard imports KEEPER_FAUNA as its release whitelist)
-KEEPER_GIFTS = ('cricket', 'ant', 'small_spider', 'fly')  # food + learning
+KEEPER_GIFTS = ('cricket', 'ant', 'small_spider', 'fly', 'bee')  # food + learning
 KEEPER_WRATH = ('spider', 'scorpion', 'snake', 'hornets')          # arena predators
 KEEPER_NEUTRAL = ('squirrel', 'rabbit', 'mouse', 'beetle')  # ambient, bite back
 KEEPER_FAUNA = KEEPER_GIFTS + KEEPER_WRATH + KEEPER_NEUTRAL
@@ -225,6 +227,8 @@ TAME_DANGER_CEIL = 65.0          # hunt_range scale: p = TAME_BASE*(1 - hunt_ran
 TAME_UPKEEP = 3.0                # food a tamed beast costs its owner per upkeep interval (husbandry has a cost)
 TAME_UPKEEP_INTERVAL = 100       # steps between upkeep charges
 TAME_STARVE_LIMIT = 3            # unfed intervals before a tamed beast goes feral (owner reverts to -1)
+TAME_FORAGE_YIELD = 8.0          # food a tamed harmless beast (forager/livestock) delivers to its owner per grab
+HONEY_YIELD = 2.0                # honey (= food) a tamed bee produces for its owner each work tick
 
 # Sentience Arc constants (SPEC_SENTIENCE.md S1-S4)
 RESONANCE_RANGE = 6          # Chebyshev radius of thought contagion
@@ -5527,14 +5531,62 @@ class SandKingsSimulation:
                     beast._starve = 0
                     self._log_event(f"An unfed {beast.species} slips its leash and turns feral!")
 
+    def _tamed_work(self, beast: 'Beast', owner_id: int) -> None:
+        """SPEC_DOMESTICATION DM4: a tamed HARMLESS beast labors for its owner — forages adjacent FOOD/CORPSE
+        and delivers it to the owner's maw (leaving a FOOD_TRAIL scent for its kin — the first use of that
+        channel), diggers (ant/rodent/beetle) excavate SAND toward home to expand the tunnels, else it follows
+        the owner. Only tamed beasts reach here (gated in _beast_ai) → byte-identical off."""
+        owner = self._colony_by_id(owner_id)
+        if owner is None or not owner.is_alive():
+            beast.owner = -1
+            return
+        if beast.species == 'bee':                          # DM4: bees make honey (a food store) + pollinate
+            owner.honey = getattr(owner, 'honey', 0.0) + HONEY_YIELD
+            owner.maw.eat(HONEY_YIELD)                       # honey feeds the hive
+            for nx, ny, nz in self.world.get_neighbors_3d(beast.position, 1):
+                if self.world.voxels[nx, ny, nz] == VoxelType.TILLED.value:
+                    self.world.voxels[nx, ny, nz] = VoxelType.CROP.value   # pollinate: sow a crop
+                    break
+            self._beast_move(beast, owner.maw.position)
+            return
+        for nx, ny, nz in self.world.get_neighbors_3d(beast.position, 1):
+            v = self.world.voxels[nx, ny, nz]
+            if v == VoxelType.FOOD.value or v == VoxelType.CORPSE.value:
+                self.world.voxels[nx, ny, nz] = VoxelType.AIR.value
+                owner.maw.eat(TAME_FORAGE_YIELD)                 # forage/livestock: offsets the upkeep cost
+                self.pheromones.deposit(beast.position, owner_id, PheromoneType.FOOD_TRAIL, 1.0)
+                return
+        found = self._find_food_target(beast.position, 10)
+        if found is not None:
+            self._beast_move(beast, found)
+            return
+        if beast.species in ('ant', 'rodent', 'beetle'):         # diggers extend the owner's warren toward home
+            bx, by, bz = beast.position
+            mx, my, _mz = owner.maw.position
+            step = (int(np.clip(bx + np.sign(mx - bx), 0, self.world.width - 1)),
+                    int(np.clip(by + np.sign(my - by), 0, self.world.height - 1)), bz)
+            if self.world.voxels[step] == VoxelType.SAND.value:
+                self.world.voxels[step] = VoxelType.AIR.value
+                self.world.ownership[step] = owner_id
+                self._beast_move(beast, step)
+                return
+        self._beast_move(beast, owner.maw.position)              # else keep to heel
+
     def _beast_ai(self, beast: 'Beast'):
-        """Per-species behavior; every colony smells the intruder."""
-        for colony in self.colonies:
-            self.pheromones.deposit(beast.position, colony.colony_id,
-                                    PheromoneType.DANGER, 1.0)
+        """Per-species behavior; every colony smells the intruder (a tamed beast alarms no one, and works)."""
+        owner = getattr(beast, 'owner', -1)
+        if owner < 0:
+            for colony in self.colonies:
+                self.pheromones.deposit(beast.position, colony.colony_id,
+                                        PheromoneType.DANGER, 1.0)
+        elif DOMESTICATION_ENABLED and beast.hunt_range <= 0:
+            self._tamed_work(beast, owner)      # DM4: a tamed harmless beast labors for its owner
+            return
         bx, by, bz = beast.position
-        owner = getattr(beast, 'owner', -1)     # a tamed beast never hunts its owner (byte-inert when -1)
         nearest, ndist = None, float('inf')
+        for colony in self.colonies:
+            if colony.colony_id == owner:
+                continue
         for colony in self.colonies:
             if colony.colony_id == owner:
                 continue

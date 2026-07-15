@@ -114,6 +114,37 @@ def test_upkeep_feeds_or_frees():
     assert getattr(beast, 'owner', -1) == -1, "an unfed tame goes feral after the starve limit"
 
 
+def test_tamed_harmless_forages_for_owner():
+    """DM4: a tamed harmless beast delivers adjacent FOOD to its owner's maw (labor + livestock yield)."""
+    if not HAVE:
+        return _skip()
+    from sandkings import VoxelType, TAME_FORAGE_YIELD
+    sim, colony, unit, beast = _sim_with_beast('ant')
+    beast.owner = colony.colony_id
+    bx, by, bz = beast.position
+    nb = (min(bx + 1, sim.world.width - 1), by, bz)          # an adjacent cell
+    sim.world.voxels[nb] = VoxelType.FOOD.value
+    food0 = colony.maw.food_stored
+    sim._tamed_work(beast, colony.colony_id)
+    assert colony.maw.food_stored >= food0 + TAME_FORAGE_YIELD - 1e-6, \
+        "a tamed forager delivers food to its owner's maw"
+    assert sim.world.voxels[nb] != VoxelType.FOOD.value, "the foraged food is consumed"
+
+
+def test_tamed_bee_makes_honey():
+    """DM4: a tamed bee produces honey (a food store) that feeds its owner's hive."""
+    if not HAVE:
+        return _skip()
+    from sandkings import HONEY_YIELD
+    sim, colony, unit, beast = _sim_with_beast('bee')
+    beast.owner = colony.colony_id
+    honey0 = getattr(colony, 'honey', 0.0)
+    food0 = colony.maw.food_stored
+    sim._tamed_work(beast, colony.colony_id)
+    assert getattr(colony, 'honey', 0.0) >= honey0 + HONEY_YIELD - 1e-6, "a tamed bee makes honey"
+    assert colony.maw.food_stored >= food0 + HONEY_YIELD - 1e-6, "honey feeds the hive"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

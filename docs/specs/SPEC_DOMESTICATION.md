@@ -51,11 +51,23 @@ feral (`owner → -1`, event "an unfed {species} slips its leash"). A dead/absen
 is a real cost — you must maintain a food system. Gated + owner-guarded → byte-identical off. Constants:
 `TAME_UPKEEP=3.0`, `TAME_UPKEEP_INTERVAL=100`, `TAME_STARVE_LIMIT=3`.
 
-## Deferred (DM4 roles)
+## DM4 — Tamed roles (`_tamed_work`, gated) — IMPLEMENTED
 
-- **DM4 Roles (reusing existing labor primitives):** ants → dig (`tunnel`) + forage (`_credit_labor`) guided by
-  the (currently unused) `FOOD_TRAIL` pheromone channel; bees → sow (`_farm_step`) + **honey** (new harvestable
-  store); hornets → air-support combat; livestock (rabbit/squirrel/rodent/beetle) → slaughter for stock feed.
+A tamed **harmless** beast (`hunt_range == 0`, owner ≥ 0) labors instead of running its wild AI (routed in
+`_beast_ai`; a tamed beast also no longer deposits the DANGER alarm). By species:
+- **Foragers/livestock (ant, rodent, beetle, squirrel, …):** harvest an adjacent `FOOD`/`CORPSE` and deliver
+  `TAME_FORAGE_YIELD` to the owner's maw (offsets the DM3 upkeep — husbandry pays), leaving a **`FOOD_TRAIL`**
+  scent (the first real use of that pheromone channel); else move to the nearest food; else follow the owner.
+- **Diggers (ant/rodent/beetle):** with no food nearby, excavate one `SAND` cell toward the owner's maw and stamp
+  its ownership — extending the warren.
+- **Bees:** produce **honey** (`colony.honey`, getattr) = `HONEY_YIELD` food to the hive each work tick, and
+  pollinate (sow a `CROP` on an adjacent `TILLED` cell). `bee` is a new keeper-gift species (glyph `∵`).
+- **War beasts (tamed predators, `hunt_range > 0`):** keep the normal predator AI — but DM2b friend-or-foe makes
+  them hunt the nearest NON-owner (enemy) unit, so a tamed spider/hornet/cat is automatic **air/ground support**.
+
+Constants: `TAME_FORAGE_YIELD=8.0`, `HONEY_YIELD=2.0`. Gated + owner-guarded → byte-identical off.
+Deferred still: an explicit livestock *slaughter* verb (today livestock pay via forage yield), a honey→food
+conversion UI, and richer pollination.
 
 ## Acceptance (`tests/test_domestication.py`)
 
