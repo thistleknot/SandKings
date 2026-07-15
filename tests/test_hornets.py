@@ -141,9 +141,10 @@ def test_hornet_6_roster():
 
 
 def test_hornet_7_glyph():
-    """HORNET-7: hornets have glyph 'z' and it's unique."""
+    """HORNET-7: hornets have a unique swarm glyph (∴ after the graphics legibility redesign)."""
     assert 'hornets' in BEAST_GLYPHS, "'hornets' in BEAST_GLYPHS"
-    assert BEAST_GLYPHS['hornets'] == 'z', "BEAST_GLYPHS['hornets'] == 'z'"
-    # Verify uniqueness: no other beast has 'z'
+    g = BEAST_GLYPHS['hornets']
+    assert g == '∴', f"BEAST_GLYPHS['hornets'] == '∴' (got {g!r})"
+    # Verify uniqueness: no other beast shares the glyph
     glyphs = list(BEAST_GLYPHS.values())
-    assert glyphs.count('z') == 1, f"'z' appears exactly once in BEAST_GLYPHS"
+    assert glyphs.count(g) == 1, "the hornets glyph appears exactly once in BEAST_GLYPHS"

@@ -67,18 +67,21 @@ GLYPHS = {                 # DF-style terrain glyphs (spec R18/R22)
     VoxelType.SALVAGE.value: "&",
     VoxelType.WOOD.value: "¶",
     VoxelType.WOOD_WALL.value: "|",
-    VoxelType.WEB.value: "x",
-    VoxelType.CASTLE.value: "♜",       # stone castle crenellation (K5)
+    VoxelType.WEB.value: "╳",          # spider silk — a net (distinct from the spider glyph)
+    VoxelType.CASTLE.value: "Π",       # stone castle / gatehouse (K5)
     VoxelType.WATER.value: "≈",        # standing water (HYDRO flow sim)
 }
 FIRE_GLYPH = "^"                    # burning-cell overlay (T46)
 FIRE_COLOR = (255, 120, 0)
-BEAST_GLYPHS = {                    # fauna bestiary (T48)
-    'spider': "x", 'rabbit': "r", 'squirrel': "q", 'bird': "v",
-    'rodent': "n", 'scorpion': "t", 'snake': "S", 'anteater': "A",
-    'hornets': "z",
+# Fauna (T48): shape-distinct glyphs, colored by DANGER CLASS so threat is pre-attentive.
+BEAST_GLYPHS = {
+    'spider': "Ж", 'scorpion': "‡", 'snake': "§", 'anteater': "▼", 'bird': "⌃",
+    'hornets': "∴", 'rabbit': "∩", 'squirrel': "∪", 'rodent': "◦",
 }
-BEAST_COLOR = (200, 80, 220)        # violet: not of any colony
+BEAST_PREDATORS = frozenset(('spider', 'scorpion', 'snake', 'anteater', 'bird', 'hornets'))
+PREDATOR_COLOR = (235, 95, 70)      # warm red — a threat
+NEUTRAL_BEAST_COLOR = (150, 175, 150)  # cool grey-green — harmless
+BEAST_COLOR = (200, 80, 220)        # legacy violet (fallback / BLOCKS mode)
 CARVE_COLORS = {                    # F4: sentiment carving colours by glyph
     '♥': (255, 235, 140),  # devout - gold
     '◦': (170, 170, 180),  # wary - pale grey
@@ -89,8 +92,11 @@ CARVE_COLORS = {                    # F4: sentiment carving colours by glyph
     '☈': (120, 160, 235),  # AW2 dread - storm
 }
 COPPER_TINT = (184, 115, 51)  # armored soldier letters (R22)
-UNIT_GLYPHS = {UnitType.WORKER: "w", UnitType.SOLDIER: "s", UnitType.SCOUT: "c"}
+# Units: solid, shape-distinct silhouettes (circle / diamond / triangle) that POP as "figure" in bright
+# colony color against the dimmed terrain "ground" — far more legible than the old w/s/c letters.
+UNIT_GLYPHS = {UnitType.WORKER: "●", UnitType.SOLDIER: "◆", UnitType.SCOUT: "▲"}
 MAW_GLYPH = "Ω"
+TERRAIN_GLYPH_DIM = 0.6            # mute terrain glyph colors so creatures (figure) stand out (ground)
 EVENT_TINTS = (            # substring -> HUD color (spec R19/R24)
     ("Keeper", (120, 210, 120)),
     ("besieges", (255, 165, 60)),
@@ -841,7 +847,8 @@ def build_legend_entries() -> List[Tuple[str, Tuple[int, int, int]]]:
     entries.append((f" {MAW_GLYPH}  maw (the queen; health bar when hurt)",
                     MAW_COLOR))
     for species, glyph in BEAST_GLYPHS.items():
-        entries.append((f" {glyph}  {species} (wild)", BEAST_COLOR))
+        klass = PREDATOR_COLOR if species in BEAST_PREDATORS else NEUTRAL_BEAST_COLOR
+        entries.append((f" {glyph}  {species} (wild)", klass))
     entries.append((f" {FIRE_GLYPH}  fire", FIRE_COLOR))
     entries.append(("", HUD_FG))
     entries.append(("-- carvings (AW): forces before breakout, the god after --",
@@ -858,11 +865,15 @@ def build_legend_entries() -> List[Tuple[str, Tuple[int, int, int]]]:
         entries.append((f" {symbol}  {carve_names.get(key, key)}",
                         CARVE_COLORS.get(symbol, (255, 235, 170))))
     entries.append(("", HUD_FG))
-    entries.append(("-- colors --", (150, 150, 160)))
-    entries.append((" copper letter = armored soldier", COPPER_TINT))
+    entries.append(("-- reading the terrarium --", (150, 150, 160)))
+    entries.append((" ● worker  ◆ soldier  ▲ scout (colony-colored)", HUD_FG))
+    entries.append((" bright figures = life; dim = terrain", (150, 150, 160)))
+    entries.append((" red beast = predator; grey = harmless", PREDATOR_COLOR))
+    entries.append((" copper tint = armored", COPPER_TINT))
     entries.append((" magenta = retreating", (255, 0, 255)))
-    entries.append((" gold w = tribute envoy", (255, 200, 60)))
-    entries.append((" violet = wild beast", BEAST_COLOR))
+    entries.append((" gold = tribute envoy", (255, 200, 60)))
+    entries.append((" underlined = thrall (captive labor)", HUD_FG))
+    entries.append((" pulsing red maw = under siege", (235, 40, 30)))
     entries.append(("", HUD_FG))
     entries.append(("-- keeper verbs --", (150, 150, 160)))
     entries.append((" o  open the door -> breach", (150, 150, 160)))
@@ -1200,11 +1211,7 @@ class LiveViewer:
             # Held keys auto-repeat: after 250ms, re-fire every 60ms — so holding an arrow pans
             # the look cursor continuously (and Shift+arrow jumps 10 cells per repeat).
             pygame.key.set_repeat(250, 60)
-            self._font = pygame.font.SysFont("consolas,courier", 14)
-            self._cell_font = pygame.font.SysFont("consolas,couriernew",
-                                                  self.cell_size + 3, bold=True)
-            self._maw_font = pygame.font.SysFont("consolas,couriernew",
-                                                 self.cell_size * 2, bold=True)
+            self._load_fonts()
             clock = pygame.time.Clock()
             self.running = True
 
@@ -1464,23 +1471,55 @@ class LiveViewer:
                     self.inspected = targets[0] if targets else None
                     self._select_cycle = 1
 
+    def _load_fonts(self) -> None:
+        """Load the HUD + map glyph fonts. Prefer DejaVu Sans Mono (broad unicode -> distinctive
+        creature/terrain glyphs), fall back to Consolas/Courier. Builds bold cell/maw fonts plus an
+        UNDERLINED cell variant for alert states (R18 + storytelling-with-data legibility)."""
+        self._font = pygame.font.SysFont("consolas,courier", 14)
+        dejavu = None
+        try:                                          # matplotlib bundles DejaVuSansMono.ttf (full unicode)
+            import os as _os
+            import matplotlib.font_manager as _fm
+            p = _fm.findfont("DejaVu Sans Mono")
+            if p and _os.path.exists(p) and "Mono" in p:
+                dejavu = p
+        except Exception:
+            dejavu = None
+        if dejavu is None:                            # last resort: whatever the OS matches (may be partial)
+            dejavu = pygame.font.match_font("dejavusansmono")
+        if dejavu:
+            self._cell_font = pygame.font.Font(dejavu, self.cell_size + 3)
+            self._maw_font = pygame.font.Font(dejavu, self.cell_size * 2)
+            self._cell_font_ul = pygame.font.Font(dejavu, self.cell_size + 3)
+        else:
+            self._cell_font = pygame.font.SysFont("consolas,couriernew", self.cell_size + 3)
+            self._maw_font = pygame.font.SysFont("consolas,couriernew", self.cell_size * 2)
+            self._cell_font_ul = pygame.font.SysFont("consolas,couriernew", self.cell_size + 3)
+        for f in (self._cell_font, self._maw_font, self._cell_font_ul):
+            f.set_bold(True)
+        self._cell_font_ul.set_underline(True)
+
+    def _blink_on(self, period_ms: int = 400) -> bool:
+        """Blink phase from the wall clock — reserved for rare urgent alerts (a maw under siege)."""
+        return (pygame.time.get_ticks() // period_ms) % 2 == 0
+
     def _glyph(self, char: str, color: Tuple[int, int, int],
-               big: bool = False) -> "pygame.Surface":
+               big: bool = False, underline: bool = False) -> "pygame.Surface":
         """Cached rendered glyph; the grid never re-renders text per frame (R18)."""
-        key = (char, color, big)
+        key = (char, color, big, underline)
         surface = self._glyph_cache.get(key)
         if surface is None:
-            font = self._maw_font if big else self._cell_font
+            font = self._maw_font if big else (self._cell_font_ul if underline else self._cell_font)
             surface = font.render(char, True, color)
             self._glyph_cache[key] = surface
         return surface
 
     def _blit_glyph(self, char: str, color: Tuple[int, int, int],
-                    cx: int, cy: int, big: bool = False) -> None:
+                    cx: int, cy: int, big: bool = False, underline: bool = False) -> None:
         """Blit a glyph centered on the cell at pixel (cx, cy)."""
         cell = self.cell_size
         span = cell * 2 if big else cell
-        surface = self._glyph(char, color, big)
+        surface = self._glyph(char, color, big, underline)
         self._screen.blit(surface, (cx + (span - surface.get_width()) // 2,
                                     cy + (span - surface.get_height()) // 2))
 
@@ -1558,7 +1597,10 @@ class LiveViewer:
                 for y in range(h):
                     char = GLYPHS.get(int(col_voxels[y]), " ")
                     if char != " ":
-                        self._blit_glyph(char, tuple(int(c) for c in col_colors[y]),
+                        tc = col_colors[y]                      # mute terrain -> "ground"
+                        self._blit_glyph(char, (int(tc[0] * TERRAIN_GLYPH_DIM),
+                                                int(tc[1] * TERRAIN_GLYPH_DIM),
+                                                int(tc[2] * TERRAIN_GLYPH_DIM)),
                                          x * cell, y * cell)
 
         overlay_type = PHEROMONE_OVERLAYS[self.overlay_index]
@@ -1590,7 +1632,8 @@ class LiveViewer:
                         color = tuple(int(c * depth_shade(depth)) for c in COPPER_TINT)
                     else:
                         color = hud_text_color(fill)
-                    self._blit_glyph(char, color, ux * cell, uy * cell)
+                    thrall = getattr(unit, 'laboring_for', -1) >= 0   # a captive laboring for a captor
+                    self._blit_glyph(char, color, ux * cell, uy * cell, underline=thrall)
                 else:
                     rect = pygame.Rect(ux * cell + 1, uy * cell + 1, cell - 2, cell - 2)
                     pygame.draw.rect(self._screen, fill, rect)
@@ -1599,7 +1642,10 @@ class LiveViewer:
                 depth = self._visible_depth(colony.maw.position)
                 if depth is not None:
                     mx, my = colony.maw.position[0], colony.maw.position[1]
+                    hp_frac = colony.maw.health / MAW_MAX_HEALTH
                     fill = tuple(int(c * depth_shade(depth)) for c in MAW_COLOR)
+                    if hp_frac < 1.0 and self._blink_on():   # UNDER SIEGE -> pulse red (rare urgent alert)
+                        fill = (235, 40, 30)
                     rect = pygame.Rect(mx * cell - cell // 2, my * cell - cell // 2,
                                        cell * 2, cell * 2)
                     if glyph_mode:
@@ -1608,7 +1654,6 @@ class LiveViewer:
                         pygame.draw.rect(self._screen, fill, rect)
                         pygame.draw.rect(self._screen, (0, 0, 0), rect, 2)
                     # Siege health bar (spec R16): only shown when damaged
-                    hp_frac = colony.maw.health / MAW_MAX_HEALTH
                     if hp_frac < 1.0:
                         bar = pygame.Rect(rect.x, rect.y - 5, rect.width, 3)
                         pygame.draw.rect(self._screen, (80, 0, 0), bar)
@@ -1628,13 +1673,14 @@ class LiveViewer:
                 rect = pygame.Rect(pos[0] * cell, pos[1] * cell, cell, cell)
                 pygame.draw.rect(self._screen, FIRE_COLOR, rect, 1)
 
-        # Wild beasts (T48): violet letters of no colony
+        # Wild beasts (T48): colored by DANGER CLASS — warm red for predators, cool grey for neutrals
         for beast in getattr(self.sim, 'fauna', None) or []:
             depth = self._visible_depth(beast.position)
             if depth is None:
                 continue
             bx, by = beast.position[0], beast.position[1]
-            color = tuple(int(c * depth_shade(depth)) for c in BEAST_COLOR)
+            klass = PREDATOR_COLOR if beast.species in BEAST_PREDATORS else NEUTRAL_BEAST_COLOR
+            color = tuple(int(c * depth_shade(depth)) for c in klass)
             if glyph_mode:
                 self._blit_glyph(BEAST_GLYPHS.get(beast.species, "?"), color,
                                  bx * cell, by * cell)
