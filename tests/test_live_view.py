@@ -452,6 +452,29 @@ def test_poison_cloud_renders_pure():
         "the poison overlay must not mutate the sim (pure renderer)"
 
 
+def test_siege_tower_renders_pure():
+    """Siege (SPEC_SIEGE SE2): the siege-tower overlay draws without crashing and mutates nothing — a pure
+    read of sim.siege_towers."""
+    import pygame
+    sim = make_sim()
+    for _ in range(10):
+        sim.step()
+    cx, cy = sim.world.width // 2, sim.world.height // 2
+    sim.siege_towers = [{'owner': sim.colonies[0].colony_id,
+                         'pos': (cx, cy, sim.world.surface_z(cx, cy)),
+                         'target': (cx + 5, cy, sim.world.surface_z(cx + 5, cy))}]
+    viewer = LiveViewer(sim, max_steps=1)
+    pygame.init()
+    viewer._screen = pygame.display.set_mode(
+        (sim.world.width * viewer.cell_size + 400, sim.world.height * viewer.cell_size + 40))
+    viewer._load_fonts()
+    towers_before, step0 = [dict(t) for t in sim.siege_towers], sim.step_count
+    viewer._render_body()
+    pygame.quit()
+    assert sim.siege_towers == towers_before and sim.step_count == step0, \
+        "the siege-tower overlay must not mutate the sim (pure renderer)"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

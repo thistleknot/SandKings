@@ -265,6 +265,9 @@ BALLISTA_RELOAD = 25             # steps between bolts (faster than the catapult
 BALLISTA_DAMAGE = 20             # direct maw damage per bolt (high single-target; no splash)
 BALLISTA_RANGE = 44              # flat trajectory reaches across the whole board
 BOLT_SPEED = 6                   # a bolt flies faster than a lobbed shot (SHOT_SPEED = 3)
+SIEGE_TOWER_DEPLOY = 120         # SE2: cadence a siege house rolls out a tower toward its war target
+SIEGE_TOWER_SPEED = 1            # cells/step the tower advances (slow, ominous — crosses open ground)
+SIEGE_TOWER_BREACH = 1           # Chebyshev radius of palisade the tower breaches on arrival
 
 # Sentience Arc constants (SPEC_SENTIENCE.md S1-S4)
 RESONANCE_RANGE = 6          # Chebyshev radius of thought contagion
@@ -2086,9 +2089,11 @@ class SandKingsSimulation:
         if POISON_ENABLED:
             self._poison_bomb_tick()
 
-        # 3c-b. SIEGE ENGINES (SPEC_SIEGE SE1): a siege house looses a fast ballista bolt at its war target
+        # 3c-b. SIEGE ENGINES (SPEC_SIEGE SE1/SE2): a siege house looses a fast ballista bolt, and rolls a
+        # mobile siege tower that advances on the enemy maw and breaches its palisade on arrival
         if SIEGE_ENGINES_ENABLED:
             self._ballista_tick()
+            self._siege_tower_tick()
 
         # 3c-c. CALTROPS (SPEC_TECH TE13): loose tacks prick whoever crosses
         self._caltrop_tick()
@@ -4198,6 +4203,71 @@ class SandKingsSimulation:
                 self._spawn_effect('bolt', colony.maw.position, target.maw.position)
             self._log_event(f"House {self._house_name(colony)}'s ballista looses a bolt at "
                             f"House {self._house_name(target)}!")
+
+    def _siege_towers(self) -> list:
+        """SE2 (SPEC_SIEGE): mobile siege towers in transit; checkpoint-guarded, plain dicts."""
+        if not hasattr(self, 'siege_towers'):
+            self.siege_towers = []
+        return self.siege_towers
+
+    def _breach_palisade(self, center: Tuple[int, int, int], owner_id: int) -> bool:
+        """SE2: a siege tower on arrival smashes the enemy's palisade ring (WOOD_WALL/CASTLE -> SAND) within
+        SIEGE_TOWER_BREACH, opening the fortress. Deterministic. Returns True if anything was breached."""
+        cx, cy, cz = center
+        breached = False
+        for dx in range(-SIEGE_TOWER_BREACH, SIEGE_TOWER_BREACH + 1):
+            for dy in range(-SIEGE_TOWER_BREACH, SIEGE_TOWER_BREACH + 1):
+                for dz in (-1, 0, 1):
+                    x, y, z = cx + dx, cy + dy, cz + dz
+                    if not self.world.in_bounds(x, y, z):
+                        continue
+                    if self.world.voxels[x, y, z] in (VoxelType.WOOD_WALL.value, VoxelType.CASTLE.value):
+                        self.world.voxels[x, y, z] = VoxelType.SAND.value
+                        self._rot().pop((x, y, z), None)
+                        breached = True
+        if breached:
+            owner = self._colony_by_id(owner_id)
+            if owner is not None:
+                self._log_event(f"House {self._house_name(owner)}'s siege tower breaches the walls!")
+        return breached
+
+    def _siege_tower_tick(self) -> None:
+        """SE2: roll out siege towers (deploy cadence) and advance them toward the enemy maw; on arrival each
+        breaches the palisade and is spent. A self-propelled engine crossing open ground (distinct from the
+        unit-carried ram). Deterministic (no RNG) -> byte-identical off (gated caller)."""
+        towers = self._siege_towers()
+        diplomacy = getattr(self, 'diplomacy', None)
+        if diplomacy is None:
+            return
+        owners = {t['owner'] for t in towers}
+        if self.step_count % SIEGE_TOWER_DEPLOY == 0 and self.step_count:   # DEPLOY
+            for colony in self.colonies:
+                if (not colony.is_alive() or 'catapult' not in getattr(colony, 'techs', ())
+                        or colony.colony_id in owners):
+                    continue
+                tid = diplomacy.war_target.get(colony.colony_id)
+                target = self._colony_by_id(tid) if tid is not None else None
+                if target is None or not target.is_alive():
+                    continue
+                mx, my, mz = colony.maw.position
+                tx, ty, _ = target.maw.position
+                if max(abs(tx - mx), abs(ty - my)) > BALLISTA_RANGE:
+                    continue
+                towers.append({'owner': colony.colony_id, 'pos': (mx, my, mz),
+                               'target': tuple(int(c) for c in target.maw.position)})
+                self._log_event(f"House {self._house_name(colony)} rolls a siege tower toward "
+                                f"House {self._house_name(target)}")
+        alive = []                                                          # ADVANCE + breach
+        for t in towers:
+            px, py, pz = t['pos']
+            tx, ty, _tz = t['target']
+            if max(abs(tx - px), abs(ty - py)) <= SIEGE_TOWER_SPEED:
+                self._breach_palisade(t['target'], t['owner'])
+                continue                                                    # spent on arrival
+            t['pos'] = (px + int(np.sign(tx - px)) * SIEGE_TOWER_SPEED,
+                        py + int(np.sign(ty - py)) * SIEGE_TOWER_SPEED, pz)
+            alive.append(t)
+        self.siege_towers = alive
 
     def _plunder_techs(self, fallen: Colony):
         """T3 conquest-steal: the aggressor at war with a fallen house seizes

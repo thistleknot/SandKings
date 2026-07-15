@@ -79,6 +79,8 @@ FIRE_GLYPH = "^"                    # burning-cell overlay (T46)
 FIRE_COLOR = (255, 120, 0)
 POISON_GLYPH = "§"                  # poison-cloud overlay (SPEC_CHEMICAL_WAR CW1)
 POISON_COLOR = (120, 210, 60)       # sickly chemical green
+SIEGE_TOWER_GLYPH = "⊓"             # mobile siege tower (SPEC_SIEGE SE2)
+SIEGE_TOWER_COLOR = (170, 120, 70)  # timber brown
 # Fauna (T48): shape-distinct glyphs, colored by DANGER CLASS so threat is pre-attentive.
 BEAST_GLYPHS = {
     'spider': "Ж", 'scorpion': "‡", 'snake': "§", 'anteater': "▼", 'bird': "⌃",
@@ -915,6 +917,7 @@ def build_legend_compact() -> List[Tuple[str, Tuple[int, int, int]]]:
                       for sp, g in BEAST_GLYPHS.items()]
     cats['pond'] = [(f"{FISH_GLYPHS[0]}  fish", FISH_COLOR), (f"{BOAT_GLYPH}  raft", BOAT_COLOR)]
     cats['hazards'] = [(f"{FIRE_GLYPH}  fire", FIRE_COLOR), (f"{POISON_GLYPH}  poison", POISON_COLOR)]
+    cats['siege'] = [(f"{SIEGE_TOWER_GLYPH}  siege tower", SIEGE_TOWER_COLOR)]
     cats['terrain'] = [(f"{GLYPHS[v.value]}  {v.name.lower().replace('_', ' ')}",
                         tuple(int(c) for c in palette[v.value]))
                        for v in (VoxelType.FOOD, VoxelType.WATER, VoxelType.CROP_RIPE, VoxelType.CORPSE,
@@ -1784,6 +1787,14 @@ class LiveViewer:
             else:
                 rect = pygame.Rect(pos[0] * cell, pos[1] * cell, cell, cell)
                 pygame.draw.rect(self._screen, POISON_COLOR, rect, 1)
+
+        # Siege towers (SPEC_SIEGE SE2): a mobile timber tower crossing open ground toward the enemy maw.
+        # Pure read of the sim's transient siege_towers list (empty unless SIEGE_ENGINES_ENABLED rolled one).
+        for t in getattr(self.sim, 'siege_towers', None) or []:
+            pos = t.get('pos')
+            if pos is None or self._visible_depth(pos) is None:
+                continue
+            self._blit_glyph(SIEGE_TOWER_GLYPH, SIEGE_TOWER_COLOR, pos[0] * cell, pos[1] * cell, big=True)
 
         # Launched effects (SPEC_FAUNA_ECOLOGY, gated EFFECTS_ENABLED): a catapult shot arcs across the board
         # and bursts; a firecracker flashes. Pure read of the sim's transient effects list.

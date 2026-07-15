@@ -86,6 +86,43 @@ def test_gate_off_no_bolt_in_step():
     assert all(e.get('kind') != 'bolt' for e in getattr(sim, 'effects', [])), "gate off -> no bolt ever loosed"
 
 
+def test_siege_tower_breaches_palisade():
+    """SE2: _breach_palisade smashes an adjacent enemy WOOD_WALL to SAND (opens the fortress)."""
+    if not HAVE:
+        return _skip()
+    from sandkings import VoxelType
+    sim = _sim()
+    target = sim.colonies[1]
+    cx, cy, cz = target.maw.position
+    wx = min(cx + 1, sim.world.dimensions[0] - 2)
+    sim.world.voxels[wx, cy, cz] = VoxelType.WOOD_WALL.value
+    breached = sim._breach_palisade(target.maw.position, sim.colonies[0].colony_id)
+    assert breached, "the tower breaches a wall on arrival"
+    assert sim.world.voxels[wx, cy, cz] == VoxelType.SAND.value, "the WOOD_WALL is smashed to SAND"
+
+
+def test_siege_tower_deploys_and_advances():
+    """SE2: a catapult-teched war house rolls out a tower that advances toward the enemy maw."""
+    if not HAVE:
+        return _skip()
+    from sandkings import SIEGE_TOWER_DEPLOY, SIEGE_TOWER_SPEED
+    sim = _sim()
+    attacker, target = sim.colonies[0], sim.colonies[1]
+    ax, ay, az = attacker.maw.position
+    target.maw.position = (min(ax + 8, sim.world.dimensions[0] - 2), ay, az)
+    attacker.techs = set(getattr(attacker, 'techs', set())) | {'catapult'}
+    sim._diplomacy().war_target[attacker.colony_id] = target.colony_id
+    sim.siege_towers = []
+    sim.step_count = SIEGE_TOWER_DEPLOY        # a deploy step
+    sim._siege_tower_tick()
+    towers = sim._siege_towers()
+    assert towers, "a siege tower is rolled out toward the enemy"
+    x0 = towers[0]['pos'][0]
+    sim.step_count = SIEGE_TOWER_DEPLOY + 1    # a non-deploy step -> pure advance
+    sim._siege_tower_tick()
+    assert sim._siege_towers()[0]['pos'][0] == x0 + SIEGE_TOWER_SPEED, "the tower advances toward the maw"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

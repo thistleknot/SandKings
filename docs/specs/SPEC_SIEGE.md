@@ -31,13 +31,21 @@ Deterministic (no RNG) → byte-identical off. `live_view` draws a bolt as a ste
 **Acceptance SE1.** A catapult-teched house at war with an in-range target: after `BALLISTA_RELOAD` steps the
 target maw has taken `~BALLISTA_DAMAGE` and a `'bolt'` effect is in flight. Gate off → neither.
 
-## SE2 — The siege tower (a mobile wall-breaker) — PHASE 2
+## SE2 — The siege tower (a mobile wall-breaker)
 
-A besieging house deploys a slow siege tower that ADVANCES toward the enemy maw and, on arrival, BREACHES the
-enemy's palisade (turns adjacent `WOOD_WALL` voxels to `SAND`, opening the fortress so assault units pour in) —
-the answer to the palisade defense (SPEC_TECH T43). A `sim.siege_towers` transient list (plain dicts,
-checkpoint-safe), advanced in a gated tick; rendered as a moving timber glyph. Detailed spec on build.
-(Deferred to Phase 2 — the ballista lands the visible-projectile ask first.)
+`sim.siege_towers` — a transient list of plain dicts `{owner, pos, target}` (checkpoint-safe), advanced by
+`_siege_tower_tick` (gated `SIEGE_ENGINES_ENABLED`):
+- **Deploy** (cadence `SIEGE_TOWER_DEPLOY`): a catapult-teched house with an in-range `war_target` and no live
+  tower rolls one out from its maw toward the enemy maw.
+- **Advance**: each tower steps `SIEGE_TOWER_SPEED` cells/step toward its target; on arrival (`_breach_palisade`)
+  it smashes the enemy palisade ring (`WOOD_WALL`/`CASTLE` → `SAND`, clearing `_rot`) within `SIEGE_TOWER_BREACH`,
+  opening the fortress — the answer to the palisade defense (SPEC_TECH T43) — then is spent.
+A self-propelled engine crossing OPEN GROUND, distinct from the unit-carried battering ram (`ram_until`, which
+smashes only walls a soldier is already adjacent to). Deterministic (no RNG) → byte-identical off.
+`live_view` draws a tower as a big timber `⊓` in transit (pure read); legend gains a `siege` category.
+
+**Acceptance SE2.** A catapult-teched house at war deploys a tower on the deploy cadence; the tower advances
+each step; placed adjacent to an enemy `WOOD_WALL`, `_breach_palisade` turns it to `SAND`. Gate off → no tower.
 
 ## Constants (sandkings.py)
 
