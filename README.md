@@ -37,56 +37,26 @@ The original Core War code is from https://github.com/rodrigosetti/corewar!
 
 ---
 
-## 🎮 Sand Kings: 3D Colony Simulation (NEW)
+## 🎮 Sand Kings: a quasi-sentient ASCII terrarium
 
-**Inspired by DRQ's adversarial evolution, we've built a 3D voxel-based colony simulation with GPU acceleration and evolutionary dynamics.**
+Built on DRQ's adversarial-evolution DNA, **Sand Kings** is a perpetual Dwarf-Fortress-styled artificial-
+life terrarium: insectoid colonies ruled by stationary **maws** tunnel, farm, fight, trade, and *learn*
+in a glass tank you tend as the keeper. DRQ's red-queen self-play became the colonies' adversarial
+neuroevolution; a **real deep-RL brain** (RLOO policy-gradient, warm-started from the genome, dreaming
+through the Chill) rides *under* that GA for within-lifetime learning. A **weather-rotated food web**
+(guppies↑wet, crickets↑dry, fauna-bounty↑dark) means colonies must adapt their foraging by season — and
+the maw *learns* to. Plus seasons & emergent weather, a per-cell hydro flow-sim, inter-colony politics &
+economy, native/foreign tech, and named dynasties that remember.
 
-### Features
-- **GPU-Accelerated Physics** (PyTorch + CUDA): 8-24 it/s vs 1-2 it/s CPU
-- **Variable Colony Count**: Random 3-5 colonies per battle (not fixed)
-- **Randomized Spawns**: 10% minimum diagonal separation
-- **Morale System**: Units retreat at <10% HP (ancient warfare model)
-- **Darwinian Pressure**: Food scarcity, starvation, combat mortality
-- **Aggression > Defense**: Quick decisive battles (50% damage increase)
-- **MAP-Elites Evolution**: LLM-driven trait optimization
-- **5000-frame GIF Generation**: Incremental rendering without memory leaks
+Everything is **baseline-ON**; a fresh run boots the full system (each subsystem has an opt-out `--no-*`):
 
-### Quick Start
 ```bash
-# 🧠 Neural hive minds (hierarchical neuroevolution - NEW!)
-python sandkings.py --steps 300 --num-colonies 3 --use-neural
-
-# CPU version with random colony count
-python sandkings.py --steps 300 --num-colonies 0
-
-# Inter-colony economy modes
-python sandkings.py --steps 300 --bargain  # full political economy (wages + subjugation)
-
-# GPU-accelerated version
-python sandkings_gpu.py --steps 500
-
-# Evolution mode with MAP-Elites
-python sandkings_evolution.py --mode evolution --generations 50 --gpu
+# Windows: the py310 interpreter, never a bare `python`.
+C:/Users/user/py310/Scripts/python.exe sandkings.py --live --fresh
 ```
 
-The terrarium now includes an **inter-colony political economy** where colonies extract labor-value through force (subjugation/thralls), peaceful trade (wage market, tech licenses, goods), or a bargained mode that emerges by net extraction — unifying war and peace on a single economic continuum. Escaped colonies achieve an intelligence leap (enlightenment), raising brain ceiling and accelerating tech/codex learning ×5.
-
-### Neural Hive Minds (NEW) 🧠
-**Hierarchical neuroevolution inspired by biological nervous systems:**
-- **Maw brain**: Shared encoder (slow evolution, strategic memory)
-- **Soldier layers**: Individual extensions (fast evolution via combat mating)
-- **Lamarckian folding**: Top-performing soldiers → Maw brain
-- **Network pruning**: Remove unused weights (efficiency optimization)
-- **Combat mating**: 5% chance during battles (horizontal gene transfer)
-
-**See [NEURAL_HIVE_IMPLEMENTATION.md](NEURAL_HIVE_IMPLEMENTATION.md) for full architecture details.**
-
-### Architecture
-- `sandkings.py` - CPU version with full simulation logic
-- `sandkings_gpu.py` - GPU-accelerated hybrid (PyTorch physics + CPU AI)
-- `sandkings_evolution.py` - MAP-Elites + LLM evolution system
-
-**See [BATTLE_SYSTEM_V2.md](BATTLE_SYSTEM_V2.md) for detailed mechanics and design philosophy.**
+**➡️ Full guide (how to play, controls, all systems): [README_SANDKINGS.md](README_SANDKINGS.md).**
+Design docs: `SPEC_*.md`, `docs/decisions/`, and the lineage in [INSPIRATIONS.md](INSPIRATIONS.md).
 
 ---
 
