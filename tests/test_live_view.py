@@ -382,6 +382,30 @@ def test_attached_viewer_shares_runner_and_mirrors():
     assert runner.glyph_png and runner.glyph_png[:8] == b"\x89PNG\r\n\x1a\n"
 
 
+def test_world_alive_render_is_pure():
+    """A World Alive (Phase 1): the fish + boat + beast-glyph render passes draw without crashing and MUTATE
+    NOTHING — they are pure renderers over sim scalars/flags (guppy_pop, unit.rafted, sim.fauna)."""
+    import pygame
+    sim = make_sim()
+    for _ in range(20):                 # populate units, water, guppy_pop
+        sim.step()
+    sim.guppy_pop = 120.0               # a healthy shoal so the fish layer draws
+    for c in sim.colonies:              # put a unit on a raft so the boat pass runs
+        if c.units:
+            c.units[0].rafted = True
+            break
+    viewer = LiveViewer(sim, max_steps=1)
+    pygame.init()
+    viewer._screen = pygame.display.set_mode(
+        (sim.world.width * viewer.cell_size + 400, sim.world.height * viewer.cell_size + 40))
+    viewer._load_fonts()                # fonts are lazy (run() calls this) — needed for _blit_glyph
+    gp_before, step_before = sim.guppy_pop, sim.step_count
+    viewer._render_body()               # exercises the new fish + boat + beast-glyph passes
+    pygame.quit()
+    assert sim.guppy_pop == gp_before and sim.step_count == step_before, \
+        "the World-Alive render passes must not mutate sim state (pure renderer)"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

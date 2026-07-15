@@ -81,11 +81,21 @@ FIRE_COLOR = (255, 120, 0)
 BEAST_GLYPHS = {
     'spider': "Ж", 'scorpion': "‡", 'snake': "§", 'anteater': "▼", 'bird': "⌃",
     'hornets': "∴", 'rabbit': "∩", 'squirrel': "∪", 'rodent': "◦",
+    # smaller / keeper-introduced fauna (previously fell through to "?")
+    'cricket': "λ", 'ant': "α", 'fly': "×", 'small_spider': "⋆", 'mouse': "ω",
+    'cat': "Ψ", 'beetle': "⊙",
 }
-BEAST_PREDATORS = frozenset(('spider', 'scorpion', 'snake', 'anteater', 'bird', 'hornets'))
+BEAST_PREDATORS = frozenset(('spider', 'scorpion', 'snake', 'anteater', 'bird', 'hornets', 'cat'))
 PREDATOR_COLOR = (235, 95, 70)      # warm red — a threat
 NEUTRAL_BEAST_COLOR = (150, 175, 150)  # cool grey-green — harmless
 BEAST_COLOR = (200, 80, 220)        # legacy violet (fallback / BLOCKS mode)
+# A World Alive: the pond shoal + rafts, drawn by the renderer from sim scalars/flags (no sim state)
+FISH_GLYPHS = ("›", "‹", "◦")       # a darting shoal over the oasis/water (count ∝ guppy_pop)
+FISH_COLOR = (150, 200, 235)        # silvery pond blue
+FISH_MAX = 16                       # cap on drawn fish (never crowd the pond)
+FISH_PER = 9                        # guppy_pop units per drawn fish
+BOAT_GLYPH = "≈"                    # a raft hull drawn under a rafted unit (spawn rides on top)
+BOAT_COLOR = (170, 110, 50)         # timber brown
 CARVE_COLORS = {                    # F4: sentiment carving colours by glyph
     '♥': (255, 235, 140),  # devout - gold
     '◦': (170, 170, 180),  # wary - pale grey
@@ -901,6 +911,8 @@ def build_legend_compact() -> List[Tuple[str, Tuple[int, int, int]]]:
     for sp, g in BEAST_GLYPHS.items():
         k = PREDATOR_COLOR if sp in BEAST_PREDATORS else NEUTRAL_BEAST_COLOR
         e.append((f" {g}  {sp}", k))
+    e.append((f" {FISH_GLYPHS[0]}  fish (the pond shoal)", FISH_COLOR))
+    e.append((f" {BOAT_GLYPH}  raft (spawn afloat)", BOAT_COLOR))
     e.append(("-- terrain --", (150, 150, 160)))
     for v in (VoxelType.FOOD, VoxelType.WATER, VoxelType.CROP_RIPE, VoxelType.CORPSE,
               VoxelType.SAND, VoxelType.TUNNEL_WALL, VoxelType.WEB):
@@ -1696,9 +1708,9 @@ class LiveViewer:
                                             uy * cell + (cell - spr.get_height()) // 2))
                 elif glyph_mode:
                     char = UNIT_GLYPHS.get(unit.unit_type, "?")
-                    if getattr(unit, 'rafted', False):     # afloat on a raft (boats)
-                        char = "≈"
-                        color = (170, 110, 50)
+                    if getattr(unit, 'rafted', False):     # afloat on a raft — draw the hull, spawn rides on top
+                        self._blit_glyph(BOAT_GLYPH, BOAT_COLOR, ux * cell, uy * cell)
+                        color = hud_text_color(fill)
                     elif getattr(unit, 'gift_to', -1) >= 0:  # envoy caravan (P13)
                         color = (255, 200, 60)
                     elif unit.retreating:
@@ -1771,6 +1783,27 @@ class LiveViewer:
                 rect = pygame.Rect(bx * cell + 1, by * cell + 1,
                                    cell - 2, cell - 2)
                 pygame.draw.rect(self._screen, color, rect)
+
+        # A World Alive — the pond shoal: scatter fish over the oasis disc + real WATER cells, count ~ guppy_pop.
+        # Pure renderer: reads the sim scalar, mutates nothing, uses NO shared RNG (deterministic hash + a
+        # wall-clock phase so the shoal darts). Draws over the surface pond in glyph mode.
+        gp = float(getattr(self.sim, 'guppy_pop', 0.0) or 0.0)
+        if gp > 0 and glyph_mode:
+            from sandkings import OASIS_RADIUS
+            cx, cy = w // 2, h // 2
+            cells = [(x, y)
+                     for x in range(max(1, cx - OASIS_RADIUS), min(w - 1, cx + OASIS_RADIUS + 1))
+                     for y in range(max(1, cy - OASIS_RADIUS), min(h - 1, cy + OASIS_RADIUS + 1))
+                     if (x - cx) ** 2 + (y - cy) ** 2 <= OASIS_RADIUS ** 2]
+            water = np.argwhere(self.sim.world.voxels[:, :, self.z_level] == VoxelType.WATER.value)
+            cells += [(int(wx), int(wy)) for wx, wy in water]
+            if cells:
+                n = min(len(cells), FISH_MAX, 1 + int(gp / FISH_PER))
+                phase = pygame.time.get_ticks() // 350          # ~3 darts/sec (view-only animation)
+                cells.sort(key=lambda c: ((c[0] * 73856093) ^ (c[1] * 19349663) ^ (phase * 83492791)) & 0xffff)
+                for (fx, fy) in cells[:n]:
+                    g = FISH_GLYPHS[(fx + fy + phase) % len(FISH_GLYPHS)]
+                    self._blit_glyph(g, FISH_COLOR, fx * cell, fy * cell)
 
         # K4/F4: carvings - the colonies' sentiment toward the keeper,
         # coloured by band (devout gold -> wary grey -> hateful red)
