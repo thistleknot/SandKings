@@ -40,11 +40,19 @@ the right. It shows a **condensed** legend (`build_legend_compact`: creatures wi
 terrain, the reading key) in a single compact column (`legend_layout`, 11px font). The full
 `build_legend_entries` is retained (tests + future use).
 
-## Open (Phase 3)
+## Phase 3 — Procedural top-down sprite tiles (`RenderStyle.TILES`) — SHIPPED
 
-- **Phase 3 — Procedural top-down sprite tiles** (`RenderStyle.TILES`): extend the `iso_sprites.py` forge
-  to bake representational 16×16 top-down sprites (bug/beast/maw/food/water), colony-tinted and cached —
-  a soldier LOOKS like a mandibled bug, a guppy like a fish.
+A third render style (`R` now cycles GLYPH → BLOCKS → TILES) that draws **procedural creature sprites**
+instead of glyphs: terrain is a clean full-color fill and each unit/maw/beast is a forged sprite (`_sprite`
+→ `iso_sprites.forge_bug`/`forge_maw`/`forge_beast`, blitted centered, colony-tinted, internally cached).
+The existing ISO forge already draws top-down-ish creatures (segmented body + legs, a maw-mound), so
+TILES **reuses it directly** — a soldier looks like a mandibled bug, a spider like a spider. Gated on
+`cell >= GLYPH_MIN_CELL` like glyphs. The maw-siege pulse carries through (the sprite tint is the pulse
+color). Verified: a headless TILES frame shows creature sprites over color terrain; suite + battery green.
 
 Note: the CryPixels 1-bit pack the user pointed at is abstract symmetric sigils (not creature icons), so
 representational sprites are generated the way the ISO view already is, not loaded from that pack.
+
+## All three phases shipped
+Distinctive glyphs + Gestalt attributes (P1), toggleable sidebar legend (P2), procedural top-down sprite
+tiles (P3). `R` cycles GLYPH/BLOCKS/TILES; `TAB` cycles TOPDOWN/SLICE/ISO; `L` toggles the sidebar legend.

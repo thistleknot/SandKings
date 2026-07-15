@@ -299,7 +299,9 @@ def test_r_key_toggles_render_style():
     viewer._handle_event(make_keydown(pygame.K_r))
     assert viewer.render_style == RenderStyle.BLOCKS
     viewer._handle_event(make_keydown(pygame.K_r))
-    assert viewer.render_style == RenderStyle.GLYPH
+    assert viewer.render_style == RenderStyle.TILES        # 3-way cycle: GLYPH -> BLOCKS -> TILES
+    viewer._handle_event(make_keydown(pygame.K_r))
+    assert viewer.render_style == RenderStyle.GLYPH, "wraps back to glyph"
 
 
 def test_topdown_cells_consistency():

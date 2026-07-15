@@ -30,6 +30,7 @@ class ViewMode(Enum):
 class RenderStyle(Enum):
     GLYPH = 0     # DF-style character grid (default; spec R18)
     BLOCKS = 1    # plain colored rects
+    TILES = 2     # procedural top-down sprites (creatures LOOK like bugs/beasts; reuses the iso forge)
 
 HUD_WIDTH = 320
 DEFAULT_CELL_SIZE = 12
@@ -1333,9 +1334,8 @@ class LiveViewer:
             elif key == pygame.K_p:
                 self.overlay_index = (self.overlay_index + 1) % len(PHEROMONE_OVERLAYS)
             elif key == pygame.K_r:
-                self.render_style = (RenderStyle.BLOCKS
-                                     if self.render_style == RenderStyle.GLYPH
-                                     else RenderStyle.GLYPH)
+                order = (RenderStyle.GLYPH, RenderStyle.BLOCKS, RenderStyle.TILES)
+                self.render_style = order[(order.index(self.render_style) + 1) % len(order)]
             elif key == pygame.K_m:
                 self.manager_open = not self.manager_open
                 self.saga_open = False
@@ -1552,6 +1552,17 @@ class LiveViewer:
         self._screen.blit(surface, (cx + (span - surface.get_width()) // 2,
                                     cy + (span - surface.get_height()) // 2))
 
+    def _sprite(self, kind: str, arg, tint, tw: int) -> "pygame.Surface":
+        """Forge (internally cached) a top-down creature sprite for TILES mode, reusing the ISO forge —
+        so a soldier LOOKS like a mandibled bug, a spider like a spider. kind: 'bug' (arg=caste,
+        tint=colony) | 'maw' (tint=color) | 'beast' (arg=species)."""
+        from iso_sprites import forge_bug, forge_maw, forge_beast
+        if kind == 'bug':
+            return forge_bug(arg, tint, tw)
+        if kind == 'maw':
+            return forge_maw(tint, tw)
+        return forge_beast(arg, tw)
+
     def _render(self) -> None:
         # U3: the whole on-screen render reads sim state (voxels in place) and
         # may consume the global np.random stream (storm haze) or lazily build
@@ -1602,6 +1613,8 @@ class LiveViewer:
 
         glyph_mode = (self.render_style == RenderStyle.GLYPH
                       and cell >= GLYPH_MIN_CELL)
+        tiles_mode = (self.render_style == RenderStyle.TILES
+                      and cell >= GLYPH_MIN_CELL)   # procedural top-down creature sprites
 
         topdown = self.view_mode == ViewMode.TOPDOWN
         if topdown:
@@ -1649,7 +1662,11 @@ class LiveViewer:
                 ux, uy = unit.position[0], unit.position[1]
                 fill, border = unit_draw_color(colony.color, unit.retreating)
                 fill = tuple(int(c * depth_shade(depth)) for c in fill)
-                if glyph_mode:
+                if tiles_mode:
+                    spr = self._sprite('bug', unit.unit_type.name.lower(), colony.color, cell)
+                    self._screen.blit(spr, (ux * cell + (cell - spr.get_width()) // 2,
+                                            uy * cell + (cell - spr.get_height()) // 2))
+                elif glyph_mode:
                     char = UNIT_GLYPHS.get(unit.unit_type, "?")
                     if getattr(unit, 'rafted', False):     # afloat on a raft (boats)
                         char = "≈"
@@ -1678,7 +1695,11 @@ class LiveViewer:
                         fill = (235, 40, 30)
                     rect = pygame.Rect(mx * cell - cell // 2, my * cell - cell // 2,
                                        cell * 2, cell * 2)
-                    if glyph_mode:
+                    if tiles_mode:
+                        spr = self._sprite('maw', None, fill, cell)
+                        self._screen.blit(spr, (rect.x + (rect.width - spr.get_width()) // 2,
+                                                rect.y + (rect.height - spr.get_height()) // 2))
+                    elif glyph_mode:
                         self._blit_glyph(MAW_GLYPH, fill, rect.x, rect.y, big=True)
                     else:
                         pygame.draw.rect(self._screen, fill, rect)
@@ -1711,7 +1732,11 @@ class LiveViewer:
             bx, by = beast.position[0], beast.position[1]
             klass = PREDATOR_COLOR if beast.species in BEAST_PREDATORS else NEUTRAL_BEAST_COLOR
             color = tuple(int(c * depth_shade(depth)) for c in klass)
-            if glyph_mode:
+            if tiles_mode:
+                spr = self._sprite('beast', beast.species, None, cell)
+                self._screen.blit(spr, (bx * cell + (cell - spr.get_width()) // 2,
+                                        by * cell + (cell - spr.get_height()) // 2))
+            elif glyph_mode:
                 self._blit_glyph(BEAST_GLYPHS.get(beast.species, "?"), color,
                                  bx * cell, by * cell)
             else:
