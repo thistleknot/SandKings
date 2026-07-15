@@ -234,6 +234,16 @@ HONEY_YIELD = 2.0                # honey (= food) a tamed bee produces for its o
 EFFECTS_ENABLED = False          # module default False (battery byte-identical); entrypoint flips on (--no-effects)
 SHOT_SPEED = 3                   # cells/step a catapult shot travels
 BLAST_TTL = 4                    # steps a blast/flash lingers
+# Madness (SPEC_MADNESS, priest arc P0): a slow sustained-neglect accumulator. A maw RAVES when highly agitated
+# AND keeper-hated; madness ratchets asymptotically while raving (rare), decays otherwise, and at threshold the
+# maw dies raving. The substrate priests will channel (P1). Gated -> byte-identical off.
+MADNESS_ENABLED = False          # module default False (battery byte-identical); entrypoint flips on (--no-madness)
+MADNESS_AGIT_MIN = 0.5           # agitation at/above which a colony can rave
+MADNESS_HATED_BAND = 0.33        # keeper_sentiment below which the maw is keeper-hated (F1 hateful band)
+MADNESS_RISE = 0.03              # asymptotic ratchet per raving step (identity at 0.0 = today's behavior)
+MADNESS_DECAY = 0.95             # multiplicative decay per non-raving step
+MADNESS_THRESHOLD = 0.6          # madness at which the maw dies raving (extinction + disgrace)
+MADNESS_WARNING = 0.15           # MAD-3: how far a madness death lowers each survivor's keeper_sentiment (+ dread)
 
 # Sentience Arc constants (SPEC_SENTIENCE.md S1-S4)
 RESONANCE_RANGE = 6          # Chebyshev radius of thought contagion
@@ -3345,9 +3355,36 @@ class SandKingsSimulation:
             # favoritism decays toward 0 (multiplicative — never overshoots)
             colony.favoritism = float(np.clip(
                 getattr(colony, 'favoritism', 0.0) * FAV_RETAIN, -1.0, 1.0))
+            # madness reads THIS step's agitation before it decays (the re-spike each step)
+            agit_now = getattr(colony, 'agitation', 0.0)
             # agitation decays fast toward 0
-            colony.agitation = float(np.clip(
-                getattr(colony, 'agitation', 0.0) * AGIT_RETAIN, 0.0, 1.0))
+            colony.agitation = float(np.clip(agit_now * AGIT_RETAIN, 0.0, 1.0))
+            if MADNESS_ENABLED:
+                self._madness_step(colony, agit_now)
+
+    def _madness_step(self, colony, agit):
+        """SPEC_MADNESS MAD-1/MAD-2 (priest arc P0): a slow sustained-neglect accumulator. A maw RAVES when it is
+        highly agitated (agit >= MADNESS_AGIT_MIN) AND keeper-hated (keeper_sentiment < MADNESS_HATED_BAND, or a
+        wrath latch). While raving, madness ratchets asymptotically toward 1; otherwise it decays. At
+        MADNESS_THRESHOLD the maw dies raving (extinction + disgrace mark). Pure (no RNG); gated -> byte-identical
+        off. The substrate priests will later channel (P1).
+        Require: colony alive, agit in [0,1]. Guarantee: colony.madness in [0,1]; sets colony.mad + kills the maw
+        once at/above threshold (idempotent via the mad latch)."""
+        hated = (getattr(colony, 'keeper_sentiment', 0.5) < MADNESS_HATED_BAND
+                 or getattr(colony, '_sentiment_wrath', False))
+        raving = agit >= MADNESS_AGIT_MIN and hated
+        mad = getattr(colony, 'madness', 0.0)
+        if raving:
+            mad = mad + MADNESS_RISE * (1.0 - mad)   # asymptotic ratchet (identity at RISE=0.0)
+        else:
+            mad = mad * MADNESS_DECAY                 # relief when tended / calmed
+        colony.madness = float(np.clip(mad, 0.0, 1.0))
+        if (colony.madness >= MADNESS_THRESHOLD
+                and not getattr(colony, 'mad', False)
+                and colony.maw is not None and colony.maw.alive):
+            colony.mad = True
+            colony.maw.alive = False
+            self._log_event(f"House {self._house_name(colony)} goes mad and dies raving")
 
     def _aggression_eff(self, colony: Colony) -> float:
         """DP5: effective aggression = base * f(confidence) + hostility(agitation).
@@ -7767,13 +7804,27 @@ class SandKingsSimulation:
                                   strongest.colony_id).adjust(VICTORS_QUARREL)
             d.clear_slot(colony.colony_id, self.step_count)
 
-            # D2: judge the reign - the house earns its epithet in death
-            from chronicle import derive_epithet
+            # D2: judge the reign - the house earns its epithet in death.
+            # MAD-2 (SPEC_MADNESS): a MAD death is DISGRACE, not judgement — the epithet is
+            # FIXED as "the Mad" (no derive_epithet), and survivors turn wary of the keeper
+            # (MAD-3). Gated inert (colony.mad only ever set under MADNESS_ENABLED).
             house = self._house_name(colony)
-            epithet = derive_epithet(self._chronicle(), house,
-                                     getattr(colony, 'founded_step', 0))
-            self._house_epithets()[house] = epithet
-            self._log_event(f"House {house} will be remembered as {epithet}")
+            if getattr(colony, 'mad', False):
+                self._house_epithets()[house] = "the Mad"
+                self._log_event(f"House {house} will be remembered as the Mad")
+                # MAD-3: the KEEPER rotted this house — survivors dread the keeper, not a rival.
+                for survivor in self.colonies:
+                    if survivor is colony or not survivor.is_alive():
+                        continue
+                    survivor.keeper_sentiment = float(np.clip(
+                        getattr(survivor, 'keeper_sentiment', 0.5) - MADNESS_WARNING, 0.0, 1.0))
+                    self._disposition_wrath(survivor, 0.0, MADNESS_WARNING)
+            else:
+                from chronicle import derive_epithet
+                epithet = derive_epithet(self._chronicle(), house,
+                                         getattr(colony, 'founded_step', 0))
+                self._house_epithets()[house] = epithet
+                self._log_event(f"House {house} will be remembered as {epithet}")
 
             # SUCCESSION prelude (inert while DYNAMIC_POPULATION=False): the psionic
             # network collapses with the queen. A high-loyalty house holds together —
@@ -7975,6 +8026,25 @@ class SandKingsSimulation:
                 colony.genome.use_neural = True               # the augmented neural net
                 colony.memory_augment = max(getattr(old, 'memory_augment', 0), 1)  # AUG: the hive extends
                 colony.reclaimed = True
+        # MAD-2 FORK (SPEC_MADNESS): a house that died MAD goes EXTINCT — the bloodline ends. The slot
+        # refills with a FRESH, unrelated house (gen 1), NOT a cadet or a reclaimed line, regardless of
+        # survivors. The disgraced name stays in house_epithets forever as a gravestone. This overrides
+        # the cadet/reclamation identity assigned above but keeps the genome (survivor-mutated seed above).
+        # Gated inert (old.mad only ever set under MADNESS_ENABLED).
+        old_mad = self.colonies[index]
+        if getattr(old_mad, 'mad', False):
+            from chronicle import make_house_name
+            colony.house = make_house_name()
+            colony.generation = 1
+            colony.reclaimed = False
+            # a fresh extinct-slot house does NOT inherit the mad line's awakening/tech/temperament
+            colony.breached = False
+            colony.worshipped = False
+            colony.revelation = False
+            colony.enlightened = False
+            colony.confidence = 0.5
+            colony.favoritism = 0.0
+            colony.agitation = 0.0
         colony.founded_step = self.step_count
         self.colonies[index] = colony
         self._kin_epoch = getattr(self, '_kin_epoch', 0) + 1  # kin map stale
@@ -9065,6 +9135,9 @@ def main():
     parser.add_argument('--no-effects', action='store_true',
                         help='Disable launched-projectile / blast effects (baseline: ON — a catapult shot '
                              'visibly arcs across the board and bursts, firecrackers flash; SPEC_FAUNA_ECOLOGY).')
+    parser.add_argument('--no-madness', action='store_true',
+                        help='Disable the madness accumulator (baseline: ON — a maw left highly agitated AND '
+                             'keeper-hated slowly ravens toward madness and, unrelieved, dies raving; SPEC_MADNESS).')
     parser.add_argument('--no-crickets', action='store_true',
                         help='Disable the cricket swarm (baseline: ON — the terrestrial food guild; '
                              'breeds on plant matter, booms in Dust, dies in flood/frost; SPEC_FOOD_WEB).')
@@ -9240,6 +9313,10 @@ def main():
     if not getattr(args, 'no_effects', False):
         globals()['EFFECTS_ENABLED'] = True
         print("[SHOT] catapult shots arc across the board and burst; firecrackers flash (--no-effects)")
+    # Madness is BASELINE (on unless --no-madness). Module default False keeps the battery byte-identical.
+    if not getattr(args, 'no_madness', False):
+        globals()['MADNESS_ENABLED'] = True
+        print("[MAD] neglected, keeper-hated maws slowly go mad and can die raving (--no-madness)")
 
     # The terrestrial cricket swarm is BASELINE (on unless --no-crickets). Module default
     # CRICKETS_ENABLED stays False so the regression battery is byte-identical; the game flips it on.

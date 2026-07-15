@@ -1,5 +1,15 @@
 # SPEC: Madness & Extinction (Round 6) — MAD-1…MAD-6
 
+**Status: IMPLEMENTED (priest arc P0).** MAD-1 (accumulator), MAD-2 (disgrace epithet + respawn fresh-house
+fork), MAD-3 (survivor keeper-dread), MAD-4 (liveness preserved) are shipped and verified
+(`tests/test_madness.py`, 7 cases). MAD-5 stays DEFERRED as specced (conflict-extinction trigger is backlog).
+Two intentional deviations from the structural note below, both stronger, not weaker:
+(a) the accumulator is factored into a small `_madness_step(colony, agit)` helper called inside
+`_disposition_tick`'s living-colony loop (the spec said "no new methods"; the helper is functionally identical
+and unit-testable); (b) the feature is gated behind `MADNESS_ENABLED` (baseline-ON, opt-out `--no-madness`,
+in `_GATE_NAMES`) — the battery runs with it OFF, so byte-identity holds regardless of the non-zero
+`MADNESS_RISE` default, satisfying MAD-6 more robustly than the `MADNESS_RISE=0.0` identity path.
+
 Governing intent (user, verbatim): "a house can go extinct — disappear from
 the board, its name a disgraced gravestone — by two vectors, GoT-style."
 
