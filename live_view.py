@@ -2016,14 +2016,18 @@ class LiveViewer:
         pygame.draw.rect(self._screen, (30, 30, 40),
                          pygame.Rect(0, 0, area_w, area_h), 1)
         m_entries = build_manager_entries(self.sim, self.manager_colony)
+        line_h, top, left = 17, 10, 14
         positions = legend_layout(len(m_entries), area_w, area_h,
-                                  line_h=17, top=10, left=14)
+                                  line_h=line_h, top=top, left=left)
         char_w = max(1, self._font.size("M")[0])
+        # clip each row to its OWN COLUMN width (mirror legend_layout's column maths) so a wide line in one
+        # column can never bleed across into the next column's text (the old inter-column garble)
+        max_rows = max(1, (area_h - 2 * top) // line_h)
+        n_cols = max(1, (len(m_entries) + max_rows - 1) // max_rows)
+        col_w = max(60, (area_w - left) // n_cols)
+        max_chars = max(4, (col_w - 10) // char_w)
         for (line, color), (x, y) in zip(m_entries, positions):
             if line:
-                # keep every row inside the map area so it can never bleed into the
-                # HUD sidebar at area_w+12 (the old top-right garble)
-                max_chars = max(4, (area_w - x - 6) // char_w)
                 self._screen.blit(self._font.render(line[:max_chars], True, color), (x, y))
 
         hud_x = area_w + 12
