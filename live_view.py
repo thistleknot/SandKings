@@ -901,32 +901,37 @@ def build_legend_entries() -> List[Tuple[str, Tuple[int, int, int]]]:
 
 
 def build_legend_compact() -> List[Tuple[str, Tuple[int, int, int]]]:
-    """A CONDENSED legend for the toggleable sidebar — just the on-screen essentials (creatures, key
-    terrain, the reading key), sized to fit one narrow column. Pure; enumerated from the glyph dicts."""
+    """A CONDENSED legend for the toggleable sidebar, grouped into alphabetically-sorted CATEGORIES (and
+    alphabetical WITHIN each), short labels so two narrow columns fit. Pure; enumerated from the glyph dicts."""
+    import re
     palette = build_voxel_palette()
-    e: List[Tuple[str, Tuple[int, int, int]]] = [
-        ("== LEGEND (L to close) ==", (230, 210, 140)), ("-- creatures --", (150, 150, 160))]
-    for ut, g in UNIT_GLYPHS.items():
-        e.append((f" {g}  {ut.name.lower()}", HUD_FG))
-    e.append((f" {MAW_GLYPH}  maw (queen)", MAW_COLOR))
-    for sp, g in BEAST_GLYPHS.items():
-        k = PREDATOR_COLOR if sp in BEAST_PREDATORS else NEUTRAL_BEAST_COLOR
-        e.append((f" {g}  {sp}", k))
-    e.append((f" {FISH_GLYPHS[0]}  fish (the pond shoal)", FISH_COLOR))
-    e.append((f" {BOAT_GLYPH}  raft (spawn afloat)", BOAT_COLOR))
-    e.append(("-- terrain --", (150, 150, 160)))
-    for v in (VoxelType.FOOD, VoxelType.WATER, VoxelType.CROP_RIPE, VoxelType.CORPSE,
-              VoxelType.SAND, VoxelType.TUNNEL_WALL, VoxelType.WEB):
-        e.append((f" {GLYPHS[v.value]}  {VOXEL_LEGEND.get(v.value, v.name.lower())}",
-                  tuple(int(c) for c in palette[v.value])))
-    e.append(("-- reading it --", (150, 150, 160)))
-    e.append((" red beast=predator", PREDATOR_COLOR))
-    e.append((" grey beast=harmless", NEUTRAL_BEAST_COLOR))
-    e.append((" magenta=retreating", (255, 0, 255)))
-    e.append((" gold=envoy copper=armor", (255, 200, 60)))
-    e.append((" underline=thrall", HUD_FG))
-    e.append((" red-pulse maw=siege", (235, 40, 30)))
-    return e
+    cats: dict = {}
+    cats['spawn'] = [(f"{g}  {ut.name.lower()}", HUD_FG) for ut, g in UNIT_GLYPHS.items()]
+    cats['spawn'].append((f"{MAW_GLYPH}  maw", MAW_COLOR))
+    cats['beasts'] = [(f"{g}  {sp}", PREDATOR_COLOR if sp in BEAST_PREDATORS else NEUTRAL_BEAST_COLOR)
+                      for sp, g in BEAST_GLYPHS.items()]
+    cats['pond'] = [(f"{FISH_GLYPHS[0]}  fish", FISH_COLOR), (f"{BOAT_GLYPH}  raft", BOAT_COLOR)]
+    cats['terrain'] = [(f"{GLYPHS[v.value]}  {v.name.lower().replace('_', ' ')}",
+                        tuple(int(c) for c in palette[v.value]))
+                       for v in (VoxelType.FOOD, VoxelType.WATER, VoxelType.CROP_RIPE, VoxelType.CORPSE,
+                                 VoxelType.SAND, VoxelType.TUNNEL_WALL, VoxelType.WEB, VoxelType.SHRUB_RIPE)]
+    cats['reading'] = [
+        ("red=predator", PREDATOR_COLOR), ("grey=harmless", NEUTRAL_BEAST_COLOR),
+        ("green=tamed", TAMED_BEAST_COLOR), ("red strobe=combat", (255, 40, 30)),
+        ("magenta=retreat", (255, 0, 255)), ("gold=envoy", (255, 200, 60)),
+        ("copper=armor", COPPER_TINT), ("underline=thrall", HUD_FG),
+        ("pulse maw=siege", (235, 40, 30)),
+    ]
+
+    def namekey(entry):                         # sort by the NAME, skipping a leading glyph/symbol
+        return re.sub(r'^[^0-9A-Za-z]+', '', entry[0]).lower()
+
+    out: List[Tuple[str, Tuple[int, int, int]]] = [("== LEGEND (L) ==", (230, 210, 140))]
+    for cat in sorted(cats):
+        out.append((f"-- {cat} --", (150, 150, 160)))
+        for label, color in sorted(cats[cat], key=namekey):
+            out.append((f" {label}", color))
+    return out
 
 
 LEGEND_LINE_H = 16     # px between legend rows (matches the historical single-column spacing)
@@ -1807,6 +1812,57 @@ class LiveViewer:
                     g = FISH_GLYPHS[(fx + fy + phase) % len(FISH_GLYPHS)]
                     self._blit_glyph(g, FISH_COLOR, fx * cell, fy * cell)
 
+        # Combat strobe: fighting flashes RED (the visual language of combat). Pure renderer — detects
+        # adjacency between hostile units and between units and threatening beasts, then strobes on the wall
+        # clock (a red pulse at each combat cell + a red screen-edge vignette). Reads only; mutates nothing.
+        upos = {}                                    # (x, y) -> (colony_id, z) for a quick adjacency probe
+        for colony in self.sim.colonies:
+            for unit in colony.units:
+                upos[(unit.position[0], unit.position[1])] = (colony.colony_id, unit.position[2])
+        combat = set()                               # (x, y, z) cells currently in combat
+        for beast in getattr(self.sim, 'fauna', None) or []:
+            if beast.hunt_range <= 0 and not getattr(beast, 'provoked', False):
+                continue
+            bx, by, bz = beast.position
+            owner = getattr(beast, 'owner', -1)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    hit = upos.get((bx + dx, by + dy))
+                    if hit is not None and hit[0] != owner:
+                        combat.add((bx, by, bz)); combat.add((bx + dx, by + dy, hit[1]))
+        from politics import hostile
+        pair_hostile = {}
+        for colony in self.sim.colonies:
+            cid = colony.colony_id
+            for unit in colony.units:
+                ux, uy, uz = unit.position
+                for dx in (-1, 0, 1):
+                    for dy in (-1, 0, 1):
+                        hit = upos.get((ux + dx, uy + dy))
+                        if hit is None or hit[0] == cid:
+                            continue
+                        key = (cid, hit[0]) if cid < hit[0] else (hit[0], cid)
+                        h = pair_hostile.get(key)
+                        if h is None:
+                            h = hostile(self.sim, cid, hit[0]); pair_hostile[key] = h
+                        if h:
+                            combat.add((ux, uy, uz)); combat.add((ux + dx, uy + dy, hit[1]))
+        if combat and self._blink_on(150):           # ~3 Hz red strobe while combat is live
+            thick = max(2, cell // 5)
+            for pos in combat:
+                if self._visible_depth(pos) is None:
+                    continue
+                pygame.draw.rect(self._screen, (255, 40, 30),
+                                 pygame.Rect(pos[0] * cell, pos[1] * cell, cell, cell), thick)
+            edge = max(3, cell // 3)                  # red screen-edge vignette: the tank is at war
+            haze = pygame.Surface((w * cell, h * cell), pygame.SRCALPHA)
+            for r in (pygame.Rect(0, 0, w * cell, edge),
+                      pygame.Rect(0, h * cell - edge, w * cell, edge),
+                      pygame.Rect(0, 0, edge, h * cell),
+                      pygame.Rect(w * cell - edge, 0, edge, h * cell)):
+                pygame.draw.rect(haze, (220, 30, 20, 95), r)
+            self._screen.blit(haze, (0, 0))
+
         # K4/F4: carvings - the colonies' sentiment toward the keeper,
         # coloured by band (devout gold -> wary grey -> hateful red)
         if glyph_mode:
@@ -2034,10 +2090,16 @@ class LiveViewer:
         self._screen.blit(panel, (0, 0))
         pygame.draw.rect(self._screen, (70, 70, 55), pygame.Rect(0, 0, w, area_h), 1)
         entries = build_legend_compact()
-        positions = legend_layout(len(entries), w, area_h, line_h=12, top=5, left=6)
+        line_h, top, left = 12, 5, 6
+        max_rows = max(1, (area_h - 2 * top) // line_h)
+        n_cols = max(1, (len(entries) + max_rows - 1) // max_rows)
+        col_w = max(1, (w - left) // n_cols)
+        char_w = max(1, self._legend_font.size("M")[0])
+        max_chars = max(3, (col_w - 4) // char_w)        # keep each row inside its column (no bleed/overlap)
+        positions = legend_layout(len(entries), w, area_h, line_h=line_h, top=top, left=left)
         for (line, color), (x, y) in zip(entries, positions):
             if line:
-                self._screen.blit(self._legend_font.render(line, True, color), (x, y))
+                self._screen.blit(self._legend_font.render(line[:max_chars], True, color), (x, y))
 
     def _visible_depth(self, position: Tuple[int, int, int]) -> Optional[int]:
         """Depth an entity renders at in the active view mode, None if hidden.

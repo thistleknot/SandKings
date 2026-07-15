@@ -406,6 +406,30 @@ def test_world_alive_render_is_pure():
         "the World-Alive render passes must not mutate sim state (pure renderer)"
 
 
+def test_combat_strobe_renders_pure():
+    """Combat strobe: with two hostile units adjacent and the strobe forced ON, _render_body draws the red
+    combat pulse without crashing and mutates nothing (pure renderer)."""
+    import pygame
+    sim = make_sim()
+    for _ in range(10):
+        sim.step()
+    a = next((c for c in sim.colonies if c.units), None)
+    b = next((c for c in sim.colonies if c is not a and c.units), None)
+    if a is not None and b is not None:            # force an adjacency so the combat pass draws
+        ax, ay, az = a.units[0].position
+        b.units[0].position = (ax + 1, ay, az)
+    viewer = LiveViewer(sim, max_steps=1)
+    pygame.init()
+    viewer._screen = pygame.display.set_mode(
+        (sim.world.width * viewer.cell_size + 400, sim.world.height * viewer.cell_size + 40))
+    viewer._load_fonts()
+    viewer._blink_on = lambda *a, **k: True        # force the strobe ON to exercise the red draw path
+    step0 = sim.step_count
+    viewer._render_body()
+    pygame.quit()
+    assert sim.step_count == step0, "the combat strobe must not mutate the sim (pure renderer)"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
