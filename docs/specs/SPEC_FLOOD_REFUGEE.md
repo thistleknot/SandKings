@@ -1,4 +1,4 @@
-# SPEC: Flood, Refugees & the Irrigation Edge — FR1…FR3
+# SPEC: Water's Double Edge — Flood, Refugees, Irrigation & Ice — FR1…FR4
 
 Status: DRAFT (spec-first; not yet implemented). Governing intent (user, verbatim):
 
@@ -9,6 +9,8 @@ Status: DRAFT (spec-first; not yet implemented). Governing intent (user, verbati
 > "as soon as flooding happens, disaster strikes which creates a refugee type status. People can overthrow
 > whoever is devastated, and those who are must search for food as they can't access their tunnels."
 > "food accumulation is a thing. These creatures need to gather and store food."
+> "ice also creates opportunities (if water was acting as a natural boundary, guess what happens when the
+> lakes freeze over)."
 
 The oasis is a **double-edged initial condition**: a water budget that either feeds a channeled civilization or
 drowns a careless one. Much of this ALREADY emerges from shipped systems (catalogued below); this spec closes
@@ -128,6 +130,52 @@ refugee over an equally-weak non-refugee. Gate off → selection identical.
 
 ---
 
+## FR4 — Ice: the frozen boundary becomes a bridge (the winter opportunity)
+
+**Gap:** cold never freezes water. Confirmed today (sandkings.py:7032): a unit that steps onto a `WATER` voxel
+**cannot cross without a raft** — "without timber it cannot cross; try another direction." So a lake or a dug
+moat is a genuine **foot-boundary** (defensive terrain). But in the Chill it should *reward the patient
+aggressor*: when the lakes freeze, the barrier becomes a highway (Lake Peipus / the Battle of the Ice).
+
+**Requirement.** During a **hard freeze** (a cold snap, `cold_until > step`, or deep Chill), surface `WATER`
+cells FREEZE to **ICE** — a **walkable** surface: a unit crosses frozen water **on foot, no raft, no wood**
+(the raft gate at 7032 is bypassed for a frozen cell). While frozen:
+- a colony that sheltered behind water is **exposed** — attackers march straight across the moat that used to
+  stop them;
+- symmetrically, a besieger can **wait for the freeze** to reach an island/oasis-ringed maw.
+On **thaw** (freeze ends) ICE reverts to `WATER` and the crossing closes; a unit caught mid-lake at thaw is set
+adrift (`rafted` if it has wood, else it takes a dunk — `_weather_kill(FLOOD_DAMAGE)`), so a late crossing is a
+gamble. Fishing already assumes "the shoal is under ice" in Chill (`FISH_CHILL_SCARCITY`) — this makes the ice
+literal.
+
+**Structural (preferred: an overlay, not a new VoxelType).** A `frozen: Set[(x,y,z)]` of currently-frozen
+WATER cells (getattr-guarded, pickled; the `flood_cells` pattern), recomputed in `_weather_tick`'s cold branch
+from the surface WATER cells while a freeze is active, cleared on thaw. Movement consults it; the renderer tints
+it. This avoids a new `ICE` VoxelType's blast radius (palette, every `== WATER` voxel check, flow sim). *(A
+first-class `ICE` VoxelType is the richer alternative — units could even tunnel/skate, and it renders as real
+terrain — but it touches far more surfaces; the overlay is the byte-safe first cut.)*
+
+**Behavioral (pseudocode).**
+```
+# _weather_tick, freeze active (cold_until > step or deep Chill), gated:
+self.frozen = { (x,y,surface_z) for surface WATER cells } if freeze else set()
+# _step_toward, at the WATER-cross gate (7032), gated:
+if (nx,ny,nz) in self.frozen:      # frozen -> solid ground, walk across (no raft/wood)
+    unit.move(new_pos); return True
+# on thaw: any unit standing on a (now-cleared) frozen cell -> raft if wood else _weather_kill(FLOOD_DAMAGE)
+```
+**Contract.** Require: freeze handling runs (weather always-on). Guarantee: `frozen` non-empty only during a
+freeze; a frozen cell is walkable, a thawed one is water again. Identity: gate off (or no freeze) → `frozen`
+empty → the raft gate is unchanged → **byte-identical**.
+
+**Rendering.** A frozen cell draws as a pale blue-white walkable tile (distinct from liquid WATER); the legend
+`terrain`/`hazards` gains an `ice` row. Pure read.
+
+**Acceptance FR4.** Force a cold snap over a WATER moat between two colonies: the moat's cells enter `frozen`,
+and a wood-less unit crosses on foot (the 7032 raft gate is bypassed); after thaw `frozen` clears, the crossing
+closes, and a unit left mid-lake is set adrift or takes flood damage. Gate off → water never freezes, the moat
+still blocks (battery byte-identical).
+
 ## Constants (sandkings.py, provisional)
 
 ```
@@ -135,6 +183,7 @@ FLOOD_REFUGEE_ENABLED = False   # gate (module default False -> byte-identical; 
 REFUGEE_DURATION   = 120        # steps a drowned-out colony stays a refugee after the water recedes
 REFUGEE_TARGET_MULT = 1.6       # FR3: how much rivals prefer a devastated colony as a war target
 # FR1 reuses ARENA_WILT_P / in_oasis / _water_adjacent; no new constant.
+# FR4 ice: reuses cold_until / the Chill season; the `frozen` overlay needs no magnitude constant.
 ```
 
 ## Cross-references
