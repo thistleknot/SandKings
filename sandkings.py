@@ -345,6 +345,17 @@ SHRUB_YIELD = 12             # food a forager gains from a ripe bush (< wild FOO
 WINTER_BITE_ENABLED = False     # module default False (battery byte-identical); entrypoint flips on (opt-out --no-winter-bite)
 HOARD_PLANNING_ENABLED = False  # module default False (battery byte-identical); entrypoint flips on (opt-out --no-hoard-planning)
 
+# Dog-eat-dog scarcity war (SPEC_SCARCITY_WAR, War & Survival arc Phase 3): the starving DECLARE war to
+# raid (not stand down), hunger RAISES aggression, raiding PLUNDERS food, and the starving eat the fallen.
+# Coexists with the prosperity war (rich = dominance war; starving = raid to eat). Truces hold, kin safe.
+SCARCITY_WAR_ENABLED = False    # module default False (battery byte-identical); entrypoint flips on (opt-out --no-scarcity-war)
+HUNGER_WAR_FLOOR = 60           # food below which a colony is desperate: it raids, and hunger no longer stands it down
+SCARCITY_AGG_K = 0.6            # desperation gain added to effective aggression when starving
+PLUNDER_FRAC = 0.15             # fraction of a defeated colony's food seized by the victor on a kill
+PLUNDER_MAW_FRAC = 0.35         # larger fraction seized when the enemy MAW falls (a sack)
+CANNIBAL_HUNGER_BONUS = 10      # extra food a starving colony gains foraging a CORPSE (on top of HARVEST_YIELD)
+SACK_RADIUS = 6                 # a besieger must have a unit this close to the fallen maw to sack it
+
 
 def cricket_dynamics(cricket: float, forage: float, dry: bool, flood: bool, frost: bool):
     """Pure land-swarm step (SPEC_FOOD_WEB): the terrestrial consumer-resource model. Returns
@@ -2159,16 +2170,25 @@ class SandKingsSimulation:
             if self.keeper_attitude(colony) == 'wrathful':  # K3: hungry,
                 enter_at *= KEEPER_WRATH_MOBILIZATION       # angry, quicker
 
+            # SPEC_SCARCITY_WAR SW1: the starving raid to eat. Off -> scarcity_war is False,
+            # so entry stays `food > enter_at` and stand-down stays `food < WAR_CHEST/2` exactly.
+            scarcity_war = (SCARCITY_WAR_ENABLED
+                            and colony.maw.food_stored < HUNGER_WAR_FLOOR
+                            and len(colony.units) > 0)
             if current_target is None:
-                if colony.maw.food_stored > enter_at:
+                if colony.maw.food_stored > enter_at or scarcity_war:
                     target = self._select_war_target(colony)
                     if (BARGAIN_ENABLED and target is not None
                             and self._bargain_mode_ids(cid, target) == BARGAIN_MODE_WAGE):
                         target = None    # bargain: a wage relation nets more than war
                     d.war_target[cid] = target
                     if target is not None:
-                        self._log_event(f"Colony {cid} declares war"
-                                        f" on Colony {target}!")
+                        if scarcity_war and colony.maw.food_stored <= enter_at:
+                            self._log_event(f"Colony {cid} raids to survive"
+                                            f" — the maws hunger")
+                        else:
+                            self._log_event(f"Colony {cid} declares war"
+                                            f" on Colony {target}!")
                         monitor = self._monitor(cid)
                         monitor.log_decision(self.step_count, f"Colony {cid}",
                                              f"declares war on Colony {target}",
@@ -2179,7 +2199,10 @@ class SandKingsSimulation:
                         self._log_event(f"Colony {cid} seethes, but has no enemy")
             else:
                 target_colony = self._colony_by_id(current_target)
-                if (colony.maw.food_stored < WAR_CHEST / 2
+                poor = colony.maw.food_stored < WAR_CHEST / 2
+                if scarcity_war:
+                    poor = False   # the starving fight ON — hunger drives the raid, not retreat
+                if (poor
                         or target_colony is None
                         or not target_colony.is_alive()
                         or d.truce_active(cid, current_target, self.step_count)):
@@ -3240,7 +3263,14 @@ class SandKingsSimulation:
         base = getattr(colony.genome, 'aggression', 0.5)
         conf = getattr(colony, 'confidence', 0.5)
         ag = getattr(colony, 'agitation', 0.0)
-        return base * (1.0 + CONF_AGG_K * (conf - 0.5)) + AGIT_HOSTILITY * ag
+        val = base * (1.0 + CONF_AGG_K * (conf - 0.5)) + AGIT_HOSTILITY * ag
+        # SPEC_SCARCITY_WAR SW2: desperation raises aggression (the starving fight harder). Strictly
+        # gated — this feeds hot random.random() < eff combat draws, so off must be the original value.
+        if SCARCITY_WAR_ENABLED:
+            food = colony.maw.food_stored
+            if food < HUNGER_WAR_FLOOR:
+                val += SCARCITY_AGG_K * (1.0 - food / HUNGER_WAR_FLOOR)
+        return val
 
     def _disposition_boldness(self, colony: Colony) -> float:
         """DP7: force-EV multiplier from the extractor's boldness. 1.0 at
@@ -7202,6 +7232,37 @@ class SandKingsSimulation:
             if not besieged:
                 colony.maw.health = min(MAW_MAX_HEALTH, colony.maw.health + MAW_REGEN)
 
+    def _plunder(self, loser: 'Colony', victor: 'Colony') -> None:
+        """SPEC_SCARCITY_WAR SW3: on a battlefield kill the victor's maw seizes PLUNDER_FRAC of the
+        loser colony's stored food. Plunder MOVES food (subtract from loser, eat by victor) — it never
+        mints food, so total food is conserved. Gated -> no-op when off (byte-identical)."""
+        if not SCARCITY_WAR_ENABLED:
+            return
+        moved = PLUNDER_FRAC * loser.maw.food_stored
+        if moved <= 0.0:
+            return
+        loser.maw.food_stored = max(0.0, loser.maw.food_stored - moved)
+        victor.maw.eat(moved)
+
+    def _sack_besieger(self, dead: 'Colony') -> Optional['Colony']:
+        """SPEC_SCARCITY_WAR SW3: the attacker that sacks a fallen maw — a LIVING colony that had
+        declared war on `dead` and has a unit within SACK_RADIUS of the fallen maw (nearest wins).
+        None if no clear besieger (then the residual food is simply lost, as before)."""
+        d = self._diplomacy()
+        mx, my, mz = dead.maw.position
+        best, best_d = None, None
+        for c in self.colonies:
+            if c is dead or not c.is_alive():
+                continue
+            if d.war_target.get(c.colony_id) != dead.colony_id:
+                continue
+            for u in c.units:
+                ux, uy, uz = u.position
+                dist = abs(ux - mx) + abs(uy - my) + abs(uz - mz)
+                if dist <= SACK_RADIUS and (best_d is None or dist < best_d):
+                    best, best_d = c, dist
+        return best
+
     def _check_maw_deaths(self):
         """Collapse fallen colonies into a corpse feast and schedule arrivals (SPEC T5)."""
         for colony in self.colonies:
@@ -7229,6 +7290,17 @@ class SandKingsSimulation:
                 if aspirant is not None:
                     self._begin_succession(colony, aspirant)
                     continue    # skip the corpse+respawn cascade; the line fights on
+
+            # SPEC_SCARCITY_WAR SW3: a besieger sacks the fallen maw's larder before it is lost.
+            # Gated -> no-op when off (byte-identical). The colony is confirmed dying here.
+            if SCARCITY_WAR_ENABLED and colony.maw.food_stored > 0:
+                besieger = self._sack_besieger(colony)
+                if besieger is not None:
+                    loot = PLUNDER_MAW_FRAC * colony.maw.food_stored
+                    colony.maw.food_stored = max(0.0, colony.maw.food_stored - loot)
+                    besieger.maw.eat(loot)
+                    self._log_event(f"House {self._house_name(besieger)} sacks the "
+                                    f"larder of fallen House {self._house_name(colony)}")
 
             # SJ6a: Convert this dead birth house's OWN thralls to their captors
             _converted_to = {}   # captor_id -> count, for a once-per-house event
@@ -7838,11 +7910,19 @@ class SandKingsSimulation:
             for nx, ny, nz in neighbors:
                 voxel = self.world.get_voxel(nx, ny, nz)
                 if voxel in (VoxelType.FOOD, VoxelType.CORPSE):
+                    # SW4: capture hunger BEFORE the base credit so a starving cannibal is scored fairly
+                    was_starving = (SCARCITY_WAR_ENABLED
+                                    and colony.maw.food_stored < 2 * BOOTSTRAP_FLOOR)
                     unit.move((nx, ny, nz))
                     self.world.set_voxel(nx, ny, nz, VoxelType.AIR)
                     self._credit_labor(unit, colony, 'food', HARVEST_YIELD)
                     if voxel == VoxelType.CORPSE:  # T42: bones from the fallen
                         colony.bone = getattr(colony, 'bone', 0) + 1
+                        if was_starving:  # SPEC_SCARCITY_WAR SW4: the starving fall upon the fallen
+                            self._credit_labor(unit, colony, 'food', CANNIBAL_HUNGER_BONUS)
+                            if self.step_count != getattr(self, '_cannibal_logged', -1):
+                                self._cannibal_logged = self.step_count
+                                self._log_event("The starving fall upon the fallen")
                     elif (nx, ny, nz) in getattr(self, 'keeper_manna', ()):
                         # K3/AW3: bounty is good fortune to all, but only the
                         # AWARE (breached) read it as worship of a hand
@@ -8306,6 +8386,7 @@ class SandKingsSimulation:
                                         if colony.colony_id not in units_to_remove:
                                             units_to_remove[colony.colony_id] = []
                                         units_to_remove[colony.colony_id].append(unit)
+                                        self._plunder(colony, enemy_colony)  # SW3: victor loots the fallen's larder
 
                                         # Track kill for neural performance
                                         if enemy.brain_layer is not None:
@@ -8328,6 +8409,7 @@ class SandKingsSimulation:
                                         if enemy_colony.colony_id not in units_to_remove:
                                             units_to_remove[enemy_colony.colony_id] = []
                                         units_to_remove[enemy_colony.colony_id].append(enemy)
+                                        self._plunder(enemy_colony, colony)  # SW3: victor loots the fallen's larder
 
                                         # Track kill for neural performance
                                         if unit.brain_layer is not None:
@@ -8588,6 +8670,10 @@ def main():
     parser.add_argument('--no-hoard-planning', action='store_true',
                         help='Disable hoard planning (baseline: ON — the maw learns to stockpile ahead of '
                              'the Chill via a winter-crossing reward + a winter-coming state cue; SPEC_WINTER).')
+    parser.add_argument('--no-scarcity-war', action='store_true',
+                        help='Disable dog-eat-dog scarcity war (baseline: ON — the starving raid to eat '
+                             'instead of standing down, hunger raises aggression, raiding plunders food, '
+                             'and the starving eat the fallen; truces hold, kin safe; SPEC_SCARCITY_WAR).')
     parser.add_argument('--no-learned-basis', action='store_true',
                         help='Use the random Kanerva codebook instead of the learned shared encoder '
                              'basis (baseline: ON — a ZCA+codebook fit to the state manifold, ~28x '
@@ -8744,6 +8830,13 @@ def main():
         globals()['HOARD_PLANNING_ENABLED'] = True
         print("[HOARD] the maw learns the moon — a winter-crossing reward and a winter-coming cue teach it "
               "to stockpile ahead of the Chill (--no-hoard-planning to disable)")
+
+    # Dog-eat-dog scarcity war is BASELINE (on unless --no-scarcity-war). Module default
+    # SCARCITY_WAR_ENABLED stays False so the regression battery is byte-identical; the game flips it on.
+    if not getattr(args, 'no_scarcity_war', False):
+        globals()['SCARCITY_WAR_ENABLED'] = True
+        print("[WAR] dog-eat-dog — the starving raid to eat, hunger sharpens aggression, raiders plunder "
+              "the larder, and the starving devour the fallen; truces hold, kin safe (--no-scarcity-war)")
 
     if args.live:
         # When run as a script this module is '__main__'; alias it so

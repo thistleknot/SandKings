@@ -43,7 +43,8 @@ import sandkings  # torch imported exactly once here (via neural_hive)
 _GATE_NAMES = ("CAPTURE_CHANCE", "WAGE_ENABLED", "BARGAIN_ENABLED",
                "HYDRO_SOURCES_ENABLED", "MAW_RL_ENABLED", "GUPPIES_ENABLED",
                "CRICKETS_ENABLED", "SNARES_ENABLED", "FISHING_ENABLED",
-               "SHRUBS_ENABLED", "WINTER_BITE_ENABLED", "HOARD_PLANNING_ENABLED")
+               "SHRUBS_ENABLED", "WINTER_BITE_ENABLED", "HOARD_PLANNING_ENABLED",
+               "SCARCITY_WAR_ENABLED")
 _GATE_DEFAULTS = {n: getattr(sandkings, n) for n in _GATE_NAMES if hasattr(sandkings, n)}
 
 

@@ -72,7 +72,11 @@ capability, not intent; victors quarrel); Ostrom common-pool cultivation
   moods. A truce is inviolable except via P6.
 - **P5 (war target; amends T10)** `colony.at_war` derives from
   `war_target is not None`; the hoard trigger and hysteresis are
-  unchanged, but entering war selects ONE target:
+  unchanged (EXCEPT under the scarcity war, SPEC_SCARCITY_WAR SW1,
+  `SCARCITY_WAR_ENABLED` baseline-on: a colony with `food < HUNGER_WAR_FLOOR`
+  also declares war and no longer stands down for poverty — truces still hold,
+  kin still excluded; gate off → this P5 unchanged), but entering war selects
+  ONE target:
   coalition override → the hegemon; else argmax over living, non-truced,
   non-coalition-partner rivals of `0.45·hatred + 0.35·wealth −
   0.20·strength` (each normalized over eligibles). No eligible target →
