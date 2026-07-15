@@ -410,7 +410,7 @@ def pheromone_overlay_array(pheromones, colonies: List[Colony], z_level: int,
 
 def storm_haze_array(shape_wh: Tuple[int, int]) -> np.ndarray:
     """(w, h, 3) uint8 flickering sand speckle for active storms (spec T12)."""
-    w, h = shape_wh
+    w, h = int(shape_wh[0]), int(shape_wh[1])   # np.random.random rejects numpy ints in the shape tuple
     speckle = (np.random.random((w, h, 1)) > 0.55).astype(np.float32)
     sand = np.array((194, 178, 128), dtype=np.float32) * 0.35
     return (speckle * sand).astype(np.uint8)

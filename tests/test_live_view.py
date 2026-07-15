@@ -452,6 +452,15 @@ def test_poison_cloud_renders_pure():
         "the poison overlay must not mutate the sim (pure renderer)"
 
 
+def test_storm_haze_accepts_numpy_int_shape():
+    """Regression: world.width/height arrive as numpy ints; np.random.random rejects them in a shape tuple.
+    storm_haze_array must cast, or the live viewer crashes the first time a storm blows (spec T12)."""
+    import numpy as np
+    from live_view import storm_haze_array
+    out = storm_haze_array((np.int64(40), np.int32(28)))
+    assert out.shape == (40, 28, 3), "storm haze renders from numpy-int dimensions without raising"
+
+
 def test_legend_accordion_sections_and_toggle():
     """R34b: the legend is a collapsible accordion — build_legend_sections yields sorted (category, entries),
     rendering records header hitboxes, and a click on a header toggles that section's collapse. Pure of sim."""
