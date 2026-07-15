@@ -34,11 +34,14 @@ Each season favours a different food: aquatic (Flood/Growth) → insects (Dust) 
 Verified: `test_guppy_extra_food_lifts_breeding` (extra_food lifts breeding + 3-arg back-compat), full
 battery 53/53 byte-identical, live smoke clean.
 
-## Snares (Phase 3)
+## Snares (Phase 3, SHIPPED 2026-07-14)
 
-`string`/`toothpick` (already `tech.py:MATERIALS`, today → bow/spear) gain a **weir/snare** use that
-passively converts nearby `guppy_pop`/`cricket_pop` → FOOD (a trap; keeper can drop them by the pond).
-The existing `WEB` voxel (spider silk, "snares a step") over water also catches guppies/crickets.
+A `WEB` voxel (spider silk OR a keeper string/toothpick weir) passively catches guppies (near water) or
+crickets (on land) into FOOD each `SNARE_TICK` — no foraging unit needed (`_snare_tick`, `SNARE_YIELD`).
+Dropping `string`/`toothpick` by the water (`keeper_material` + `_near_water`) sets a snare (a WEB weir)
+instead of crafting a weapon. Gated `SNARES_ENABLED` baseline-on (`--no-snares`). Verified:
+`tests/test_snares.py` (web-near-water catches guppies→FOOD / web-on-land catches crickets / gate-off
+no-op), full battery 54/54 byte-identical.
 
 ## Intelligence payoff — the maw learns seasonal foraging (Phase 4)
 

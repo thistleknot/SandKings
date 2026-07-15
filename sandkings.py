@@ -312,6 +312,12 @@ CRICKET_CULL = 0.15          # fraction of the swarm culled per active cricket-p
 CRICKET_PREDATORS = ('spider', 'small_spider', 'bird', 'scorpion', 'anteater')  # beasts that eat crickets
 CRICKET_CROP_DMG = 4         # max crops a big swarm nibbles per tick (crickets are a pest)
 GUPPY_DROPPINGS = 0.15       # max guppy diet-supplement from crop droppings (normalized)
+# Snares (SPEC_FOOD_WEB Phase 3): string/toothpick set by the water — and spider WEB over water —
+# passively catch guppies/crickets into FOOD (a weir; no foraging unit needed).
+SNARES_ENABLED = False       # module default False (battery byte-identical); entrypoint flips on (opt-out --no-snares)
+SNARE_TICK = 20              # snare-harvest cadence (steps)
+SNARE_YIELD = 3              # guppies/crickets caught per snare per tick
+SNARE_FOOD_CAP = 8           # max snare-food voxels deposited per tick
 
 
 def cricket_dynamics(cricket: float, forage: float, dry: bool, flood: bool, frost: bool):
@@ -2191,6 +2197,7 @@ class SandKingsSimulation:
         self._fauna_tick()
         self._guppy_tick()                   # the oasis pond ecosystem (SPEC_GUPPIES; gated baseline-on)
         self._cricket_tick()                 # the terrestrial cricket swarm (SPEC_FOOD_WEB; gated baseline-on)
+        self._snare_tick()                   # WEB/string/toothpick weirs catch guppies+crickets (gated baseline-on)
 
         # 5a-keeper. THE KEEPER (K4/K8/K9/K10): carvings, script, gifts
         self._keeper_tick()
@@ -2574,6 +2581,48 @@ class SandKingsSimulation:
         if self.cricket_pop > 0.5 * CRICKET_CAP and random.random() < 0.15:
             self._spawn_cricket_pack()              # show the thriving swarm as huntable beasts
         self._cricket_drama(self.cricket_pop)
+
+    def _near_water(self, x: int, y: int) -> bool:
+        """True if (x,y) is in/around the oasis — where a snare catches guppies."""
+        cx, cy = self.world.width // 2, self.world.height // 2
+        return (x - cx) ** 2 + (y - cy) ** 2 <= (OASIS_RADIUS + 3) ** 2
+
+    def _set_snare(self, x: int, y: int, kind: str) -> None:
+        """Set a keeper snare (a WEB weir) at the surface — harvested by _snare_tick."""
+        z = min(self.world.surface_z(x, y) + 1, self.world.depth - 1)
+        if self.world.voxels[x, y, z] == VoxelType.AIR.value:
+            self.world.voxels[x, y, z] = VoxelType.WEB.value
+        self._log_event(f"The keeper sets a {kind} snare by the water")
+
+    def _snare_tick(self) -> None:
+        """SPEC_FOOD_WEB: WEB voxels (spider silk OR a keeper string/toothpick weir) passively catch
+        guppies (near water) or crickets (on land) into FOOD — no foraging unit needed. Gated
+        SNARES_ENABLED default False -> returns immediately (battery byte-identical, no state)."""
+        if not SNARES_ENABLED or self.step_count % SNARE_TICK != 0:
+            return
+        webs = np.argwhere(self.world.voxels == VoxelType.WEB.value)
+        if len(webs) == 0:
+            return
+        d = self.world.depth
+        placed, caught = 0, 0
+        for (x, y, z) in webs:
+            if placed >= SNARE_FOOD_CAP:
+                break
+            x, y, z = int(x), int(y), int(z)
+            if self._near_water(x, y) and getattr(self, 'guppy_pop', 0.0) > SNARE_YIELD:
+                self.guppy_pop -= SNARE_YIELD
+            elif getattr(self, 'cricket_pop', 0.0) > SNARE_YIELD:
+                self.cricket_pop -= SNARE_YIELD
+            else:
+                continue
+            zz = z + 1                                   # deposit the catch just above the web
+            if zz < d and self.world.voxels[x, y, zz] == VoxelType.AIR.value:
+                self.world.voxels[x, y, zz] = VoxelType.FOOD.value
+                placed += 1
+            caught += 1
+        if caught and caught != getattr(self, '_snare_logged', -1):
+            self._snare_logged = caught
+            self._log_event("The snares yield a catch from the shallows")
 
     # ---- HYDRO: persistent water flow simulation (SPEC_HYDRO) ----------------
     def _water_field(self):
@@ -3229,6 +3278,11 @@ class SandKingsSimulation:
             return
         if kind == 'tacks':
             self._scatter_caltrops(x, y)
+            return
+        # SPEC_FOOD_WEB Phase 3: string/toothpick set by the water become a SNARE (weir) that catches
+        # guppies, instead of being crafted into a weapon.
+        if SNARES_ENABLED and kind in ('string', 'toothpick') and self._near_water(x, y):
+            self._set_snare(x, y, kind)
             return
         best, bestd = None, None
         for c in self.colonies:
@@ -8357,6 +8411,9 @@ def main():
     parser.add_argument('--no-crickets', action='store_true',
                         help='Disable the cricket swarm (baseline: ON — the terrestrial food guild; '
                              'breeds on plant matter, booms in Dust, dies in flood/frost; SPEC_FOOD_WEB).')
+    parser.add_argument('--no-snares', action='store_true',
+                        help='Disable snares (baseline: ON — spider webs and keeper string/toothpick '
+                             'weirs by the water passively catch guppies/crickets into food; SPEC_FOOD_WEB).')
     parser.add_argument('--no-learned-basis', action='store_true',
                         help='Use the random Kanerva codebook instead of the learned shared encoder '
                              'basis (baseline: ON — a ZCA+codebook fit to the state manifold, ~28x '
@@ -8478,6 +8535,13 @@ def main():
         globals()['CRICKETS_ENABLED'] = True
         print("[CRICKETS] the dunes chirp - crickets breed on plant matter, boom in the dry Dust, "
               "and surface as harvestable food (the land guild; --no-crickets to disable)")
+
+    # Snares are BASELINE (on unless --no-snares). Module default SNARES_ENABLED stays False so the
+    # regression battery is byte-identical; the game flips it on.
+    if not getattr(args, 'no_snares', False):
+        globals()['SNARES_ENABLED'] = True
+        print("[SNARES] webs and keeper string/toothpick weirs catch guppies and crickets into food "
+              "(--no-snares to disable)")
 
     if args.live:
         # When run as a script this module is '__main__'; alias it so

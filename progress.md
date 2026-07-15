@@ -53,6 +53,11 @@ Objectives defined in `objective.md`. Dates are absolute.
   `guppy_dynamics(extra_food=...)` (diet beyond algae); `CRICKET_PREDATORS` beasts cull the swarm. Verified:
   `test_guppy_extra_food_lifts_breeding` (+ 3-arg back-compat), full battery 53/53 byte-identical, live
   smoke clean. Next: Phase 3 snares, Phase 4 maw forage-mode lever + HUD/drama.
+- **2026-07-14 (Phase 3)** — Snares: a WEB voxel (spider silk or a keeper string/toothpick weir by the
+  water) passively catches guppies (near water) / crickets (land) into FOOD via `_snare_tick`; dropping
+  string/toothpick by the water sets a snare instead of crafting a weapon. Gated `SNARES_ENABLED`
+  baseline-on (`--no-snares`). Verified: `tests/test_snares.py` (4 tests), full battery 54/54
+  byte-identical. Next: Phase 4 maw forage-mode lever + HUD/drama.
 
 ## Guppy predator (3-tier) — EXPLORED then REJECTED (superseded by the holistic web)
 
