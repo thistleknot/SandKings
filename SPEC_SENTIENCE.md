@@ -54,6 +54,14 @@ Lin 1992/DQN lineage). Once per year the chronicle notes "The maws
 dream through the long frost" (salience 3). Dreaming colonies enter
 spring with consolidated Q-tables at zero food cost.
 
+### S4b — Learning to plan for winter (SPEC_WINTER WI2, gated)
+`HOARD_PLANNING_ENABLED` (baseline-on) threads a `hoard_shaping` flag into the
+learner: the state gains a `winter_coming` cue (Dust) and the reward credits a
+stockpile at the Dust->Chill crossing (`HOARD_BONUS * min(food/HOARD_TARGET, 1)`),
+so the maw can learn to store an annual harvest ahead of the Chill rather than only
+react. Still refines the baseline, never overrides it. Off (battery default) ->
+5-tuple state and un-shaped reward, byte-identical.
+
 ## S5 — Surfacing (viewer surface R31, see SPEC_LIVE_VIEW ledger)
 - Manager (neural colonies): "resonance: 0.NN across K soldiers" —
   mean pairwise cosine similarity of live hidden states; the number

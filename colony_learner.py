@@ -9,6 +9,11 @@ temperament. `genome.plasticity` scales the learn rate and exploration
 floor (S3 meta-learning: selection acts on how fast minds adapt), and
 a replay memory consolidates during Chill dreams (S4).
 
+SPEC_WINTER WI2 (gated, default off -> byte-identical): with hoard_shaping the
+state gains a `winter_coming` cue (Dust) and the reward credits a stockpile at the
+Dust->Chill crossing, so the maw can learn to store ahead of winter — still refining
+the baseline, never overriding it.
+
 Preconditions: numpy only; pickles with the sim. Failure modes: unknown
 states start at zero Q (optimistic-neutral); the exploration floor
 never reaches zero so exploration never dies; learners resumed from
@@ -30,10 +35,16 @@ POSTURES = ("FORAGE", "FARM", "RAID", "FORTIFY")
 POP_WEIGHT = 15.0      # reward values a unit like the power index does
 REPLAY_CAP = 40        # remembered transitions for Chill dreaming (S4)
 DREAM_REPLAYS = 3      # offline TD updates per Chill decision tick
+HOARD_BONUS = 5.0      # SPEC_WINTER WI2: reward credited at the Dust->Chill crossing, x stockpile fraction
+HOARD_TARGET = 200.0   # a food reserve counted as "fully prepared" for winter
 
 
-def observe_state(sim, colony) -> Tuple[int, int, int, bool, bool]:
-    """Coarse state: (season, food-band, threat-band, farms>0, oasis-held)."""
+def observe_state(sim, colony, hoard_shaping: bool = False) -> Tuple:
+    """Coarse state: (season, food-band, threat-band, farms>0, oasis-held).
+
+    SPEC_WINTER WI2: when hoard_shaping, append a `winter_coming` bool (True in Dust — the last prep
+    window before the Chill), so the policy can condition preparation on winter's approach, not only its
+    arrival. Off -> the 5-tuple exactly as before (battery byte-identical)."""
     food = colony.maw.food_stored
     if food < 30:
         food_band = 0
@@ -62,7 +73,11 @@ def observe_state(sim, colony) -> Tuple[int, int, int, bool, bool]:
 
     farms = sim._farm_plot_count(colony) > 0
     oasis = sim.oasis_holder() == colony.colony_id
-    return (sim.season_index(), food_band, threat, farms, oasis)
+    season = sim.season_index()
+    if hoard_shaping:
+        winter_coming = season == 2               # Dust: the last window to stockpile before Chill
+        return (season, food_band, threat, farms, oasis, winter_coming)
+    return (season, food_band, threat, farms, oasis)
 
 
 class ColonyLearner:
@@ -89,19 +104,25 @@ class ColonyLearner:
         return self.replay
 
     def decide(self, sim, colony, gamma: float,
-               plasticity: float = 0.5) -> str:
+               plasticity: float = 0.5, hoard_shaping: bool = False) -> str:
         """TD(0) update on the last transition, then epsilon-greedy pick.
 
         plasticity (S3) scales the learn rate 0.5x-1.5x and the
         exploration floor: fast, curious minds vs. set-in-their-ways.
+
+        SPEC_WINTER WI2: hoard_shaping appends a winter-coming state cue and, at the Dust->Chill
+        crossing, credits `HOARD_BONUS * min(food/HOARD_TARGET, 1)` to the reward — rewarding a
+        stockpile the short-horizon delta would otherwise miss. Off -> no state/reward/RNG change.
         """
-        state = observe_state(sim, colony)
+        state = observe_state(sim, colony, hoard_shaping)
         value = colony.maw.food_stored + POP_WEIGHT * len(colony.units)
         alpha = LEARN_RATE * (0.5 + plasticity)
         floor = EPSILON_FLOOR * (1.5 - plasticity)
 
         if self._last_state is not None:
             reward = (value - self._last_value) / LEARN_INTERVAL
+            if hoard_shaping and self._last_state[0] == 2 and state[0] == 3:
+                reward += HOARD_BONUS * min(colony.maw.food_stored / HOARD_TARGET, 1.0)
             row = self._qrow(self._last_state)
             target = reward + gamma * float(self._qrow(state).max())
             row[self._last_action] += alpha * (target - row[self._last_action])

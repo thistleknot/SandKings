@@ -339,6 +339,12 @@ SHRUB_CAP = 40               # max standing bushes (don't carpet the map)
 SHRUB_GROWDUR = 6            # ticks green -> ripe (x SHRUB_TICK steps)
 SHRUB_YIELD = 12             # food a forager gains from a ripe bush (< wild FOOD's 15; flora is humble)
 
+# Seasonal planning (SPEC_WINTER, War & Survival arc Phase 2): winter must genuinely kill the unprepared.
+# WINTER_BITE removes the Chill bootstrap floor so a colony that didn't stockpile starves; HOARD_PLANNING
+# lets the maw learn to store ahead of the Chill (reward-shaped winter crossing + a winter-coming state cue).
+WINTER_BITE_ENABLED = False     # module default False (battery byte-identical); entrypoint flips on (opt-out --no-winter-bite)
+HOARD_PLANNING_ENABLED = False  # module default False (battery byte-identical); entrypoint flips on (opt-out --no-hoard-planning)
+
 
 def cricket_dynamics(cricket: float, forage: float, dry: bool, flood: bool, frost: bool):
     """Pure land-swarm step (SPEC_FOOD_WEB): the terrestrial consumer-resource model. Returns
@@ -2102,7 +2108,7 @@ class SandKingsSimulation:
                 plasticity = getattr(colony.genome, 'plasticity', 0.5)
                 learner.decide(self, colony,
                                getattr(colony.genome, 'patience', 0.5),
-                               plasticity)
+                               plasticity, hoard_shaping=HOARD_PLANNING_ENABLED)
                 if self.season_index() == 3:  # the maws dream through frost
                     learner.dream(getattr(colony.genome, 'patience', 0.5),
                                   plasticity)
@@ -5908,8 +5914,11 @@ class SandKingsSimulation:
             if z < d and self.world.voxels[x, y, z] == VoxelType.AIR.value:
                 self.world.voxels[x, y, z] = VoxelType.FOOD.value
                 placed += 1
+        # SPEC_WINTER WI1: in Chill the bootstrap floor lifts so an unprepared colony truly starves
+        # (a stockpiled one rides its non-decaying hoard). Off -> not(False and ...) -> floor as today.
+        floor_lifts = WINTER_BITE_ENABLED and self.season_index() == 3
         for colony in self.colonies:
-            if colony.is_alive():
+            if colony.is_alive() and not floor_lifts:
                 colony.maw.food_stored = max(colony.maw.food_stored, BOOTSTRAP_FLOOR)
         self._log_event(f"Keeper scatters {placed} food")
 
@@ -8573,6 +8582,12 @@ def main():
     parser.add_argument('--no-shrubs', action='store_true',
                         help='Disable berry shrubs (baseline: ON — perennial bushes ripen to forageable '
                              'berries, regrow after harvest, die back in Chill; SPEC_FLORA).')
+    parser.add_argument('--no-winter-bite', action='store_true',
+                        help='Disable the winter bite (baseline: ON — the Chill bootstrap floor lifts so '
+                             'an unprepared colony truly starves; a stockpiled one survives; SPEC_WINTER).')
+    parser.add_argument('--no-hoard-planning', action='store_true',
+                        help='Disable hoard planning (baseline: ON — the maw learns to stockpile ahead of '
+                             'the Chill via a winter-crossing reward + a winter-coming state cue; SPEC_WINTER).')
     parser.add_argument('--no-learned-basis', action='store_true',
                         help='Use the random Kanerva codebook instead of the learned shared encoder '
                              'basis (baseline: ON — a ZCA+codebook fit to the state manifold, ~28x '
@@ -8715,6 +8730,20 @@ def main():
         globals()['SHRUBS_ENABLED'] = True
         print("[SHRUBS] berry bushes seed in the growing seasons, ripen to forageable food, regrow after "
               "harvest, and die back in the Chill (--no-shrubs to disable)")
+
+    # The winter bite is BASELINE (on unless --no-winter-bite). Module default WINTER_BITE_ENABLED stays
+    # False so the regression battery is byte-identical; the game flips it on.
+    if not getattr(args, 'no_winter_bite', False):
+        globals()['WINTER_BITE_ENABLED'] = True
+        print("[WINTER] the Chill floor lifts — a colony that did not store an annual harvest starves; a "
+              "stockpiled one rides its hoard (--no-winter-bite to disable)")
+
+    # Hoard planning is BASELINE (on unless --no-hoard-planning). Module default HOARD_PLANNING_ENABLED
+    # stays False so the regression battery is byte-identical; the game flips it on.
+    if not getattr(args, 'no_hoard_planning', False):
+        globals()['HOARD_PLANNING_ENABLED'] = True
+        print("[HOARD] the maw learns the moon — a winter-crossing reward and a winter-coming cue teach it "
+              "to stockpile ahead of the Chill (--no-hoard-planning to disable)")
 
     if args.live:
         # When run as a script this module is '__main__'; alias it so

@@ -59,7 +59,10 @@ the underground should hold DF-style discoveries.
   `f = max(DOLE_FACTOR[season], DOLE_RAMP[min(year, 2)])` (`--harsh`:
   ramp ignored). `_feed_terrarium` scales BOTH the base amount AND the
   lower clamp by f (dole voxels 48/36/24/12 at 4 colonies).
-  BOOTSTRAP_FLOOR stays 10 and unscaled — the survival guarantee.
+  BOOTSTRAP_FLOOR stays 10 and unscaled — the survival guarantee, EXCEPT under
+  the winter bite (SPEC_WINTER WI1, `WINTER_BITE_ENABLED` baseline-on): in Chill
+  the floor lifts entirely so an unprepared colony truly starves while a
+  stockpiled one rides its non-decaying hoard. Gate off -> floor as above.
   OASIS_FEED_BONUS of the placed voxels land in random oasis columns.
 - **T18 (worker AI v2; supersedes T3's ordering)** Priority: (1) radius-2
   grab (FOOD/CORPSE +15 → AIR; CROP_RIPE +CROP_YIELD → TILLED); (2) haul
