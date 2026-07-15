@@ -51,7 +51,7 @@ HUD_FG = (220, 220, 220)
 EVENT_LINES = 4            # drama-feed entries shown in the HUD (spec R15)
 GLYPH_BG_DIM = 0.45        # background dimming under glyphs (spec R18)
 GLYPH_MIN_CELL = 8         # px; below this glyphs are illegible -> BLOCKS
-LEGEND_SIDEBAR_W = 250     # px; the toggleable legend sidebar strip (overlays the map's left edge)
+LEGEND_SIDEBAR_W = 336     # px; the toggleable legend sidebar strip (overlays the map's left edge; 3 columns)
 GLYPHS = {                 # DF-style terrain glyphs (spec R18/R22)
     VoxelType.AIR.value: " ",
     VoxelType.SAND.value: "░",
@@ -915,9 +915,9 @@ def build_legend_entries() -> List[Tuple[str, Tuple[int, int, int]]]:
     return entries
 
 
-def build_legend_compact() -> List[Tuple[str, Tuple[int, int, int]]]:
-    """A CONDENSED legend for the toggleable sidebar, grouped into alphabetically-sorted CATEGORIES (and
-    alphabetical WITHIN each), short labels so two narrow columns fit. Pure; enumerated from the glyph dicts."""
+def build_legend_sections() -> List[Tuple[str, List[Tuple[str, Tuple[int, int, int]]]]]:
+    """The legend as (category, [(label, color), ...]) SECTIONS — alphabetical by category and within each.
+    Pure; enumerated from the glyph dicts. The accordion sidebar (R34) collapses/expands these sections."""
     import re
     palette = build_voxel_palette()
     cats: dict = {}
@@ -945,10 +945,16 @@ def build_legend_compact() -> List[Tuple[str, Tuple[int, int, int]]]:
     def namekey(entry):                         # sort by the NAME, skipping a leading glyph/symbol
         return re.sub(r'^[^0-9A-Za-z]+', '', entry[0]).lower()
 
+    return [(cat, sorted(cats[cat], key=namekey)) for cat in sorted(cats)]
+
+
+def build_legend_compact() -> List[Tuple[str, Tuple[int, int, int]]]:
+    """FLAT legend (headers + entries as one list) — kept for text callers/tests. The interactive sidebar
+    uses build_legend_sections() + the accordion instead."""
     out: List[Tuple[str, Tuple[int, int, int]]] = [("== LEGEND (L) ==", (230, 210, 140))]
-    for cat in sorted(cats):
+    for cat, entries in build_legend_sections():
         out.append((f"-- {cat} --", (150, 150, 160)))
-        for label, color in sorted(cats[cat], key=namekey):
+        for label, color in entries:
             out.append((f" {label}", color))
     return out
 
@@ -1272,6 +1278,8 @@ class LiveViewer:
         self.manager_colony = 0
         self.saga_open = False      # SPEC_DYNASTIES D5
         self.legend_open = False    # R34
+        self.legend_collapsed: set = set()   # R34b: accordion — category names currently collapsed
+        self._legend_hitboxes: List[Tuple['pygame.Rect', str]] = []   # header click targets (rebuilt each draw)
         self.look_mode = False      # R32 look cursor
         self.cursor = (self.sim.world.width // 2, self.sim.world.height // 2)
         self.inspected = None       # ('unit'|'maw'|'beast', object) (R33)
@@ -1551,6 +1559,9 @@ class LiveViewer:
                     if hasattr(self.sim, '_log_event'):
                         self.sim._log_event("The keeper preserves the terrarium")
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            # R34b: while the legend is open, a click on a section header folds/unfolds it
+            if self.legend_open and self._legend_click(event.pos):
+                return
             # R32: a click IS the look cursor
             if not (self.manager_open or self.saga_open or self.legend_open):
                 x = event.pos[0] // self.cell_size
@@ -2144,26 +2155,55 @@ class LiveViewer:
                     self._screen.blit(forge_cursor(tw), (cxp, cyp))
 
     def _draw_legend_sidebar(self, area_h: int) -> None:
-        """Toggleable legend SIDEBAR (R34): an opaque strip over the map's LEFT edge so the terrarium
-        stays visible (not a full-screen takeover). Column-wrapped to the narrow width; drawn after the
-        map, before the flip. Uses a compact font so the whole legend fits."""
+        """Toggleable legend SIDEBAR (R34) as a collapsible ACCORDION (R34b): an opaque strip over the map's
+        LEFT edge (the terrarium stays visible). Each category is a clickable header (▾ open / ▸ collapsed);
+        clicking toggles it, so a growing legend never overflows — collapse what you don't need. Sections flow
+        top-to-bottom, wrapping to the next column when a column fills. Records header hitboxes for the click
+        handler. Pure of sim state."""
         w = LEGEND_SIDEBAR_W
         panel = pygame.Surface((w, area_h))
         panel.set_alpha(238)
         panel.fill(HUD_BG)
         self._screen.blit(panel, (0, 0))
         pygame.draw.rect(self._screen, (70, 70, 55), pygame.Rect(0, 0, w, area_h), 1)
-        entries = build_legend_compact()
-        line_h, top, left = 12, 5, 6
-        max_rows = max(1, (area_h - 2 * top) // line_h)
-        n_cols = max(1, (len(entries) + max_rows - 1) // max_rows)
-        col_w = max(1, (w - left) // n_cols)
-        char_w = max(1, self._legend_font.size("M")[0])
-        max_chars = max(3, (col_w - 4) // char_w)        # keep each row inside its column (no bleed/overlap)
-        positions = legend_layout(len(entries), w, area_h, line_h=line_h, top=top, left=left)
-        for (line, color), (x, y) in zip(entries, positions):
-            if line:
-                self._screen.blit(self._legend_font.render(line[:max_chars], True, color), (x, y))
+        font = self._legend_font
+        line_h, top, left, gap = 13, 5, 6, 4
+        n_cols = 3
+        col_w = max(60, (w - left) // n_cols)
+        char_w = max(1, font.size("M")[0])
+        max_chars = max(4, (col_w - 8) // char_w)        # clip each row to its column (never overrun a neighbor)
+        self._legend_hitboxes = []
+        x, y = left, top
+        self._screen.blit(font.render("LEGEND (L) — click ▾ to fold", True, (230, 210, 140)), (x, y))
+        y += line_h + 2
+        for cat, entries in build_legend_sections():
+            collapsed = cat in self.legend_collapsed
+            rows = 1 if collapsed else 1 + len(entries)
+            if y + rows * line_h > area_h - top and y > top + line_h:   # wrap this whole section to next column
+                x += col_w
+                y = top + line_h + 2
+                if x >= w:                                # out of columns — stop (collapse frees space)
+                    break
+            arrow = "▸" if collapsed else "▾"
+            self._screen.blit(font.render(f"{arrow} {cat}", True, (180, 180, 160)), (x, y))
+            self._legend_hitboxes.append((pygame.Rect(x, y, col_w, line_h), cat))
+            y += line_h
+            if not collapsed:
+                for label, color in entries:
+                    self._screen.blit(font.render(f"  {label}"[:max_chars], True, color), (x, y))
+                    y += line_h
+            y += gap
+
+    def _legend_click(self, pos) -> bool:
+        """R34b: a click on a legend header toggles that section's collapse. Returns True if handled."""
+        for rect, cat in getattr(self, '_legend_hitboxes', ()):
+            if rect.collidepoint(pos):
+                if cat in self.legend_collapsed:
+                    self.legend_collapsed.discard(cat)
+                else:
+                    self.legend_collapsed.add(cat)
+                return True
+        return False
 
     def _visible_depth(self, position: Tuple[int, int, int]) -> Optional[int]:
         """Depth an entity renders at in the active view mode, None if hidden.

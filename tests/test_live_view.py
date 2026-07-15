@@ -452,6 +452,35 @@ def test_poison_cloud_renders_pure():
         "the poison overlay must not mutate the sim (pure renderer)"
 
 
+def test_legend_accordion_sections_and_toggle():
+    """R34b: the legend is a collapsible accordion — build_legend_sections yields sorted (category, entries),
+    rendering records header hitboxes, and a click on a header toggles that section's collapse. Pure of sim."""
+    import pygame
+    from live_view import build_legend_sections
+    sections = build_legend_sections()
+    cats = [c for c, _ in sections]
+    assert cats == sorted(cats), "categories are alphabetical"
+    assert all(isinstance(entries, list) and entries for _, entries in sections), "each section has entries"
+    sim = make_sim()
+    for _ in range(6):
+        sim.step()
+    viewer = LiveViewer(sim, max_steps=1)
+    viewer.legend_open = True
+    pygame.init()
+    viewer._screen = pygame.display.set_mode(
+        (sim.world.width * viewer.cell_size + 400, max(sim.world.height * viewer.cell_size, 460)))
+    viewer._load_fonts()
+    step0 = sim.step_count
+    viewer._render_body()                         # draws the accordion, populates hitboxes
+    assert viewer._legend_hitboxes, "rendering the legend records clickable header hitboxes"
+    rect, cat = viewer._legend_hitboxes[0]
+    assert cat not in viewer.legend_collapsed
+    handled = viewer._legend_click(rect.center)   # click the first header
+    pygame.quit()
+    assert handled and cat in viewer.legend_collapsed, "clicking a header collapses that section"
+    assert sim.step_count == step0, "the legend accordion must not mutate the sim (pure UI)"
+
+
 def test_sky_sign_renders_pure():
     """Revelation (SPEC_REVELATION R1): the night-sky sign inscription draws without crashing and mutates
     nothing — a pure read of sim.sky_sign."""
