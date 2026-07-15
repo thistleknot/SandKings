@@ -43,12 +43,18 @@ instead of crafting a weapon. Gated `SNARES_ENABLED` baseline-on (`--no-snares`)
 `tests/test_snares.py` (web-near-water catches guppies→FOOD / web-on-land catches crickets / gate-off
 no-op), full battery 54/54 byte-identical.
 
-## Intelligence payoff — the maw learns seasonal foraging (Phase 4)
+## Intelligence payoff — the maw learns seasonal foraging (Phase 4, SHIPPED 2026-07-14)
 
-A 4th maw directive dim **forage-mode** (aquatic / terrestrial / hunt bias), wired into the *worker*
-forage-target selection (not the 7-action soldier space): the maw's learned directive biases which FOOD
-the colony seeks. With season-phase already in its obs, the food/survival reward teaches it to forage
-aquatic in Flood, hunt crickets in Dust, chase bounty in Chill.
+`MAW_DIRECTIVE_DIM` 3→4: a **forage-mode** dim (d3), warm-started neutral (0.5; no genome instinct), that
+the RL learns. `_forage_mode(colony)` maps d3 → aquatic (<0.33) / hunt (<0.67) / terrestrial; wired into
+the *worker* forage-target selection (`_find_food_target(..., prefer=...)`, `FORAGE_PREFER_DISCOUNT`) —
+the maw's learned directive discounts the preferred guild's distance so foragers steer to oasis FOOD
+(aquatic) / land FOOD + ripe crops (terrestrial) / CORPSE (hunt). Gated by `MAW_RL_ENABLED` → `prefer`
+is None when off (byte-identical). With season-phase in its obs, the food/survival reward teaches it to
+forage aquatic in wet, hunt crickets in Dust, chase bounty in Chill.
+**Observability**: HUD "Pond:" + "Swarm:" abundance lines (`live_view.build_hud_entries`); `EVENT_TINTS`
+for cricket/snare drama. Verified: `tests/test_forage_mode.py` (bias + classification), maw suite + battery
+55/55 byte-identical, headless HUD check, live-view suite green.
 
 ## Phase 1 — Crickets (SHIPPED 2026-07-14)
 

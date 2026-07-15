@@ -318,6 +318,7 @@ SNARES_ENABLED = False       # module default False (battery byte-identical); en
 SNARE_TICK = 20              # snare-harvest cadence (steps)
 SNARE_YIELD = 3              # guppies/crickets caught per snare per tick
 SNARE_FOOD_CAP = 8           # max snare-food voxels deposited per tick
+FORAGE_PREFER_DISCOUNT = 0.5  # the maw's forage-mode (directive d3) makes preferred food seem this-x closer
 
 
 def cricket_dynamics(cricket: float, forage: float, dry: bool, flood: bool, frost: bool):
@@ -2306,6 +2307,7 @@ class SandKingsSimulation:
                     float(getattr(g, 'aggression', 0.5)),          # d0 aggression
                     float(getattr(g, 'expansion_rate', 0.5)),      # d1 mobility
                     float(getattr(g, 'tunnel_preference', 0.5)),   # d2 verticality
+                    0.5,                                           # d3 forage-mode (neutral; the RL learns it)
                 ], dtype=torch.float32)
                 lr = MAW_LR * (0.5 + float(getattr(g, 'plasticity', 0.5)))
                 gamma = patience_to_gamma(float(getattr(g, 'patience', 0.5)))  # patience gene -> discount
@@ -5824,9 +5826,25 @@ class SandKingsSimulation:
                         self.world.voxels[nx, ny, nz] = VoxelType.WOOD.value
         return placed
 
+    def _forage_mode(self, colony) -> Optional[str]:
+        """The maw's learned forage-mode (directive d3, SPEC_FOOD_WEB Phase 4) -> which food guild the
+        colony's foragers prefer this season. None (no bias) unless the maw-RL is on and has a 4-dim
+        directive. d3<0.33 aquatic, <0.67 hunt, else terrestrial."""
+        if not MAW_RL_ENABLED:
+            return None
+        dvec = getattr(colony, 'maw_directive', None)
+        if dvec is None or dvec.numel() <= 3:
+            return None
+        f = float(dvec[3])
+        return 'aquatic' if f < 0.33 else ('hunt' if f < 0.67 else 'terrestrial')
+
     def _find_food_target(self, position: Tuple[int, int, int],
-                          radius: int) -> Optional[Tuple[int, int, int]]:
-        """Nearest FOOD/CORPSE voxel within a clipped box, by Manhattan distance."""
+                          radius: int, prefer: Optional[str] = None
+                          ) -> Optional[Tuple[int, int, int]]:
+        """Nearest FOOD/CORPSE/ripe-crop voxel within a clipped box, by Manhattan distance. `prefer`
+        (the maw's forage-mode) discounts the preferred guild's distance so foragers steer to it:
+        aquatic->oasis FOOD (guppies/snares), terrestrial->land FOOD + ripe crops (crickets/farm),
+        hunt->CORPSE (beast/cricket kills)."""
         x, y, z = position
         w, h, d = self.world.dimensions
         x0, x1 = max(0, x - radius), min(w, x + radius + 1)
@@ -5839,7 +5857,21 @@ class SandKingsSimulation:
         if len(hits) == 0:
             return None
         coords = hits + np.array([x0, y0, z0])
-        best = coords[int(np.argmin(np.abs(coords - np.array(position)).sum(axis=1)))]
+        dist = np.abs(coords - np.array(position)).sum(axis=1).astype(float)
+        if prefer is not None:                              # bias toward the maw's chosen guild
+            cx, cy = w // 2, h // 2
+            vox = self.world.voxels
+            for i in range(len(coords)):
+                px, py, pz = int(coords[i][0]), int(coords[i][1]), int(coords[i][2])
+                t = vox[px, py, pz]
+                near = (px - cx) ** 2 + (py - cy) ** 2 <= (OASIS_RADIUS + 3) ** 2
+                match = ((prefer == 'aquatic' and t == VoxelType.FOOD.value and near)
+                         or (prefer == 'terrestrial' and (t == VoxelType.CROP_RIPE.value
+                             or (t == VoxelType.FOOD.value and not near)))
+                         or (prefer == 'hunt' and t == VoxelType.CORPSE.value))
+                if match:
+                    dist[i] *= FORAGE_PREFER_DISCOUNT
+        best = coords[int(np.argmin(dist))]
         return (int(best[0]), int(best[1]), int(best[2]))
 
     def _blow_sand(self):
@@ -7765,7 +7797,8 @@ class SandKingsSimulation:
                     target = unit.forage_target = None  # stale: someone ate it
                 if target is None:
                     target = self._find_food_target(unit.position,
-                                                    colony.genome.foraging_range)
+                                                    colony.genome.foraging_range,
+                                                    prefer=self._forage_mode(colony))
                     if target is None:
                         target = self._pull_known_food(colony, unit.position)
                     unit.forage_target = target

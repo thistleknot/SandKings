@@ -41,7 +41,7 @@ import torch.nn as nn
 MAW_RL_ENABLED = False
 
 # --- hyperparameters ---
-MAW_DIRECTIVE_DIM = 3        # colony constants the spawn condition on: aggression, mobility, verticality
+MAW_DIRECTIVE_DIM = 4        # aggression, mobility, verticality, forage-mode (d3 read by the sim, not the action tilt)
 MAW_HIDDEN = 32
 MAW_LR = 3e-3
 MAW_LOG_STD_INIT = -0.5      # exp(-0.5) ~ 0.61 initial exploration std

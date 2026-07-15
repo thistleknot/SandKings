@@ -58,6 +58,12 @@ Objectives defined in `objective.md`. Dates are absolute.
   string/toothpick by the water sets a snare instead of crafting a weapon. Gated `SNARES_ENABLED`
   baseline-on (`--no-snares`). Verified: `tests/test_snares.py` (4 tests), full battery 54/54
   byte-identical. Next: Phase 4 maw forage-mode lever + HUD/drama.
+- **2026-07-14 (Phase 4 — DONE, all 4 phases shipped)** — the maw learns seasonal foraging:
+  `MAW_DIRECTIVE_DIM` 3→4 (d3 forage-mode, warm-started neutral), `_forage_mode`→aquatic/hunt/terrestrial
+  wired into `_find_food_target(prefer=...)` so the maw's learned directive steers foragers to the right
+  guild by season; gated by MAW_RL_ENABLED (prefer=None off → byte-identical). Observability: HUD Pond/Swarm
+  lines + cricket/snare tints. Verified: `tests/test_forage_mode.py`, maw suite + battery 55/55, headless
+  HUD check, live-view suite. **The food web is complete: 4 phases, one weather-rotated RPS ecosystem.**
 
 ## Guppy predator (3-tier) — EXPLORED then REJECTED (superseded by the holistic web)
 

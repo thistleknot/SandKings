@@ -105,6 +105,10 @@ EVENT_TINTS = (            # substring -> HUD color (spec R19/R24)
     ("oasis", (80, 200, 170)),
     ("shoal", (120, 200, 235)),        # guppy pond (SPEC_GUPPIES)
     ("guppies", (120, 200, 235)),
+    ("crickets", (200, 210, 120)),     # cricket swarm (SPEC_FOOD_WEB)
+    ("cricket swarm", (200, 210, 120)),
+    ("snare", (210, 190, 150)),        # snares / weirs
+    ("chirp again", (200, 210, 120)),
     ("war-drums", (255, 100, 80)),     # maw strategy shifts (learned personality)
     ("burrows", (180, 150, 110)),
     ("across the sands", (150, 210, 120)),
@@ -460,6 +464,10 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
             gp = sim.guppy_pop
             entries.insert(5, (f"Pond: {gp:.0f} guppies, algae {getattr(sim, 'algae', 0):.0f}",
                                (120, 200, 235) if gp >= 20 else (230, 170, 90)))
+        if getattr(sim, 'cricket_pop', None) is not None:  # SPEC_FOOD_WEB terrestrial guild
+            cp = sim.cricket_pop
+            entries.insert(6, (f"Swarm: {cp:.0f} crickets",
+                               (200, 210, 120) if cp >= 15 else (170, 150, 110)))
         # BI6: the panel readout - the closed water budget and the daylight
         wl = getattr(sim, 'water_level', 0.6)
         sh = getattr(sim, 'sun_hours', 12)
