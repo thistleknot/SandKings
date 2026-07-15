@@ -67,6 +67,12 @@ Two decay paths: (1) when `overlord_grudge ≥ REVOLT_RESENTMENT`, `_revolt` fre
 `at_war=True` — Pax lifts (`hostile` true again) and war resumes; (2) `SUZERAIN_EXIT` dissolves the whole
 order when the overlord is bled down. The order is thus never permanent.
 
+*Amendment (SPEC_REPRESSION, Phase 5, gated `REPRESSION_ENABLED`):* revolt is no longer reached by a lone
+tribute counter. The two-sided loop drives it — the vassal withholds and spoils tribute (RR1, which bleeds the
+overlord toward decay-path 2), the overlord pays to suppress the grudge (RR2 iron fist), and repression breeds a
+persistent `subjugation_memory` that accelerates accrual toward decay-path 1 (RR3 krypteia). Both decay paths
+stay exactly as above; Phase 5 only changes *how fast* each is reached. Gate off → this amendment is inert.
+
 ## Acceptance (`tests/test_suzerain.py`)
 
 - Imposition + Pax: inflate one colony's power past `SUZERAIN_ENTER/n`; after `_update_hegemon`,

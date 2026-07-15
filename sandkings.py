@@ -361,6 +361,11 @@ SACK_RADIUS = 6                 # a besieger must have a unit this close to the 
 # until resentment or the overlord's decline sparks revolt and war resumes. Closes the arc's loop.
 SUZERAIN_ENABLED = False        # module default False (battery byte-identical); entrypoint flips on (opt-out --no-suzerain)
 
+# Repression & Resistance (SPEC_REPRESSION, Phase 5): the tribute order goes two-sided — the overlord pays to
+# repress (iron fist), the vassal sabotages back (withholds + spoils tribute), and repression breeds a simmering
+# subjugation_memory that shortens each next fuse (krypteia). Deterministic; folded into _tribute_tick.
+REPRESSION_ENABLED = False      # module default False (battery byte-identical); entrypoint flips on (opt-out --no-repression)
+
 
 def cricket_dynamics(cricket: float, forage: float, dry: bool, flood: bool, frost: bool):
     """Pure land-swarm step (SPEC_FOOD_WEB): the terrestrial consumer-resource model. Returns
@@ -6565,7 +6570,12 @@ class SandKingsSimulation:
     def _tribute_tick(self):
         """SZ3: every TRIBUTE_INTERVAL each vassal renders TRIBUTE_RATE of its food to its overlord by a
         direct transfer (conserved), accrues non-decaying resentment, and revolts at REVOLT_RESENTMENT.
-        Gated -> early return when off (byte-identical, the _labor_market_tick pattern)."""
+        Gated -> early return when off (byte-identical, the _labor_market_tick pattern).
+
+        SPEC_REPRESSION (Phase 5, gated REPRESSION_ENABLED): the order goes two-sided — the vassal withholds
+        and spoils tribute (RR1 sabotage), the overlord pays to suppress the grudge (RR2 iron fist), and each
+        repression breeds a simmering subjugation_memory that accelerates future accrual (RR3 krypteia). All
+        deterministic (no new RNG); with REPRESSION_ENABLED off this method is byte-identical to Phase 4."""
         if not SUZERAIN_ENABLED:
             return
         from politics import (TRIBUTE_INTERVAL, TRIBUTE_RATE, TRIBUTE_RESENTMENT,
@@ -6582,14 +6592,39 @@ class SandKingsSimulation:
                 c.tributary_to = -1               # the overlord is gone -> freed
                 self._bump_suzerain_epoch()
                 continue
-            amount = TRIBUTE_RATE * c.maw.food_stored
+            # RR1/RR3 setup: gate-off keeps withhold=0 and resentment=TRIBUTE_RESENTMENT (byte-identical).
+            grudge = getattr(c, 'overlord_grudge', 0.0)
+            withhold = 0.0
+            resentment = TRIBUTE_RESENTMENT
+            if REPRESSION_ENABLED:
+                from politics import (REPRESSION_COST_FOOD, REPRESSION_CALM, REPRESSION_RESENTMENT,
+                                      MEMORY_ACCEL_K, SABOTAGE_WITHHOLD_K, SABOTAGE_WITHHOLD_CAP,
+                                      SABOTAGE_DAMAGE_K, SABOTAGE_MIN_GRUDGE)
+                grudge_norm = min(1.0, grudge / REVOLT_RESENTMENT) if REVOLT_RESENTMENT > 0 else 0.0
+                withhold = min(SABOTAGE_WITHHOLD_CAP, SABOTAGE_WITHHOLD_K * grudge_norm)
+                resentment = TRIBUTE_RESENTMENT + MEMORY_ACCEL_K * getattr(c, 'subjugation_memory', 0.0)
+                # RR1 covert damage: a resentful vassal spoils the overlord's stores (destroyed, not moved).
+                if grudge >= SABOTAGE_MIN_GRUDGE:
+                    spoil = SABOTAGE_DAMAGE_K * grudge_norm * overlord.maw.food_stored
+                    if spoil > 0:
+                        overlord.maw.food_stored = max(0.0, overlord.maw.food_stored - spoil)
+                        self._log_event(f"House {self._house_name(c)} sabotages the stores of "
+                                        f"overlord House {self._house_name(overlord)}")
+            amount = TRIBUTE_RATE * c.maw.food_stored * (1.0 - withhold)  # RR1 withhold (0 when gate off)
             if amount > 0:
                 c.maw.food_stored = max(0.0, c.maw.food_stored - amount)
                 overlord.maw.eat(amount)
-            c.overlord_grudge = getattr(c, 'overlord_grudge', 0.0) + TRIBUTE_RESENTMENT
+            c.overlord_grudge = grudge + resentment     # RR3: base path == Phase 4 (resentment==TRIBUTE_RESENTMENT)
             d.rel(c.colony_id, overlord_id).adjust(TRIBUTE_TRUST_HIT)
             self._log_event(f"House {self._house_name(c)} renders tribute to "
                             f"overlord House {self._house_name(overlord)}")
+            # RR2 iron fist: an overlord that can afford it pays to suppress the grudge, breeding krypteia memory.
+            if REPRESSION_ENABLED and overlord.maw.food_stored >= REPRESSION_COST_FOOD:
+                overlord.maw.food_stored -= REPRESSION_COST_FOOD
+                c.overlord_grudge = max(0.0, c.overlord_grudge - REPRESSION_CALM)
+                c.subjugation_memory = getattr(c, 'subjugation_memory', 0.0) + REPRESSION_RESENTMENT
+                self._log_event(f"House {self._house_name(overlord)}'s iron fist stills "
+                                f"House {self._house_name(c)}")
             if c.overlord_grudge >= REVOLT_RESENTMENT:
                 self._revolt(c, overlord)
 
@@ -8798,6 +8833,11 @@ def main():
                         help='Disable the Aztec/Cortes new order (baseline: ON — a power strong enough '
                              'imposes tributary vassalage, a Pax suppresses vassal wars, and resentment or '
                              'the overlord\'s decline sparks revolt so war resumes; SPEC_SUZERAIN).')
+    parser.add_argument('--no-repression', action='store_true',
+                        help='Disable two-sided repression/resistance on the tribute order (baseline: ON — the '
+                             'vassal withholds and spoils tribute, the overlord pays to suppress the grudge '
+                             '(iron fist), and repression breeds a simmering memory that shortens each next '
+                             'fuse; turnover becomes emergent; SPEC_REPRESSION).')
     parser.add_argument('--no-learned-basis', action='store_true',
                         help='Use the random Kanerva codebook instead of the learned shared encoder '
                              'basis (baseline: ON — a ZCA+codebook fit to the state manifold, ~28x '
@@ -8970,6 +9010,14 @@ def main():
         sim.suzerain_enabled = True
         print("[ORDER] a dominant power imposes tributary vassalage — a Pax stills the vassals' wars until "
               "resentment or the overlord's decline sparks revolt and war resumes (--no-suzerain)")
+
+    # Two-sided repression/resistance is BASELINE (on unless --no-repression). Module global only (no
+    # cross-module reader); default False keeps the battery byte-identical. Needs the order to act on, so it
+    # only bites when suzerainty is also on.
+    if not getattr(args, 'no_repression', False):
+        globals()['REPRESSION_ENABLED'] = True
+        print("[FIST] the tribute order turns two-sided — vassals withhold and sabotage, the overlord pays to "
+              "repress, and the iron fist breeds resentment that shortens each next fuse (--no-repression)")
 
     if args.live:
         # When run as a script this module is '__main__'; alias it so

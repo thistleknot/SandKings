@@ -50,6 +50,17 @@ TRIBUTE_RATE = 0.10          # fraction of a vassal's food owed per interval
 TRIBUTE_RESENTMENT = 10.0    # non-decaying grudge a vassal accrues per tribute (revolt fuel)
 REVOLT_RESENTMENT = 50.0     # overlord_grudge at which a vassal revolts (~5 tributes)
 TRIBUTE_TRUST_HIT = -3.0     # diplomatic-trust nudge per tribute (flavor for other readers; decays)
+# Repression & Resistance (SPEC_REPRESSION, Phase 5): the tribute order becomes two-sided — the overlord pays
+# to repress (iron fist), the vassal sabotages back, and repression breeds a simmering long-memory that shortens
+# each next fuse (the krypteia paradox). All deterministic; gated REPRESSION_ENABLED (byte-identical off).
+REPRESSION_COST_FOOD = 12.0  # food the iron fist costs the overlord per repressed vassal per interval
+REPRESSION_CALM = 8.0        # grudge the fist suppresses per repression (< TRIBUTE_RESENTMENT: repressed vassal still climbs)
+REPRESSION_RESENTMENT = 1.0  # krypteia long-memory (subjugation_memory) bred per repression
+MEMORY_ACCEL_K = 0.5         # subjugation_memory's contribution to per-tribute grudge accrual
+SABOTAGE_WITHHOLD_K = 0.6    # tribute-withholding scale vs grudge_norm
+SABOTAGE_WITHHOLD_CAP = 0.5  # max fraction of owed tribute a resentful vassal withholds
+SABOTAGE_DAMAGE_K = 0.06     # fraction of overlord food a resentful vassal spoils per interval (destroyed)
+SABOTAGE_MIN_GRUDGE = 20.0   # grudge below which a vassal does not yet sabotage
 DIPLOMACY_INTERVAL = 25
 COOP_YIELD_BONUS = 0.25      # jointly tended crops (P10)
 RESPAWN_SHADOW = 0.25        # inbound trust carryover factor (P12)

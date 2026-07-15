@@ -51,6 +51,9 @@ Governing scope record: `docs/decisions/2026-07-09-intercolony-relations-spectru
 
 ## Politics, houses & history
 - **SPEC_POLITICS.md** — the political world: trust, gifts, truces, coalitions, betrayal.
+- **SPEC_SCARCITY_WAR.md** (SW1–SW3) — dog-eat-dog: the starving raid to eat, plunder moves food, the fallen are cannibalized.
+- **SPEC_SUZERAIN.md** (SZ1–SZ4) — the Aztec/Cortés new order: a power imposes tributary vassalage, a Pax stills vassal wars, tribute + revolt.
+- **SPEC_REPRESSION.md** (RR1–RR4) — the two-sided order: vassal sabotage vs the overlord's iron fist, krypteia memory, emergent turnover.
 - **SPEC_DYNASTIES.md** (D1–D12) — dynasties & the salience-scored chronicle; house names, epithets, saga.
 - **SPEC_CANON_HOUSES.md** (CH1–CH4) — the canonical houses (Round B / Canon).
 - **SPEC_MADNESS.md** (MAD-1–MAD-6) — madness & extinction: a house can go extinct (fresh unrelated house at respawn, name kept as a disgraced gravestone) via the `colony.madness` sustained-neglect accumulator (shameful "the Mad") or conflict (honorable, deferred); extinction changes only the respawn IDENTITY — the T5/T6 slot-refill liveness spine is untouched.
