@@ -1026,47 +1026,69 @@ def build_manager_entries(sim: SandKingsSimulation,
 
     diplomacy = getattr(sim, 'diplomacy', None)
     if diplomacy is not None and colony is not None and colony.is_alive():
-        from politics import FRIENDLY, HOSTILE, NEMESIS
-        entries.append(("RELATIONS  ->out <-in", (120, 180, 220)))
+        entries.append(("RELATIONS", (120, 180, 220)))
+        allies, truces, wars = [], [], []
         for other in sim.colonies:
-            if other.colony_id == colony_id:
+            oid = other.colony_id
+            if oid == colony_id or not other.is_alive():
                 continue
-            out_t = diplomacy.trust(colony_id, other.colony_id)
-            in_t = diplomacy.trust(other.colony_id, colony_id)
-            if diplomacy.ally(colony_id, other.colony_id):
-                standing = "ALLY"
-            elif out_t <= NEMESIS:
-                standing = "NEMESIS"
-            elif out_t <= HOSTILE:
-                standing = "hostile"
-            elif out_t >= FRIENDLY:
-                standing = "friendly"
-            else:
-                standing = "neutral"
-            extra = ""
-            key = frozenset((colony_id, other.colony_id))
-            if key in diplomacy.truce_until:
-                left = max(0, diplomacy.truce_until[key] - sim.step_count)
-                extra += f" truce:{left}"
-            if diplomacy.war_target.get(other.colony_id) == colony_id:
-                extra += " [WAR->us]"
-            if diplomacy.war_target.get(colony_id) == other.colony_id:
-                extra += " [WAR->them]"
-            entries.append((f"  C{other.colony_id} {out_t:+4.0f} {in_t:+4.0f}"
-                            f"  {standing}{extra}",
-                            hud_text_color(other.color)))
+            if diplomacy.ally(colony_id, oid):
+                allies.append(f"C{oid}")
+            if diplomacy.truce_until.get(frozenset((colony_id, oid)), -1) > sim.step_count:
+                truces.append(f"C{oid}")
+            if (diplomacy.war_target.get(colony_id) == oid
+                    or diplomacy.war_target.get(oid) == colony_id):
+                wars.append(f"C{oid}")
+        entries.append((f"  allies: {', '.join(allies) or '—'}"
+                        f"   truce: {', '.join(truces) or '—'}"
+                        f"   war: {', '.join(wars) or '—'}", HUD_FG))
         entries.append(("", HUD_FG))
 
-    entries.append(("CONCEPTS  acc%/active", (120, 180, 220)))
+    # THOUGHTS sidebar (SPEC_HIVE_MONITOR): only the anchors actually firing — not the whole
+    # vocabulary (a wall of "100% 0" rows carries no signal).
     rows = monitor.concept_rows(sim, colony) if colony.is_alive() else []
-    for i in range(0, len(rows), 2):
-        parts = []
-        for name, acc, active in rows[i:i + 2]:
-            marker = "*" if active else " "
-            parts.append(f"{name:>11} {acc * 100:3.0f}% {active:2d}{marker}")
-        entries.append(("  ".join(parts), HUD_FG))
-
+    avg_acc = (sum(r[1] for r in rows) / len(rows)) if rows else 0.0
+    entries.append((f"THOUGHTS  (probes {avg_acc * 100:.0f}% accurate — decoded, not fabricated)",
+                    (120, 180, 220)))
+    npop = max(1, len(colony.units)) if colony.is_alive() else 1
+    live = sorted((r for r in rows if r[2] > 0), key=lambda r: r[2], reverse=True)[:6]
+    if live:
+        for i in range(0, len(live), 2):
+            parts = [f"{name:>10} {hp_bar(min(1.0, active / npop), 6)}"
+                     for name, acc, active in live[i:i + 2]]
+            entries.append(("  " + "    ".join(parts), HUD_FG))
+    else:
+        entries.append(("  (quiet)", (140, 140, 150)))
     entries.append(("", HUD_FG))
+
+    # MAW -> MANAGER -> SWARM: the communication pipeline the user watches — the 85% maw directive,
+    # how the manager broadcasts it, and the pheromone field the swarm senses/acts on.
+    if colony.is_alive():
+        entries.append(("MAW -> MANAGER -> SWARM", (120, 180, 220)))
+        mrl = getattr(colony, 'maw_rl', None)
+        d = getattr(mrl, 'last_directive', None) if mrl is not None else None
+        if d is not None:
+            dv = ([float(x) for x in (d.tolist() if hasattr(d, 'tolist') else d)] + [.5, .5, .5, .5])[:4]
+            entries.append((f"  maw  aggr{hp_bar(dv[0], 5)} mob{hp_bar(dv[1], 5)}"
+                            f" vert{hp_bar(dv[2], 5)} forage{hp_bar(dv[3], 5)}", (210, 170, 140)))
+        else:
+            entries.append(("  maw  instinct (rule-based; no learned directive)", (140, 140, 150)))
+        learner = sim.learners.get(colony_id) if hasattr(sim, 'learners') else None
+        posture = learner.posture if learner is not None else "FORAGE"
+        entries.append((f"  mgr  posture:{posture}  ->  broadcasting to {len(colony.units)} kin",
+                        (170, 200, 140)))
+        pher = getattr(sim, 'pheromones', None)
+        if pher is not None and getattr(pher, 'trails', None) is not None:
+            tr = pher.trails
+            def _chan(pt: int) -> float:
+                try:
+                    return float(min(1.0, tr[:, :, :, colony_id, pt].max()))
+                except Exception:
+                    return 0.0
+            entries.append((f"  pher food{hp_bar(_chan(0), 5)} danger{hp_bar(_chan(1), 5)}"
+                            f" territory{hp_bar(_chan(2), 5)}", (150, 180, 220)))
+        entries.append(("", HUD_FG))
+
     entries.append(("TOP SOLDIERS", (120, 180, 220)))
     soldiers = [u for u in colony.units if u.unit_type == UnitType.SOLDIER]
     if neural:
@@ -1074,7 +1096,7 @@ def build_manager_entries(sim: SandKingsSimulation,
                                      if u.brain_layer else 0.0), reverse=True)
     else:
         soldiers.sort(key=lambda u: u.health, reverse=True)
-    for unit in soldiers[:5]:
+    for unit in soldiers[:3]:
         uid = getattr(unit, 'unit_id', 0)
         thought = getattr(unit, 'thought', '...')
         if neural and unit.brain_layer is not None:
@@ -1830,9 +1852,13 @@ class LiveViewer:
         m_entries = build_manager_entries(self.sim, self.manager_colony)
         positions = legend_layout(len(m_entries), area_w, area_h,
                                   line_h=17, top=10, left=14)
+        char_w = max(1, self._font.size("M")[0])
         for (line, color), (x, y) in zip(m_entries, positions):
             if line:
-                self._screen.blit(self._font.render(line, True, color), (x, y))
+                # keep every row inside the map area so it can never bleed into the
+                # HUD sidebar at area_w+12 (the old top-right garble)
+                max_chars = max(4, (area_w - x - 6) // char_w)
+                self._screen.blit(self._font.render(line[:max_chars], True, color), (x, y))
 
         hud_x = area_w + 12
         for i, (line, color) in enumerate(build_hud_entries(

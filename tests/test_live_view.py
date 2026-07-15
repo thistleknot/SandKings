@@ -323,10 +323,13 @@ def test_manager_entries_content():
     entries = build_manager_entries(sim, cid)
     joined = "\n".join(t for t, _ in entries)
     assert f"HOUSE {sim._house(sim.colonies[0])} (Colony {cid})" in joined
-    assert "CONCEPTS" in joined and "TOP SOLDIERS" in joined and "DECISIONS" in joined
-    from hive_mind_monitor import ANCHOR_SEEDS
-    for seed in ANCHOR_SEEDS:
-        assert seed in joined, f"concept {seed} missing from manager"
+    # Redesigned manager: a focused per-maw inspector. THOUGHTS shows only the anchors
+    # actually firing (not the full 35-anchor wall), plus the MAW->MANAGER->SWARM comms
+    # pipeline (directive -> broadcast -> pheromone field) the user cycles through.
+    assert "THOUGHTS" in joined, "thoughts section present"
+    assert "MAW -> MANAGER -> SWARM" in joined, "the maw->manager->pheromone pipeline present"
+    assert ("  mgr  posture:" in joined and "pher food" in joined), "manager broadcast + pheromone field shown"
+    assert "RELATIONS" in joined and "TOP SOLDIERS" in joined and "DECISIONS" in joined
     assert "instincts" in joined, "rule-based colony labeled as instincts"
 
 

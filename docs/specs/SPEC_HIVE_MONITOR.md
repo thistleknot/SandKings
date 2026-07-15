@@ -99,18 +99,24 @@ with no ground truth).
   moments: a unit kills an enemy; a unit dies; the colony declares war;
   a unit lands siege first-blood on a Maw. The thought recorded is the
   actor's cached thought (neural) or instincts (rule-based) at that moment.
-- **M5 (manager screen)** When `M` is pressed the viewer MUST toggle the
-  manager screen, which replaces the map area while the sim keeps stepping
-  (HUD panel and all other keys stay live). While it is open, LEFT/RIGHT
-  MUST cycle the inspected colony. The screen MUST show: colony header
-  (war state, food, maw HP, population by caste); the concept table
-  (name, probe accuracy %, count of units for which it is currently
-  ground-truth-active); a roster of the top 8 soldiers by
-  `get_performance_score` (unit id, generation, kills, damage dealt/taken,
-  steps alive, score, current thought/instincts); and the last 8 decision
-  log entries. Content MUST come from a pure function
-  `build_manager_entries(sim, colony_id) -> list[(text, color)]` so it is
-  headlessly testable.
+- **M5 (manager screen — the per-maw cognition inspector)** When `M` is pressed
+  the viewer MUST toggle the manager screen, which replaces the map area while the
+  sim keeps stepping (HUD panel and all other keys stay live). While it is open,
+  LEFT/RIGHT MUST cycle the inspected colony (one maw in focus at a time). The
+  screen MUST show, for the focused maw: the colony header (war state, food, maw
+  HP, population by caste); a **THOUGHTS** section — only the anchors *currently
+  firing* (name + a bar of the count of units for which it is ground-truth-active),
+  NOT the full 35-anchor table (a wall of `100% 0` rows carries no signal); the
+  **MAW → MANAGER → SWARM** communication pipeline — the 85% maw directive
+  (aggression/mobility/verticality/forage bars from `maw_rl.last_directive`, or an
+  "instinct" note when rule-based), the manager broadcast (posture + kin count), and
+  the pheromone field the swarm senses (food/danger/territory channel bars from
+  `sim.pheromones.trails`); a condensed RELATIONS line (allies / truce / war); the
+  top 3 soldiers; and the last decision-log entries. Content MUST come from a pure
+  function `build_manager_entries(sim, colony_id) -> list[(text, color)]` so it is
+  headlessly testable. *(Redesign rationale: the old flat dump auto-wrapped into
+  arbitrary columns and was unreadable; the inspector is a single focused maw whose
+  cognition pipeline reads top-to-bottom.)*
 - **M6 (persistence)** Monitors pickle with the sim and keep learning after
   a resume; `_respawn_colony` MUST drop the dead colony's monitor.
 - **M7 (integration)** The sim MUST observe every unit each step it acts:
@@ -120,9 +126,12 @@ with no ground truth).
   hooks live where the outcomes happen (`_resolve_conflicts` kills,
   starvation/combat deaths are out of scope for v1 beyond kills, war
   transition, siege first-blood).
-- **M8 (honesty)** The manager screen MUST display probe accuracy so the
-  user can see which concepts the hive mind demonstrably encodes; thoughts
-  are never fabricated from inputs alone for neural soldiers.
+- **M8 (honesty)** The manager screen MUST surface probe accuracy so the user can
+  see how demonstrably the hive mind encodes what it "thinks"; thoughts are never
+  fabricated from inputs alone for neural soldiers. *(Redesign: rather than a
+  per-concept accuracy column, the THOUGHTS header shows the mean probe accuracy
+  across all anchors — "probes NN% accurate — decoded, not fabricated" — the same
+  honesty signal, compactly.)*
 - **M10 (Round 1 anchors)** The lexicon grows 23 → 27 with measurable
   anchors: `harvest` (CROP_RIPE within radius 2), `farm` (TILLED within
   radius 2), `drought` (season index ∈ {2, 3} — Dust or Chill), `gold`
