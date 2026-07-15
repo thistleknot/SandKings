@@ -223,3 +223,5 @@ terrarium_saga.txt
 *.pth
 *.ckpt
 *.pkl
+# Generated whole-codebase dump (regenerate on demand)
+codebase.md
