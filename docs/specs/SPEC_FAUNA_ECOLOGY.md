@@ -43,7 +43,17 @@ Baseline-ON, opt-out `--no-guppy-predator`, in `_GATE_NAMES`. Called from `_gupp
 - Constants (sandkings.py, provisional): `GUPPY_PREDATOR_FRAC=0.7`, `GUPPY_BITE_MAX=0.15`, `GUPPY_BITE_K=0.35`,
   `GUPPY_BITE_DAMAGE=6`, `GUPPY_SURFACE_P=0.2`.
 
-## Acceptance (`tests/test_fauna_ecology.py`, `tests/test_live_view.py`)
+## FE4 — Launched effects (`EFFECTS_ENABLED`, gated) — the visible siege
+
+Baseline-ON, opt-out `--no-effects`, in `_GATE_NAMES`. A `sim.effects` transient list (the `fires`-dict pattern,
+plain dicts → checkpoint-safe): the catapult (`_catapult_tick`) spawns a `'shot'` from the firing maw to the
+target maw; `_effects_tick` (step-loop, gated) advances each shot `SHOT_SPEED` cells/step toward its target and,
+on arrival, converts it to a `'blast'` that ages out over `BLAST_TTL` steps; the keeper firecracker spawns a
+`'blast'` flash. Deterministic (no RNG) → byte-identical off. `live_view` draws shots as a `•` in flight and
+blasts as a red cell-ring (pure read). This is the first travelling projectile in the sim — combat/keeper drama
+was previously log-only. (Also flagged for later: a water-entry `'splash'`.)
+
+## Acceptance (`tests/test_fauna_ecology.py`, `tests/test_live_view.py`, `tests/test_effects.py`)
 
 - Gate default off; guppy/beetle are weight-0 species in `FAUNA`.
 - An overgrown shoal (`guppy_pop = GUPPY_CAP`) bites an exposed unit at the oasis (damage applied) and surfaces

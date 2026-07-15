@@ -1770,6 +1770,19 @@ class LiveViewer:
                 rect = pygame.Rect(pos[0] * cell, pos[1] * cell, cell, cell)
                 pygame.draw.rect(self._screen, FIRE_COLOR, rect, 1)
 
+        # Launched effects (SPEC_FAUNA_ECOLOGY, gated EFFECTS_ENABLED): a catapult shot arcs across the board
+        # and bursts; a firecracker flashes. Pure read of the sim's transient effects list.
+        for e in getattr(self.sim, 'effects', None) or []:
+            pos = e.get('pos')
+            if pos is None or self._visible_depth(pos) is None:
+                continue
+            if e.get('kind') == 'shot':
+                self._blit_glyph("•", (255, 225, 130), pos[0] * cell, pos[1] * cell)
+            else:
+                col = (60, 150, 240) if e.get('kind') == 'splash' else (255, 90, 30)
+                pygame.draw.rect(self._screen, col,
+                                 pygame.Rect(pos[0] * cell, pos[1] * cell, cell, cell), max(2, cell // 4))
+
         # Wild beasts (T48): colored by DANGER CLASS — warm red for predators, cool grey for neutrals
         for beast in getattr(self.sim, 'fauna', None) or []:
             depth = self._visible_depth(beast.position)

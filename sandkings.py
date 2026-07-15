@@ -229,6 +229,11 @@ TAME_UPKEEP_INTERVAL = 100       # steps between upkeep charges
 TAME_STARVE_LIMIT = 3            # unfed intervals before a tamed beast goes feral (owner reverts to -1)
 TAME_FORAGE_YIELD = 8.0          # food a tamed harmless beast (forager/livestock) delivers to its owner per grab
 HONEY_YIELD = 2.0                # honey (= food) a tamed bee produces for its owner each work tick
+# Visible effects (SPEC_FAUNA_ECOLOGY, gated): launched projectiles (catapult shots) travel the board and burst;
+# keeper firecrackers flash. Cosmetic, deterministic (no RNG) -> byte-identical off.
+EFFECTS_ENABLED = False          # module default False (battery byte-identical); entrypoint flips on (--no-effects)
+SHOT_SPEED = 3                   # cells/step a catapult shot travels
+BLAST_TTL = 4                    # steps a blast/flash lingers
 
 # Sentience Arc constants (SPEC_SENTIENCE.md S1-S4)
 RESONANCE_RANGE = 6          # Chebyshev radius of thought contagion
@@ -2296,6 +2301,8 @@ class SandKingsSimulation:
 
         # 5a. WILD INCURSIONS (T48): DF-invader monsters trample through
         self._fauna_tick()
+        if EFFECTS_ENABLED:
+            self._effects_tick()             # advance launched shots / age blast flashes (gated, cosmetic)
         self._guppy_tick()                   # the oasis pond ecosystem (SPEC_GUPPIES; gated baseline-on)
         self._cricket_tick()                 # the terrestrial cricket swarm (SPEC_FOOD_WEB; gated baseline-on)
         self._snare_tick()                   # WEB/string/toothpick weirs catch guppies+crickets (gated baseline-on)
@@ -3487,6 +3494,8 @@ class SandKingsSimulation:
                     colony.remove_unit(unit)
                     self.world.set_voxel(*unit.position, VoxelType.CORPSE)
         self._log_event("The keeper lights a firecracker - a bang and a flash!")
+        if EFFECTS_ENABLED:                         # a visible flash where it goes off
+            self._spawn_effect('blast', (x, y, self.world.surface_z(x, y)))
         # DP3: wrath/startle to colonies with units in blast radius
         for colony in self.colonies:
             for unit in colony.units:
@@ -3943,6 +3952,39 @@ class SandKingsSimulation:
         """TE10: a colony's proficiency in a tech (0..1; 0 if unknown)."""
         return getattr(colony, 'tech_xp', {}).get(tech, 0.0)
 
+    def _effects(self) -> list:
+        """Transient visual effects (SPEC_FAUNA_ECOLOGY); checkpoint-guarded, plain dicts."""
+        if not hasattr(self, 'effects'):
+            self.effects = []
+        return self.effects
+
+    def _spawn_effect(self, kind: str, pos, target=None) -> None:
+        """A launched shot ('shot' -> travels to target, then bursts), a 'blast'/'splash' flash. Gated caller."""
+        self._effects().append({'kind': kind,
+                                'pos': tuple(int(c) for c in pos),
+                                'target': tuple(int(c) for c in target) if target is not None else None,
+                                'ttl': BLAST_TTL})
+
+    def _effects_tick(self) -> None:
+        """FE-effects: advance launched shots toward their target (bursting on arrival) and age flashes out.
+        Deterministic (no RNG); gated -> byte-identical off."""
+        alive = []
+        for e in self._effects():
+            if e['kind'] == 'shot' and e['target'] is not None:
+                px, py, pz = e['pos']
+                tx, ty, _tz = e['target']
+                if max(abs(tx - px), abs(ty - py)) <= SHOT_SPEED:
+                    e['kind'] = 'blast'; e['pos'] = e['target']; e['ttl'] = BLAST_TTL   # arrived -> burst
+                else:
+                    e['pos'] = (px + int(np.sign(tx - px)) * SHOT_SPEED,
+                                py + int(np.sign(ty - py)) * SHOT_SPEED, pz)
+                alive.append(e)
+            else:
+                e['ttl'] -= 1
+                if e['ttl'] > 0:
+                    alive.append(e)
+        self.effects = alive
+
     def _catapult_tick(self):
         """TE11: a house with the catapult tech and a war target HURLS a shot
         across the board - maw damage on impact, a splash blast, and fire where
@@ -3985,6 +4027,8 @@ class SandKingsSimulation:
                         self._ignite((px, py, z))
             self._log_event(f"House {self._house_name(colony)}'s catapult hurls"
                             " a shot across the sands!")
+            if EFFECTS_ENABLED:                     # a visible shot arcs across the board and bursts
+                self._spawn_effect('shot', colony.maw.position, target.maw.position)
 
     def _plunder_techs(self, fallen: Colony):
         """T3 conquest-steal: the aggressor at war with a fallen house seizes
@@ -9018,6 +9062,9 @@ def main():
     parser.add_argument('--no-domestication', action='store_true',
                         help='Disable taming (baseline: ON — a unit adjacent to a wild beast may tame it, '
                              'danger-scaled; a tamed beast stops hunting its owner; SPEC_DOMESTICATION).')
+    parser.add_argument('--no-effects', action='store_true',
+                        help='Disable launched-projectile / blast effects (baseline: ON — a catapult shot '
+                             'visibly arcs across the board and bursts, firecrackers flash; SPEC_FAUNA_ECOLOGY).')
     parser.add_argument('--no-crickets', action='store_true',
                         help='Disable the cricket swarm (baseline: ON — the terrestrial food guild; '
                              'breeds on plant matter, booms in Dust, dies in flood/frost; SPEC_FOOD_WEB).')
@@ -9187,6 +9234,12 @@ def main():
         globals()['DOMESTICATION_ENABLED'] = True
         print("[TAME] spawn can domesticate wild beasts - harmless ones easily, predators barely; a tamed "
               "beast no longer hunts its owner (--no-domestication to disable)")
+
+    # Launched effects are BASELINE (on unless --no-effects). Module default False keeps the battery
+    # byte-identical; cosmetic transient state only.
+    if not getattr(args, 'no_effects', False):
+        globals()['EFFECTS_ENABLED'] = True
+        print("[SHOT] catapult shots arc across the board and burst; firecrackers flash (--no-effects)")
 
     # The terrestrial cricket swarm is BASELINE (on unless --no-crickets). Module default
     # CRICKETS_ENABLED stays False so the regression battery is byte-identical; the game flips it on.
