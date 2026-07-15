@@ -118,6 +118,28 @@ off → no crusade, and the stand-down guard is inert → byte-identical.
 launches a holy war (`war_target` set to that neighbor, `holy_war_until` in the future, trust driven down).
 A house with no priest / low zeal / no divergent neighbor does not.
 
+## R5 — Ouroboros signs (self-referential easter eggs)
+
+A `'ouroboros'` sign kind whose meaning is composed from the sim's OWN state (`_compose_ouroboros`): the current
+hegemon, a house that fell to madness, the house that teems, the living count + season/age. The maw reads about
+its own world (the wheel that eats its tail — the user's "think ouroboros"). Deterministic, pure read.
+Decoding grants a steadying insight (confidence + keeper favor by `SIGN_NUDGE`) and the composed line enters the
+chronicle — always-useful, never mere flavor. `live_view` inscribes an `∞` in the sky.
+
+## R6 — Anchor-shift payoff (the word2vec-anchor form)
+
+An `'anchor'` sign kind: decoding TEACHES the colony the next awakening concept from `REVELATION_ANCHORS`
+(`beyond`/`self`/`god`/`ascend`), stored in `colony.revealed_anchors`. `instincts_for` (hive_mind_monitor)
+appends the revealed anchors, so the colony now PERCEIVES and (once breached) SPEAKS the concept unconditionally
+— the sign literally reshapes its concept space (the richest payoff form the user named). At
+`ANCHOR_ENLIGHTEN_MIN` revealed words the colony becomes `enlightened` (EN8 — a concrete boon, so the payoff is
+always useful). `revealed_anchors` is empty for every colony unless REVELATION_ENABLED taught it → the
+`instincts_for` injection is byte-identical off. `live_view` inscribes an `Ω` in the sky.
+
+**Acceptance R5/R6 (`tests/test_revelation.py`).** An 'ouroboros' decode composes a self-referential line +
+nudges confidence/favor. An 'anchor' decode adds a revelation anchor to `revealed_anchors` (and `instincts_for`
+then surfaces it); reaching `ANCHOR_ENLIGHTEN_MIN` sets `enlightened`.
+
 ## Constants (sandkings.py)
 
 ```

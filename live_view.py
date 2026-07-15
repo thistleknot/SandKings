@@ -88,6 +88,8 @@ SIGN_SKY = {                        # night-sky signs (SPEC_REVELATION R1): glyp
     'omen_war':    ("†", (255, 90, 80)),     # a portent of war — blood red
     'omen_plenty': ("❀", (150, 235, 120)),   # a sign of plenty — green
     'edict':       ("✶", (255, 215, 110)),   # a divine edict — gold
+    'anchor':      ("Ω", (170, 220, 255)),   # a word learned — an awakening concept (R6)
+    'ouroboros':   ("∞", (210, 170, 245)),   # the self-referential sign — the wheel that eats its tail (R5)
 }
 # Fauna (T48): shape-distinct glyphs, colored by DANGER CLASS so threat is pre-attentive.
 BEAST_GLYPHS = {

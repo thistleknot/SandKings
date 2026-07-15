@@ -278,9 +278,18 @@ def ground_truths(ctx: Dict) -> Dict[str, bool]:
 
 
 def instincts_for(unit, colony, sim) -> List[str]:
-    """Ground-truth-active anchors as seed words, lexicon order (M3)."""
+    """Ground-truth-active anchors as seed words, lexicon order (M3).
+
+    SPEC_REVELATION R6: a colony that has DECODED an 'anchor' sign carries `revealed_anchors` — awakening
+    concepts it now perceives and speaks unconditionally (the word2vec-anchor shift). Absent/empty for every
+    colony unless REVELATION_ENABLED taught them, so this is byte-identical off.
+    """
     truths = ground_truths(build_context(unit, colony, sim))
-    return [seed for seed in ANCHOR_SEEDS if truths[seed]]
+    active = [seed for seed in ANCHOR_SEEDS if truths[seed]]
+    revealed = getattr(colony, 'revealed_anchors', None)
+    if revealed:
+        active += [a for a in revealed if a not in active]
+    return active
 
 
 def compose_utterance(unit, colony, sim, max_words: int = 4) -> str:

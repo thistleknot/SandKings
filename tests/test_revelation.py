@@ -94,6 +94,44 @@ def test_omen_and_edict_payoffs_nudge_state():
     assert col.keeper_sentiment > 0.4, "a divine edict raises keeper favor"
 
 
+def test_anchor_sign_teaches_a_word_and_enlightens():
+    """R6: an 'anchor' decode teaches the colony an awakening concept (revealed_anchors) that instincts_for
+    then surfaces; reaching ANCHOR_ENLIGHTEN_MIN words enlightens the mind."""
+    if not HAVE:
+        return _skip()
+    from sandkings import REVELATION_ANCHORS, ANCHOR_ENLIGHTEN_MIN
+    from hive_mind_monitor import instincts_for
+    sim = _sim()
+    col = sim.colonies[0]
+    col.revealed_anchors = set()
+    col.enlightened = False
+    phrase = sim._apply_sign_payoff(col, 'anchor')
+    assert col.revealed_anchors, "the anchor sign teaches a concept (revealed_anchors grows)"
+    assert list(col.revealed_anchors)[0] in REVELATION_ANCHORS, "the taught word is a revelation anchor"
+    assert "learns the word" in phrase
+    # teach up to the enlightenment threshold
+    for _ in range(ANCHOR_ENLIGHTEN_MIN):
+        sim._apply_sign_payoff(col, 'anchor')
+    assert col.enlightened, "reading enough of the sky's words enlightens the colony (EN8)"
+    # instincts_for must now surface a revealed concept even absent its usual trigger
+    if col.units:
+        active = instincts_for(col.units[0], col, sim)
+        assert any(a in col.revealed_anchors for a in active), "the colony now perceives the learned concept"
+
+
+def test_ouroboros_sign_reads_the_world():
+    """R5: an 'ouroboros' decode composes a self-referential line from the sim's own state + steadies the house."""
+    if not HAVE:
+        return _skip()
+    sim = _sim()
+    col = sim.colonies[0]
+    col.confidence = 0.5
+    phrase = sim._apply_sign_payoff(col, 'ouroboros')
+    assert "the wheel turns" in phrase, "the ouroboros sign speaks of the world's own turning"
+    assert col.confidence > 0.5, "glimpsing the cycle steadies the house (always useful)"
+    assert isinstance(sim._compose_ouroboros(), str) and sim._compose_ouroboros(), "composes a non-empty line"
+
+
 def _priest_sim():
     """A sim stepped enough to have units in a colony (for ordination tests)."""
     random.seed(0); np.random.seed(0)

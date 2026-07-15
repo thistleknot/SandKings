@@ -274,7 +274,11 @@ SIEGE_TOWER_BREACH = 1           # Chebyshev radius of palisade the tower breach
 REVELATION_ENABLED = False       # module default False (battery byte-identical); entrypoint flips (--no-revelation)
 SIGN_INTERVAL = 200              # steps between a retired sign and the next appearing
 SIGN_DURATION = 120              # steps a sign stays up in the sky
-SIGN_KINDS = ('writing', 'omen_war', 'omen_plenty', 'edict')   # deterministic rotation (no RNG)
+SIGN_KINDS = ('writing', 'omen_war', 'omen_plenty', 'edict', 'anchor', 'ouroboros')  # deterministic rotation
+# R6 anchor-shift: awakening-adjacent concepts a decoded sign can TEACH a colony (the word2vec-anchor payoff —
+# the colony perceives + speaks the concept unconditionally thereafter, and nears enlightenment).
+REVELATION_ANCHORS = ('beyond', 'self', 'god', 'ascend')
+ANCHOR_ENLIGHTEN_MIN = 3         # revealed anchors at which reading the sky enlightens the colony (EN8)
 LITERACY_GAIN = 0.02             # literacy gained per step a colony studies a sign
 LITERACY_DEVOUT_MULT = 2.0       # the devout (worshipped / high sentiment) read faster
 DECODE_THRESHOLD = 1.0           # literacy at which a colony decodes the sign
@@ -4342,10 +4346,47 @@ class SandKingsSimulation:
             colony.genome.expansion_rate = float(np.clip(getattr(colony.genome, 'expansion_rate', 0.5) + SIGN_NUDGE, 0.0, 1.0))
             colony.keeper_sentiment = float(np.clip(getattr(colony, 'keeper_sentiment', 0.5) + SIGN_NUDGE, 0.0, 1.0))
             return "an omen of plenty promises growth"
+        if kind == 'anchor':                        # R6: the word2vec-anchor shift — the mind LEARNS a concept
+            revealed = getattr(colony, 'revealed_anchors', None)
+            if revealed is None:
+                revealed = colony.revealed_anchors = set()
+            taught = next((a for a in REVELATION_ANCHORS if a not in revealed), None)
+            if taught is None:
+                kind = 'edict'                      # already knows every revelation word -> a divine edict
+            else:
+                revealed.add(taught)                # the colony now perceives + speaks this concept (instincts_for)
+                if len(revealed) >= ANCHOR_ENLIGHTEN_MIN:
+                    colony.enlightened = True        # reading the sky's words enlightens the mind (EN8)
+                return f"the mind learns the word '{taught}' beyond the glass"
+        if kind == 'ouroboros':                     # R5: a self-referential easter egg — the maw reads its world
+            colony.confidence = float(np.clip(getattr(colony, 'confidence', 0.5) + SIGN_NUDGE, 0.0, 1.0))
+            colony.keeper_sentiment = float(np.clip(getattr(colony, 'keeper_sentiment', 0.5) + SIGN_NUDGE, 0.0, 1.0))
+            return f"the wheel turns — {self._compose_ouroboros()}"
         # 'edict' (default): a divine directive -> favor + confidence
         colony.keeper_sentiment = float(np.clip(getattr(colony, 'keeper_sentiment', 0.5) + 2 * SIGN_NUDGE, 0.0, 1.0))
         colony.confidence = float(np.clip(getattr(colony, 'confidence', 0.5) + SIGN_NUDGE, 0.0, 1.0))
         return "a divine edict raises the house"
+
+    def _compose_ouroboros(self) -> str:
+        """R5 (SPEC_REVELATION): compose a self-referential 'sign' from the sim's OWN state — the maw reads
+        about its own world (ouroboros: the wheel that eats its tail). Deterministic; pure read. The keeper's
+        Plato's-cave easter egg."""
+        living = [c for c in self.colonies if c.is_alive()]
+        parts = []
+        d = getattr(self, 'diplomacy', None)
+        if d is not None and d.hegemon is not None:
+            heg = self._colony_by_id(d.hegemon)
+            if heg is not None:
+                parts.append(f"House {self._house_name(heg)} rules the sands")
+        mad = next((c for c in self.colonies if getattr(c, 'mad', False)), None)
+        if mad is not None:
+            parts.append(f"House {self._house_name(mad)} fell to madness")
+        if living:
+            strongest = max(living, key=lambda c: len(c.units))
+            parts.append(f"House {self._house_name(strongest)} teems")
+        parts.append(f"{len(living)} houses yet draw breath in the {SEASONS[self.season_index()]} of the "
+                     f"{self.step_count // SEASON_LENGTH}th age")
+        return "; ".join(parts[:3]) if parts else "the glass reflects an empty world"
 
     def _revelation_tick(self) -> None:
         """R1 (SPEC_REVELATION): raise a sign in the night sky, let colonies STUDY it (literacy curriculum;
