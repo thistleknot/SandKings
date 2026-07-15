@@ -430,6 +430,28 @@ def test_combat_strobe_renders_pure():
     assert sim.step_count == step0, "the combat strobe must not mutate the sim (pure renderer)"
 
 
+def test_poison_cloud_renders_pure():
+    """Chemical war (SPEC_CHEMICAL_WAR CW1): the poison-cloud overlay draws without crashing and mutates
+    nothing — a pure read of sim.poison (mirrors the fire overlay)."""
+    import pygame
+    sim = make_sim()
+    for _ in range(10):
+        sim.step()
+    # seed a poison cloud at a visible surface cell so the overlay pass runs
+    cx, cy = sim.world.width // 2, sim.world.height // 2
+    sim.poison = {(cx, cy, sim.world.surface_z(cx, cy)): 12}
+    viewer = LiveViewer(sim, max_steps=1)
+    pygame.init()
+    viewer._screen = pygame.display.set_mode(
+        (sim.world.width * viewer.cell_size + 400, sim.world.height * viewer.cell_size + 40))
+    viewer._load_fonts()
+    cloud_before, step0 = dict(sim.poison), sim.step_count
+    viewer._render_body()
+    pygame.quit()
+    assert sim.poison == cloud_before and sim.step_count == step0, \
+        "the poison overlay must not mutate the sim (pure renderer)"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

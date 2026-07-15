@@ -77,6 +77,8 @@ GLYPHS = {                 # DF-style terrain glyphs (spec R18/R22)
 }
 FIRE_GLYPH = "^"                    # burning-cell overlay (T46)
 FIRE_COLOR = (255, 120, 0)
+POISON_GLYPH = "§"                  # poison-cloud overlay (SPEC_CHEMICAL_WAR CW1)
+POISON_COLOR = (120, 210, 60)       # sickly chemical green
 # Fauna (T48): shape-distinct glyphs, colored by DANGER CLASS so threat is pre-attentive.
 BEAST_GLYPHS = {
     'spider': "Ж", 'scorpion': "‡", 'snake': "§", 'anteater': "▼", 'bird': "⌃",
@@ -869,6 +871,7 @@ def build_legend_entries() -> List[Tuple[str, Tuple[int, int, int]]]:
         klass = PREDATOR_COLOR if species in BEAST_PREDATORS else NEUTRAL_BEAST_COLOR
         entries.append((f" {glyph}  {species} (wild)", klass))
     entries.append((f" {FIRE_GLYPH}  fire", FIRE_COLOR))
+    entries.append((f" {POISON_GLYPH}  poison cloud (siege; decays)", POISON_COLOR))
     entries.append(("", HUD_FG))
     entries.append(("-- carvings (AW): forces before breakout, the god after --",
                     (150, 150, 160)))
@@ -911,6 +914,7 @@ def build_legend_compact() -> List[Tuple[str, Tuple[int, int, int]]]:
     cats['beasts'] = [(f"{g}  {sp}", PREDATOR_COLOR if sp in BEAST_PREDATORS else NEUTRAL_BEAST_COLOR)
                       for sp, g in BEAST_GLYPHS.items()]
     cats['pond'] = [(f"{FISH_GLYPHS[0]}  fish", FISH_COLOR), (f"{BOAT_GLYPH}  raft", BOAT_COLOR)]
+    cats['hazards'] = [(f"{FIRE_GLYPH}  fire", FIRE_COLOR), (f"{POISON_GLYPH}  poison", POISON_COLOR)]
     cats['terrain'] = [(f"{GLYPHS[v.value]}  {v.name.lower().replace('_', ' ')}",
                         tuple(int(c) for c in palette[v.value]))
                        for v in (VoxelType.FOOD, VoxelType.WATER, VoxelType.CROP_RIPE, VoxelType.CORPSE,
@@ -1769,6 +1773,17 @@ class LiveViewer:
             else:
                 rect = pygame.Rect(pos[0] * cell, pos[1] * cell, cell, cell)
                 pygame.draw.rect(self._screen, FIRE_COLOR, rect, 1)
+
+        # Poison overlay (SPEC_CHEMICAL_WAR CW1): a lingering chemical cloud glows sickly green. Pure read
+        # of the sim's transient poison dict (empty unless POISON_ENABLED lobbed a shell).
+        for pos in list(getattr(self.sim, 'poison', None) or {}):
+            if self._visible_depth(pos) is None:
+                continue
+            if glyph_mode:
+                self._blit_glyph(POISON_GLYPH, POISON_COLOR, pos[0] * cell, pos[1] * cell)
+            else:
+                rect = pygame.Rect(pos[0] * cell, pos[1] * cell, cell, cell)
+                pygame.draw.rect(self._screen, POISON_COLOR, rect, 1)
 
         # Launched effects (SPEC_FAUNA_ECOLOGY, gated EFFECTS_ENABLED): a catapult shot arcs across the board
         # and bursts; a firecracker flashes. Pure read of the sim's transient effects list.

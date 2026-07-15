@@ -244,6 +244,14 @@ MADNESS_RISE = 0.03              # asymptotic ratchet per raving step (identity 
 MADNESS_DECAY = 0.95             # multiplicative decay per non-raving step
 MADNESS_THRESHOLD = 0.6          # madness at which the maw dies raving (extinction + disgrace)
 MADNESS_WARNING = 0.15           # MAD-3: how far a madness death lowers each survivor's keeper_sentiment (+ dread)
+# Chemical & deception warfare (SPEC_CHEMICAL_WAR, Cortés arc): a decaying poison cloud, lobbed by a siege
+# engine. Reuses the fires-dict hazard + effects projectile patterns. Gated -> byte-identical off.
+POISON_ENABLED = False           # module default False (battery byte-identical); entrypoint flips (--no-poison)
+POISON_DAMAGE = 3                # per poison tick, resilience-reduced
+POISON_TTL = 12                  # ticks a poison cell lingers before it dissipates (persistent; > fire's 8)
+POISON_RADIUS = 2                # Chebyshev radius of the cloud a shell blooms into
+POISON_TICK = 3                  # cadence: poison acts/decays every N steps
+POISON_RELOAD = 60               # steps between poison lobs (slower than the catapult; a special munition)
 
 # Sentience Arc constants (SPEC_SENTIENCE.md S1-S4)
 RESONANCE_RANGE = 6          # Chebyshev radius of thought contagion
@@ -2061,6 +2069,10 @@ class SandKingsSimulation:
         # 3c-s. SIEGE (SPEC_TECH TE11): catapults hurl shot across the board
         self._catapult_tick()
 
+        # 3c-p. CHEMICAL WAR (SPEC_CHEMICAL_WAR CW2): a siege house lobs a poison shell at its war target
+        if POISON_ENABLED:
+            self._poison_bomb_tick()
+
         # 3c-c. CALTROPS (SPEC_TECH TE13): loose tacks prick whoever crosses
         self._caltrop_tick()
 
@@ -2084,6 +2096,10 @@ class SandKingsSimulation:
         # 3h. FIRE (T45): damage, spread, burn out
         if self.step_count % FIRE_TICK == 0 and getattr(self, 'fires', None):
             self._fire_tick()
+
+        # 3h-p. POISON (SPEC_CHEMICAL_WAR CW1): a lingering cloud harms whoever stands in it, then decays
+        if POISON_ENABLED and self.step_count % POISON_TICK == 0 and getattr(self, 'poison', None):
+            self._poison_tick()
 
         # 3i. PALISADE ROT (T43): organic walls crumble on schedule
         if self.step_count % 50 == 0 and getattr(self, 'rot', None):
@@ -4066,6 +4082,69 @@ class SandKingsSimulation:
                             " a shot across the sands!")
             if EFFECTS_ENABLED:                     # a visible shot arcs across the board and bursts
                 self._spawn_effect('shot', colony.maw.position, target.maw.position)
+
+    def _poison(self) -> Dict[Tuple[int, int, int], int]:
+        """CW1 (SPEC_CHEMICAL_WAR): active poison cells pos -> remaining ticks; guarded (checkpoint-safe)."""
+        if not hasattr(self, 'poison'):
+            self.poison = {}
+        return self.poison
+
+    def _seed_poison(self, center: Tuple[int, int, int], radius: int) -> None:
+        """CW1: bloom a poison cloud of Chebyshev `radius` at `center`'s z-slice; a fresh lob refreshes to max."""
+        cx, cy, cz = center
+        cloud = self._poison()
+        for dx in range(-radius, radius + 1):
+            for dy in range(-radius, radius + 1):
+                x, y = cx + dx, cy + dy
+                if self.world.in_bounds(x, y, cz):
+                    cloud[(x, y, cz)] = POISON_TTL   # refresh to full on (re-)seed
+
+    def _poison_tick(self) -> None:
+        """CW1 behavioral block: a lingering poison cloud harms whoever stands in it, then dissipates. Unlike
+        fire it ignores voxel type and never spreads. Deterministic (no RNG) -> byte-identical off (gate)."""
+        cloud = self._poison()
+        if not cloud:
+            return
+        poison_set = set(cloud)
+        for colony in self.colonies:
+            for unit in colony.units[:]:
+                x, y, z = unit.position
+                near = any((x + dx, y + dy, z + dz) in poison_set
+                           for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1))
+                if near and unit.take_damage(POISON_DAMAGE, 0.0):
+                    colony.remove_unit(unit)
+                    self.world.set_voxel(*unit.position, VoxelType.CORPSE)
+        for pos in list(cloud):          # the cloud thins each tick and clears when spent
+            cloud[pos] -= 1
+            if cloud[pos] <= 0:
+                del cloud[pos]
+
+    def _poison_bomb_tick(self) -> None:
+        """CW2: a siege-teched house at war LOBS a poison shell at its war target — a visible shell arcs across
+        the board (reusing FE4 effects) and blooms a poison cloud on impact. No instant maw damage; the cloud
+        kills over time. Gated caller (POISON_ENABLED) -> byte-identical off."""
+        if self.step_count % POISON_RELOAD or not self.step_count:
+            return
+        diplomacy = getattr(self, 'diplomacy', None)
+        if diplomacy is None:
+            return
+        for colony in self.colonies:
+            if (not colony.is_alive()
+                    or 'catapult' not in getattr(colony, 'techs', ())):
+                continue
+            target_id = diplomacy.war_target.get(colony.colony_id)
+            target = self._colony_by_id(target_id) if target_id is not None else None
+            if target is None or not target.is_alive():
+                continue
+            mx, my, _ = colony.maw.position
+            tx, ty, _ = target.maw.position
+            if max(abs(tx - mx), abs(ty - my)) > CATAPULT_RANGE:
+                continue
+            if EFFECTS_ENABLED:                       # the shell arcs across the board
+                self._spawn_effect('shot', colony.maw.position, target.maw.position)
+            self._seed_poison(target.maw.position, POISON_RADIUS)
+            self._log_event(f"House {self._house_name(colony)} lobs a poison bomb at "
+                            f"House {self._house_name(target)} — a sickly cloud blooms!")
 
     def _plunder_techs(self, fallen: Colony):
         """T3 conquest-steal: the aggressor at war with a fallen house seizes
@@ -9138,6 +9217,9 @@ def main():
     parser.add_argument('--no-madness', action='store_true',
                         help='Disable the madness accumulator (baseline: ON — a maw left highly agitated AND '
                              'keeper-hated slowly ravens toward madness and, unrelieved, dies raving; SPEC_MADNESS).')
+    parser.add_argument('--no-poison', action='store_true',
+                        help='Disable chemical warfare (baseline: ON — a siege house lobs a poison shell that '
+                             'blooms a decaying cloud at its war target; SPEC_CHEMICAL_WAR).')
     parser.add_argument('--no-crickets', action='store_true',
                         help='Disable the cricket swarm (baseline: ON — the terrestrial food guild; '
                              'breeds on plant matter, booms in Dust, dies in flood/frost; SPEC_FOOD_WEB).')
@@ -9317,6 +9399,10 @@ def main():
     if not getattr(args, 'no_madness', False):
         globals()['MADNESS_ENABLED'] = True
         print("[MAD] neglected, keeper-hated maws slowly go mad and can die raving (--no-madness)")
+    # Chemical war is BASELINE (on unless --no-poison). Module default False keeps the battery byte-identical.
+    if not getattr(args, 'no_poison', False):
+        globals()['POISON_ENABLED'] = True
+        print("[TOX] siege houses lob decaying poison clouds at their war targets (--no-poison)")
 
     # The terrestrial cricket swarm is BASELINE (on unless --no-crickets). Module default
     # CRICKETS_ENABLED stays False so the regression battery is byte-identical; the game flips it on.
