@@ -41,6 +41,15 @@ BETRAYAL_OBSERVER = -20.0
 VICTORS_QUARREL = -10.0
 HEGEMON_ENTER = 1.6          # x equal share
 HEGEMON_EXIT = 1.3
+# Suzerainty (SPEC_SUZERAIN, War & Survival arc Phase 4): a power strong enough past a HIGHER threshold
+# imposes a tributary order instead of being ganged up on (supersedes the coalition above SUZERAIN_ENTER).
+SUZERAIN_ENTER = 2.4         # x equal share to IMPOSE vassalage (above HEGEMON_ENTER)
+SUZERAIN_EXIT = 1.8          # x equal share below which the order crumbles (hysteresis)
+TRIBUTE_INTERVAL = 200       # steps between coerced tribute renderings
+TRIBUTE_RATE = 0.10          # fraction of a vassal's food owed per interval
+TRIBUTE_RESENTMENT = 10.0    # non-decaying grudge a vassal accrues per tribute (revolt fuel)
+REVOLT_RESENTMENT = 50.0     # overlord_grudge at which a vassal revolts (~5 tributes)
+TRIBUTE_TRUST_HIT = -3.0     # diplomatic-trust nudge per tribute (flavor for other readers; decays)
 DIPLOMACY_INTERVAL = 25
 COOP_YIELD_BONUS = 0.25      # jointly tended crops (P10)
 RESPAWN_SHADOW = 0.25        # inbound trust carryover factor (P12)
@@ -166,6 +175,22 @@ def hostile(sim, a: int, b: int) -> bool:
     house_a = cache[1].get(a, '')
     if house_a and house_a == cache[1].get(b, ''):
         return False  # kin (D1)
+    # SPEC_SUZERAIN SZ2: the Pax — overlord<->vassal and co-vassals of one overlord do not war.
+    # Epoch-cached like the kin map; gated so the battery (no sim.suzerain_enabled) is byte-identical.
+    if getattr(sim, 'suzerain_enabled', False):
+        s_epoch = getattr(sim, '_suzerain_epoch', 0)
+        s_cache = getattr(sim, '_suzerain_map', None)
+        if s_cache is None or s_cache[0] != s_epoch:
+            s_cache = (s_epoch, {c.colony_id: getattr(c, 'tributary_to', -1)
+                                 for c in sim.colonies
+                                 if getattr(c, 'tributary_to', -1) >= 0})
+            sim._suzerain_map = s_cache
+        smap = s_cache[1]
+        oa, ob = smap.get(a, -1), smap.get(b, -1)
+        if oa == b or ob == a:
+            return False  # overlord <-> its vassal
+        if oa >= 0 and oa == ob:
+            return False  # co-vassals of the same overlord
     step = sim.step_count
     if diplomacy.truce_active(a, b, step):
         return False

@@ -356,6 +356,11 @@ PLUNDER_MAW_FRAC = 0.35         # larger fraction seized when the enemy MAW fall
 CANNIBAL_HUNGER_BONUS = 10      # extra food a starving colony gains foraging a CORPSE (on top of HARVEST_YIELD)
 SACK_RADIUS = 6                 # a besieger must have a unit this close to the fallen maw to sack it
 
+# Aztec/Cortes new order (SPEC_SUZERAIN, War & Survival arc Phase 4): a power strong enough IMPOSES a
+# tributary order (colony-level vassalage) instead of being ganged up on; a Pax suppresses vassal wars
+# until resentment or the overlord's decline sparks revolt and war resumes. Closes the arc's loop.
+SUZERAIN_ENABLED = False        # module default False (battery byte-identical); entrypoint flips on (opt-out --no-suzerain)
+
 
 def cricket_dynamics(cricket: float, forage: float, dry: bool, flood: bool, frost: bool):
     """Pure land-swarm step (SPEC_FOOD_WEB): the terrestrial consumer-resource model. Returns
@@ -2277,6 +2282,10 @@ class SandKingsSimulation:
 
         # 5c. WAGES (SPEC_WAGES): factor market — renegotiate, settle, open, suspend/close
         self._labor_market_tick()
+
+        # 5d. TRIBUTE (SPEC_SUZERAIN): vassals render coerced tribute to their overlord; revolt on
+        # accrued resentment. Gated -> early return when off (byte-identical).
+        self._tribute_tick()
 
         # 6. Combat resolution
         self._resolve_conflicts()
@@ -6478,8 +6487,119 @@ class SandKingsSimulation:
                                  monitor.colony_thought(self, c))
         return True
 
+    def _suzerain_of(self, living):
+        """The living colony that currently holds vassals (SPEC_SUZERAIN), or None."""
+        return next((c for c in living if getattr(c, 'overlord_of', None)), None)
+
+    def _bump_suzerain_epoch(self):
+        self._suzerain_epoch = getattr(self, '_suzerain_epoch', 0) + 1
+
+    def _impose_order(self, suzerain, living, d):
+        """SZ1: the strongest power imposes tributary vassalage on every weaker non-kin colony —
+        Pax replaces the coalition. Bumps the suzerain epoch so hostile()'s Pax map rebuilds."""
+        vassals = set()
+        s_house = getattr(suzerain, 'house', '')
+        for c in living:
+            if c is suzerain:
+                continue
+            if s_house and getattr(c, 'house', '') == s_house:
+                continue  # kin are never vassalized (same rule as hostile()'s D1 kin check)
+            c.tributary_to = suzerain.colony_id
+            c.overlord_grudge = 0.0
+            d.war_target[c.colony_id] = None   # the Pax stills their wars
+            vassals.add(c.colony_id)
+        if not vassals:
+            return False
+        suzerain.overlord_of = vassals
+        d.hegemon = None                        # suzerainty supersedes the coalition
+        self._bump_suzerain_epoch()
+        self._log_event(f"House {self._house_name(suzerain)} imposes a new order "
+                        f"— {len(vassals)} houses bend the knee")
+        return True
+
+    def _dissolve_order(self, suzerain):
+        """SZ1: the order crumbles — every vassal is freed."""
+        for vid in list(getattr(suzerain, 'overlord_of', set())):
+            v = self._colony_by_id(vid)
+            if v is not None:
+                v.tributary_to = -1
+                v.overlord_grudge = 0.0
+        suzerain.overlord_of = set()
+        self._bump_suzerain_epoch()
+        self._log_event(f"The order of House {self._house_name(suzerain)} crumbles")
+
+    def _revolt(self, vassal, overlord):
+        """SZ4: a vassal throws off the yoke — Pax lifts and war resumes (loop closure)."""
+        vassal.tributary_to = -1
+        vassal.overlord_grudge = 0.0
+        if hasattr(overlord, 'overlord_of'):
+            overlord.overlord_of.discard(vassal.colony_id)
+        self._bump_suzerain_epoch()
+        self._diplomacy().war_target[vassal.colony_id] = overlord.colony_id
+        vassal.at_war = True
+        self._log_event(f"House {self._house_name(vassal)} throws off the yoke of "
+                        f"overlord House {self._house_name(overlord)}!")
+
+    def _update_suzerain(self, d):
+        """SZ1: impose / maintain / dissolve the tributary order. Returns True iff a suzerain reigns
+        (so _update_hegemon skips the coalition track — suzerainty supersedes it)."""
+        from politics import power, SUZERAIN_ENTER, SUZERAIN_EXIT
+        living = [c for c in self.colonies if c.is_alive()]
+        suzerain = self._suzerain_of(living)
+        if len(living) < 2:
+            if suzerain is not None:
+                self._dissolve_order(suzerain)
+            return False
+        total = sum(power(c) for c in living) or 1.0
+        n = len(living)
+        if suzerain is not None:
+            if power(suzerain) / total < SUZERAIN_EXIT / n:
+                self._dissolve_order(suzerain)
+                return False
+            return True                          # the order holds -> skip coalition
+        strongest = max(living, key=power)
+        if power(strongest) / total > SUZERAIN_ENTER / n:
+            return self._impose_order(strongest, living, d)
+        return False
+
+    def _tribute_tick(self):
+        """SZ3: every TRIBUTE_INTERVAL each vassal renders TRIBUTE_RATE of its food to its overlord by a
+        direct transfer (conserved), accrues non-decaying resentment, and revolts at REVOLT_RESENTMENT.
+        Gated -> early return when off (byte-identical, the _labor_market_tick pattern)."""
+        if not SUZERAIN_ENABLED:
+            return
+        from politics import (TRIBUTE_INTERVAL, TRIBUTE_RATE, TRIBUTE_RESENTMENT,
+                              REVOLT_RESENTMENT, TRIBUTE_TRUST_HIT)
+        d = self._diplomacy()
+        for c in self.colonies:
+            overlord_id = getattr(c, 'tributary_to', -1)
+            if overlord_id < 0 or not c.is_alive():
+                continue
+            if (self.step_count + c.colony_id) % TRIBUTE_INTERVAL != 0:
+                continue                          # staggered so tributes spread across the year
+            overlord = self._colony_by_id(overlord_id)
+            if overlord is None or not overlord.is_alive():
+                c.tributary_to = -1               # the overlord is gone -> freed
+                self._bump_suzerain_epoch()
+                continue
+            amount = TRIBUTE_RATE * c.maw.food_stored
+            if amount > 0:
+                c.maw.food_stored = max(0.0, c.maw.food_stored - amount)
+                overlord.maw.eat(amount)
+            c.overlord_grudge = getattr(c, 'overlord_grudge', 0.0) + TRIBUTE_RESENTMENT
+            d.rel(c.colony_id, overlord_id).adjust(TRIBUTE_TRUST_HIT)
+            self._log_event(f"House {self._house_name(c)} renders tribute to "
+                            f"overlord House {self._house_name(overlord)}")
+            if c.overlord_grudge >= REVOLT_RESENTMENT:
+                self._revolt(c, overlord)
+
     def _update_hegemon(self):
-        """P7: enter/exit with hysteresis; events on transition."""
+        """P7: enter/exit with hysteresis; events on transition.
+
+        SPEC_SUZERAIN SZ1: when SUZERAIN_ENABLED, a power past SUZERAIN_ENTER imposes a tributary order
+        that supersedes the coalition (this method returns early while an order reigns)."""
+        if SUZERAIN_ENABLED and self._update_suzerain(self._diplomacy()):
+            return
         from politics import HEGEMON_ENTER, HEGEMON_EXIT, power
         d = self._diplomacy()
         living = [c for c in self.colonies if c.is_alive()]
@@ -8674,6 +8794,10 @@ def main():
                         help='Disable dog-eat-dog scarcity war (baseline: ON — the starving raid to eat '
                              'instead of standing down, hunger raises aggression, raiding plunders food, '
                              'and the starving eat the fallen; truces hold, kin safe; SPEC_SCARCITY_WAR).')
+    parser.add_argument('--no-suzerain', action='store_true',
+                        help='Disable the Aztec/Cortes new order (baseline: ON — a power strong enough '
+                             'imposes tributary vassalage, a Pax suppresses vassal wars, and resentment or '
+                             'the overlord\'s decline sparks revolt so war resumes; SPEC_SUZERAIN).')
     parser.add_argument('--no-learned-basis', action='store_true',
                         help='Use the random Kanerva codebook instead of the learned shared encoder '
                              'basis (baseline: ON — a ZCA+codebook fit to the state manifold, ~28x '
@@ -8837,6 +8961,15 @@ def main():
         globals()['SCARCITY_WAR_ENABLED'] = True
         print("[WAR] dog-eat-dog — the starving raid to eat, hunger sharpens aggression, raiders plunder "
               "the larder, and the starving devour the fallen; truces hold, kin safe (--no-scarcity-war)")
+
+    # The Aztec/Cortes new order is BASELINE (on unless --no-suzerain). Sets BOTH the module gate and the
+    # sim flag (politics.hostile reads sim.suzerain_enabled); module default False keeps the battery
+    # byte-identical.
+    if not getattr(args, 'no_suzerain', False):
+        globals()['SUZERAIN_ENABLED'] = True
+        sim.suzerain_enabled = True
+        print("[ORDER] a dominant power imposes tributary vassalage — a Pax stills the vassals' wars until "
+              "resentment or the overlord's decline sparks revolt and war resumes (--no-suzerain)")
 
     if args.live:
         # When run as a script this module is '__main__'; alias it so

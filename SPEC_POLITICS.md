@@ -100,7 +100,12 @@ capability, not intent; victors quarrel); Ostrom common-pool cultivation
   the test).
 - **P7 (hegemon)** Power share per §1; hegemon enter/exit with hysteresis;
   entry event `A coalition rises against Colony {h}!`, exit `The
-  coalition against Colony {h} dissolves`.
+  coalition against Colony {h} dissolves`. *Amendment (SPEC_SUZERAIN, War &
+  Survival Phase 4, gated `SUZERAIN_ENABLED`):* above the higher
+  `SUZERAIN_ENTER=2.4×` share a dominant colony imposes a tributary order
+  instead — suzerainty **supersedes** the coalition (`d.hegemon` stays None);
+  the same power share cannot drive both. Gate off → this clause is inert and
+  P7 behaves exactly as above.
 - **P8 (coalitions)** While a hegemon exists: non-hegemon pairwise drift
   (+0.08/step, cap +60); coalition members entering war target the
   hegemon and mobilize at WAR_CHEST·0.5; co-belligerents (both targeting
