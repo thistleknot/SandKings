@@ -71,6 +71,18 @@ A persistent land population mirroring the guppy template. `sandkings.py`:
 - Verified: 8-test dynamics battery (`tests/test_crickets.py`) — bounded / persists / dry-boom /
   flood+frost crash / catch floor / gate-off no-state / gate-on lives. Full battery 53/53 byte-identical.
 
+## Fishing — a deliberate aquatic action (War & Survival arc, Phase 1, SHIPPED 2026-07-14)
+
+The pond's catch was oasis-only (auto-surfaced FOOD in the centre disc). Fishing makes it an active
+worker behaviour that generalizes to any water: a WORKER 6-adjacent to a `WATER` voxel draws `FISH_YIELD`
+guppies from the **shared** `guppy_pop` into a FOOD voxel it eats next tick via the generic grab loop
+(`_fish_step`, worker-ladder step 4b between forage and farm — wild water food still outranks farming).
+Keys off the WATER voxel, not the oasis disc, so a colony at any pool/river fishes (WATER exists wherever
+hydro pools). Chill throttles the catch to `FISH_CHILL_SCARCITY` (shoal under ice → winter stays lean, the
+SPEC_WINTER hook). Gated `FISHING_ENABLED` baseline-on (`--no-fishing`), in `_GATE_NAMES`. Full detail in
+**SPEC_FLORA** (FL1); the perennial berry shrubs (FL2) ship alongside. Verified: `tests/test_fishing.py`
+(catch draws the shoal / non-oasis colony fishes / min-stock floor / Chill throttle / gate-off no-op).
+
 ## Open (Phases 2–4)
 
 Cross-couplings + guppy-diet extension + weather-rotation tuning (2); snares (3); the maw forage-mode

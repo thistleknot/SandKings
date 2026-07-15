@@ -72,6 +72,8 @@ GLYPHS = {                 # DF-style terrain glyphs (spec R18/R22)
     VoxelType.WEB.value: "╳",          # spider silk — a net (distinct from the spider glyph)
     VoxelType.CASTLE.value: "Π",       # stone castle / gatehouse (K5)
     VoxelType.WATER.value: "≈",        # standing water (HYDRO flow sim)
+    VoxelType.SHRUB.value: "♣",        # growing berry bush — not yet food (SPEC_FLORA)
+    VoxelType.SHRUB_RIPE.value: "♠",   # ripe berries — forageable food
 }
 FIRE_GLYPH = "^"                    # burning-cell overlay (T46)
 FIRE_COLOR = (255, 120, 0)
@@ -220,6 +222,8 @@ def build_voxel_palette() -> np.ndarray:
     palette[VoxelType.WEB.value] = (210, 210, 220)
     palette[VoxelType.CASTLE.value] = (200, 195, 210)   # pale stone monument (K5)
     palette[VoxelType.WATER.value] = (40, 90, 200)      # standing water (HYDRO)
+    palette[VoxelType.SHRUB.value] = (60, 120, 55)      # growing berry bush (SPEC_FLORA)
+    palette[VoxelType.SHRUB_RIPE.value] = (150, 40, 90)  # ripe berries — magenta pop
     return palette
 
 
@@ -639,6 +643,8 @@ VOXEL_LEGEND = {  # R34: every non-AIR GLYPHS row gets a name
     VoxelType.WEB.value: "spider silk (snares)",
     VoxelType.CASTLE.value: "castle (prosperity, never rots)",
     VoxelType.WATER.value: "standing water (rivers, reservoirs)",
+    VoxelType.SHRUB.value: "berry bush (growing)",
+    VoxelType.SHRUB_RIPE.value: "ripe berries (forageable)",
 }
 
 

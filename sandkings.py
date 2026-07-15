@@ -320,6 +320,25 @@ SNARE_YIELD = 3              # guppies/crickets caught per snare per tick
 SNARE_FOOD_CAP = 8           # max snare-food voxels deposited per tick
 FORAGE_PREFER_DISCOUNT = 0.5  # the maw's forage-mode (directive d3) makes preferred food seem this-x closer
 
+# Fishing (SPEC_FLORA FL1, War & Survival arc Phase 1): a deliberate worker action — a worker beside a
+# WATER voxel draws from the shared oasis shoal into a FOOD voxel it then eats. Generalizes the pond's
+# oasis-only catch to any water body (rivers/pools), and recedes in Chill so winter stays lean.
+FISHING_ENABLED = False      # module default False (battery byte-identical); entrypoint flips on (opt-out --no-fishing)
+FISH_YIELD = 3               # guppies drawn from the shared pond per successful catch
+FISH_MIN_STOCK = 20.0        # no fishing below this guppy_pop (let the shoal rebuild; mirrors GUPPY_YIELD_MIN)
+FISH_CHILL_SCARCITY = 0.25   # Chill catch probability — the shoal is under ice, winter fishing is unreliable
+
+# Shrubs / berries (SPEC_FLORA FL2, Phase 1): a perennial forageable flora — bushes seed in the growing
+# seasons, ripen to edible berries the generic forage loop eats, REGROW in place after harvest, and DIE
+# BACK in Chill. The un-RL-gated land food that still leaves winter lean.
+SHRUBS_ENABLED = False       # module default False (battery byte-identical); entrypoint flips on (opt-out --no-shrubs)
+SHRUB_TICK = 20              # growth/seed cadence (steps)
+SHRUB_SEED_ATTEMPTS = 3      # seeding tries per tick in a growing season
+SHRUB_SEED_P = 0.5           # per-attempt probability a bush takes on suitable sand
+SHRUB_CAP = 40               # max standing bushes (don't carpet the map)
+SHRUB_GROWDUR = 6            # ticks green -> ripe (x SHRUB_TICK steps)
+SHRUB_YIELD = 12             # food a forager gains from a ripe bush (< wild FOOD's 15; flora is humble)
+
 
 def cricket_dynamics(cricket: float, forage: float, dry: bool, flood: bool, frost: bool):
     """Pure land-swarm step (SPEC_FOOD_WEB): the terrestrial consumer-resource model. Returns
@@ -611,6 +630,8 @@ class VoxelType(Enum):
     #                    depth field is the source of truth; this voxel mirrors cells at
     #                    depth >= HYDRO_SETTLE_MIN. Non-solid + non-tunnelable, so it
     #                    blocks gravity, tunnel(), and walking (boats cross it).
+    SHRUB = 19         # Growing bush - not food yet; a perennial root (SPEC_FLORA FL2)
+    SHRUB_RIPE = 20    # Ripe berries - food to everyone; foraged then regrows in place
 
     def is_tunnelable(self):
         return self in (VoxelType.SAND, VoxelType.AIR)
@@ -2199,6 +2220,7 @@ class SandKingsSimulation:
         self._guppy_tick()                   # the oasis pond ecosystem (SPEC_GUPPIES; gated baseline-on)
         self._cricket_tick()                 # the terrestrial cricket swarm (SPEC_FOOD_WEB; gated baseline-on)
         self._snare_tick()                   # WEB/string/toothpick weirs catch guppies+crickets (gated baseline-on)
+        self._shrub_tick()                   # perennial berry bushes grow/ripen/die-back (SPEC_FLORA; gated baseline-on)
 
         # 5a-keeper. THE KEEPER (K4/K8/K9/K10): carvings, script, gifts
         self._keeper_tick()
@@ -2625,6 +2647,85 @@ class SandKingsSimulation:
         if caught and caught != getattr(self, '_snare_logged', -1):
             self._snare_logged = caught
             self._log_event("The snares yield a catch from the shallows")
+
+    def _fish_step(self, unit: 'Unit', colony: 'Colony') -> bool:
+        """SPEC_FLORA FL1: a worker beside a WATER voxel fishes the shared oasis shoal — draws
+        FISH_YIELD guppies out of guppy_pop and lands a FOOD voxel it eats next tick via the generic
+        grab loop. Keys off the WATER voxel (not the oasis disc), so any colony at any water body can
+        fish (WATER voxels exist wherever hydro pools). Chill makes the catch unreliable (shoal under
+        ice). Gated FISHING_ENABLED default False -> immediate no-op (no RNG, no state) so the worker
+        ladder is byte-identical when off. Returns True iff the fishing turn was spent."""
+        if not FISHING_ENABLED:
+            return False
+        if getattr(self, 'guppy_pop', 0.0) <= FISH_MIN_STOCK:
+            return False
+        x, y, z = unit.position
+        v = self.world.voxels
+        wx = wy = wz = None
+        for dx, dy, dz in ((1, 0, 0), (-1, 0, 0), (0, 1, 0),
+                           (0, -1, 0), (0, 0, 1), (0, 0, -1)):
+            nx, ny, nz = x + dx, y + dy, z + dz
+            if (self.world.in_bounds(nx, ny, nz)
+                    and v[nx, ny, nz] == VoxelType.WATER.value):
+                wx, wy, wz = nx, ny, nz
+                break
+        if wx is None:
+            return False
+        if self.season_index() == 3 and random.random() >= FISH_CHILL_SCARCITY:
+            return True                                  # spent the turn under ice, no catch
+        for dx, dy, dz in ((0, 0, 1), (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0)):
+            fx, fy, fz = wx + dx, wy + dy, wz + dz
+            if (self.world.in_bounds(fx, fy, fz)
+                    and v[fx, fy, fz] == VoxelType.AIR.value):
+                v[fx, fy, fz] = VoxelType.FOOD.value
+                self.guppy_pop = max(0.0, self.guppy_pop - FISH_YIELD)
+                return True
+        return False
+
+    def _shrub_tick(self) -> None:
+        """SPEC_FLORA FL2: perennial forageable bushes. In the growing seasons (GROW_SEASONS) seed SHRUB
+        voxels on surface sand, advance ripeness, ripen to SHRUB_RIPE (edible — the generic forage loop
+        eats it and the bush REGROWS in place). In Chill the ripe berries die back to AIR and the root
+        goes dormant (kept in the registry, no regrow until spring). Gated SHRUBS_ENABLED default False
+        -> immediate return, self.shrubs never allocated, no SHRUB* voxel ever placed, so the added
+        _find_food_target/grab terms match nothing (crickets precedent) -> battery byte-identical."""
+        if not SHRUBS_ENABLED or self.step_count % SHRUB_TICK != 0:
+            return
+        shrubs = getattr(self, 'shrubs', None)
+        if shrubs is None:
+            shrubs = self.shrubs = {}
+        v = self.world.voxels
+        season = self.season_index()
+        if season == 3:                                  # Chill die-back
+            for pos in list(shrubs.keys()):
+                x, y, z = pos
+                if v[x, y, z] == VoxelType.SHRUB_RIPE.value:
+                    v[x, y, z] = VoxelType.AIR.value
+                shrubs[pos] = 0                          # root dormant, awaits spring
+            return
+        for pos in list(shrubs.keys()):                  # advance / ripen / prune dead roots
+            x, y, z = pos
+            cur = v[x, y, z]
+            if cur == VoxelType.SHRUB.value:
+                shrubs[pos] += 1
+                if shrubs[pos] >= SHRUB_GROWDUR:
+                    v[x, y, z] = VoxelType.SHRUB_RIPE.value
+            elif cur != VoxelType.SHRUB_RIPE.value:
+                shrubs.pop(pos, None)                     # voxel was dug/built over — drop the root
+        if season in GROW_SEASONS and len(shrubs) < SHRUB_CAP:
+            w, h, d = self.world.dimensions
+            for _ in range(SHRUB_SEED_ATTEMPTS):
+                if random.random() > SHRUB_SEED_P:
+                    continue
+                x = random.randint(1, w - 2)
+                y = random.randint(1, h - 2)
+                z = self.world.surface_z(x, y) + 1
+                if z >= d or (x, y, z) in shrubs:
+                    continue
+                if v[x, y, z] != VoxelType.AIR.value or v[x, y, z - 1] != VoxelType.SAND.value:
+                    continue
+                v[x, y, z] = VoxelType.SHRUB.value
+                shrubs[(x, y, z)] = 0
 
     # ---- HYDRO: persistent water flow simulation (SPEC_HYDRO) ----------------
     def _water_field(self):
@@ -5853,7 +5954,8 @@ class SandKingsSimulation:
         box = self.world.voxels[x0:x1, y0:y1, z0:z1]
         hits = np.argwhere((box == VoxelType.FOOD.value)
                            | (box == VoxelType.CORPSE.value)
-                           | (box == VoxelType.CROP_RIPE.value))  # ripe = food (T18)
+                           | (box == VoxelType.CROP_RIPE.value)   # ripe = food (T18)
+                           | (box == VoxelType.SHRUB_RIPE.value))  # ripe berries = food (SPEC_FLORA; inert when off)
         if len(hits) == 0:
             return None
         coords = hits + np.array([x0, y0, z0])
@@ -7748,6 +7850,18 @@ class SandKingsSimulation:
                         unit.brain_layer.food_gathered += 10
                     acted = True
                     break
+                if voxel == VoxelType.SHRUB_RIPE:  # SPEC_FLORA: eat the berries, bush regrows in place
+                    unit.move((nx, ny, nz))
+                    self.world.set_voxel(nx, ny, nz, VoxelType.SHRUB)
+                    shrubs = getattr(self, 'shrubs', None)
+                    if shrubs is not None:
+                        shrubs[(nx, ny, nz)] = 0        # reset ripeness -> regrow (perennial)
+                    self._credit_labor(unit, colony, 'food', SHRUB_YIELD)
+                    unit.forage_target = None
+                    if unit.brain_layer is not None:
+                        unit.brain_layer.food_gathered += 10
+                    acted = True
+                    break
                 if voxel == VoxelType.CROP_RIPE:
                     owner = int(self.world.ownership[nx, ny, nz])
                     d = self._diplomacy()
@@ -7793,7 +7907,8 @@ class SandKingsSimulation:
             if not acted:
                 target = unit.forage_target
                 if target is not None and self.world.get_voxel(*target) not in (
-                        VoxelType.FOOD, VoxelType.CORPSE, VoxelType.CROP_RIPE):
+                        VoxelType.FOOD, VoxelType.CORPSE, VoxelType.CROP_RIPE,
+                        VoxelType.SHRUB_RIPE):
                     target = unit.forage_target = None  # stale: someone ate it
                 if target is None:
                     target = self._find_food_target(unit.position,
@@ -7804,6 +7919,11 @@ class SandKingsSimulation:
                     unit.forage_target = target
                 if target is not None:
                     acted = self._step_toward(unit, target, colony)
+
+            # (4b) Fish: a worker beside water draws the shoal into food (SPEC_FLORA;
+            # wild water food still outranks farming). No-op when FISHING_ENABLED is off.
+            if not acted:
+                acted = self._fish_step(unit, colony)
 
             # (5) Farm: gated by the colony flag, sow window, and plot cap
             if not acted and getattr(colony, 'farming', False) and (
@@ -8447,6 +8567,12 @@ def main():
     parser.add_argument('--no-snares', action='store_true',
                         help='Disable snares (baseline: ON — spider webs and keeper string/toothpick '
                              'weirs by the water passively catch guppies/crickets into food; SPEC_FOOD_WEB).')
+    parser.add_argument('--no-fishing', action='store_true',
+                        help='Disable fishing (baseline: ON — a worker beside water draws the shared '
+                             'shoal into food; lean in Chill; SPEC_FLORA).')
+    parser.add_argument('--no-shrubs', action='store_true',
+                        help='Disable berry shrubs (baseline: ON — perennial bushes ripen to forageable '
+                             'berries, regrow after harvest, die back in Chill; SPEC_FLORA).')
     parser.add_argument('--no-learned-basis', action='store_true',
                         help='Use the random Kanerva codebook instead of the learned shared encoder '
                              'basis (baseline: ON — a ZCA+codebook fit to the state manifold, ~28x '
@@ -8575,6 +8701,20 @@ def main():
         globals()['SNARES_ENABLED'] = True
         print("[SNARES] webs and keeper string/toothpick weirs catch guppies and crickets into food "
               "(--no-snares to disable)")
+
+    # Fishing is BASELINE (on unless --no-fishing). Module default FISHING_ENABLED stays False so the
+    # regression battery is byte-identical; the game flips it on.
+    if not getattr(args, 'no_fishing', False):
+        globals()['FISHING_ENABLED'] = True
+        print("[FISHING] workers by the water fish the shared shoal into food — reliable early, lean "
+              "under the Chill ice (--no-fishing to disable)")
+
+    # Berry shrubs are BASELINE (on unless --no-shrubs). Module default SHRUBS_ENABLED stays False so the
+    # regression battery is byte-identical; the game flips it on.
+    if not getattr(args, 'no_shrubs', False):
+        globals()['SHRUBS_ENABLED'] = True
+        print("[SHRUBS] berry bushes seed in the growing seasons, ripen to forageable food, regrow after "
+              "harvest, and die back in the Chill (--no-shrubs to disable)")
 
     if args.live:
         # When run as a script this module is '__main__'; alias it so
