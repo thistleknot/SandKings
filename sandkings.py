@@ -171,6 +171,8 @@ FAUNA = {
     'small_spider': (0.0, 10, 2, (2, 4), 0, 3),  # AR1: weak, learnable prey
     'fly':      (0.0, 3, 1, (4, 8), 0, 1),   # wingless flies: weak swarm prey
     'mouse':    (0.0, 20, 3, (1, 1), 0, 5),  # a mouse: bites back, good food
+    'beetle':   (0.0, 40, 4, (1, 2), 0, 4),  # sturdy harmless burrower — good livestock / tame candidate
+    'guppy':    (0.0, 30, 8, (1, 3), 5, 3),  # a predatory big guppy — surfaces when the shoal is overgrown
     'cat':      (0.0, 400, 60, (1, 1), 60, 12),
     'hornets':  (0.0, 8, 4, (6, 10), 30, 1),  # T48b keeper-wrath scourge: released, never a random incursion
 }
@@ -189,6 +191,8 @@ FAUNA_EVENTS = {
     'small_spider': "Small spiders are set loose - easy prey to learn on",
     'fly': "Wingless flies tumble onto the sand, twitching",
     'mouse': "A mouse is dropped in, whiskers trembling",
+    'beetle': "A beetle trundles across the sand, mandibles clicking",
+    'guppy': "The oasis boils — the shoal has grown teeth!",
     'cat': "Something enormous pads across the sand...",
 }
 
@@ -196,12 +200,21 @@ FAUNA_EVENTS = {
 # dashboard imports KEEPER_FAUNA as its release whitelist)
 KEEPER_GIFTS = ('cricket', 'ant', 'small_spider', 'fly')  # food + learning
 KEEPER_WRATH = ('spider', 'scorpion', 'snake', 'hornets')          # arena predators
-KEEPER_NEUTRAL = ('squirrel', 'rabbit', 'mouse')        # ambient, bite back
+KEEPER_NEUTRAL = ('squirrel', 'rabbit', 'mouse', 'beetle')  # ambient, bite back
 KEEPER_FAUNA = KEEPER_GIFTS + KEEPER_WRATH + KEEPER_NEUTRAL
 POISON_DURATION = 20         # scorpion sting DoT (1 HP/step)
 FAUNA_RAMPAGE = 500          # steps before an unslain incursion wanders off
 HORNET_SPEED = 3            # [prov:C feel=swarm] cells/tick; flies through AIR like the bird
 HORNET_STING_DURATION = 20  # [prov:C feel=venom] sting DoT ticks (1 HP/step); mirrors POISON_DURATION
+# Guppies grow into predators (SPEC_FAUNA_ECOLOGY, Phase 2): an overgrown shoal turns on exposed spawn near the
+# water, and a few big guppies surface as huntable predator Beasts. Gated -> byte-identical off (and only ever
+# reached inside the GUPPIES_ENABLED tick, so it is double-gated).
+GUPPY_PREDATOR_ENABLED = False   # module default False (battery byte-identical); entrypoint flips on (--no-guppy-predator)
+GUPPY_PREDATOR_FRAC = 0.7        # fraction of GUPPY_CAP above which the shoal turns predatory
+GUPPY_BITE_MAX = 0.15            # max per-tick chance a near-water exposed unit is bitten
+GUPPY_BITE_K = 0.35              # bite-chance scaling with how far over threshold the shoal is
+GUPPY_BITE_DAMAGE = 6            # damage a shoal bite deals an exposed unit
+GUPPY_SURFACE_P = 0.2            # chance/tick a few big guppies surface as huntable predator Beasts
 
 # Sentience Arc constants (SPEC_SENTIENCE.md S1-S4)
 RESONANCE_RANGE = 6          # Chebyshev radius of thought contagion
@@ -2585,6 +2598,38 @@ class SandKingsSimulation:
         self.guppy_pop = max(0.0, guppy - deposited)   # only the landed catch leaves the pond
         self.algae = algae
         self._guppy_drama(self.guppy_pop)
+        if GUPPY_PREDATOR_ENABLED and self.guppy_pop > GUPPY_PREDATOR_FRAC * GUPPY_CAP:
+            self._guppy_predation()
+
+    def _guppy_predation(self) -> None:
+        """SPEC_FAUNA_ECOLOGY (Phase 2): an overgrown shoal turns predatory — big guppies snap at exposed spawn
+        near the oasis, and a few surface as huntable predator Beasts. Gated and only reached when guppy_pop is
+        high (inside the GUPPIES_ENABLED tick), so the battery never draws here → byte-identical off."""
+        w, h, d = self.world.dimensions
+        cx, cy = w // 2, h // 2
+        over = ((self.guppy_pop - GUPPY_PREDATOR_FRAC * GUPPY_CAP)
+                / max(1.0, GUPPY_CAP - GUPPY_PREDATOR_FRAC * GUPPY_CAP))
+        bite_p = min(GUPPY_BITE_MAX, GUPPY_BITE_K * max(0.0, over))
+        reach = (OASIS_RADIUS + 1) ** 2
+        for colony in self.colonies:
+            for unit in colony.units[:]:
+                ux, uy, _uz = unit.position
+                if (ux - cx) ** 2 + (uy - cy) ** 2 <= reach and self._exposed(unit):
+                    if (random.random() < bite_p
+                            and unit.take_damage(GUPPY_BITE_DAMAGE, colony.genome.resilience)):
+                        colony.remove_unit(unit)
+                        self.world.set_voxel(*unit.position, VoxelType.CORPSE)
+                        self._log_event("The shoal drags a sand king down into the water!")
+        # a few big guppies surface as huntable predator Beasts (visible threat + a bounty for the brave)
+        if (sum(1 for b in self._fauna() if b.species == 'guppy') < 4
+                and random.random() < GUPPY_SURFACE_P):
+            _, hp, atk, pack, hunt, bounty = FAUNA['guppy']
+            for _ in range(random.randint(pack[0], pack[1])):
+                x = int(np.clip(cx + random.randint(-OASIS_RADIUS, OASIS_RADIUS), 1, w - 2))
+                y = int(np.clip(cy + random.randint(-OASIS_RADIUS, OASIS_RADIUS), 1, h - 2))
+                z = min(self.world.surface_z(x, y) + 1, d - 1)
+                self._fauna().append(Beast('guppy', (x, y, z), hp, atk, hunt, bounty,
+                                           spawned_at=self.step_count))
 
     def _cricket_drama(self, now: float) -> None:
         """Announce cricket-swarm boom/collapse transitions (throttled to changes)."""
@@ -8851,6 +8896,9 @@ def main():
     parser.add_argument('--no-guppies', action='store_true',
                         help='Disable the oasis guppy pond (baseline: ON — algae grows, guppies '
                              'breed, and the surplus surfaces as harvestable food; SPEC_GUPPIES).')
+    parser.add_argument('--no-guppy-predator', action='store_true',
+                        help='Disable predatory guppies (baseline: ON — an overgrown shoal snaps at exposed '
+                             'spawn near the water and surfaces as huntable beasts; SPEC_FAUNA_ECOLOGY).')
     parser.add_argument('--no-crickets', action='store_true',
                         help='Disable the cricket swarm (baseline: ON — the terrestrial food guild; '
                              'breeds on plant matter, booms in Dust, dies in flood/frost; SPEC_FOOD_WEB).')
@@ -9006,6 +9054,13 @@ def main():
         globals()['GUPPIES_ENABLED'] = True
         print("[GUPPIES] the oasis pond lives - algae feeds the shoal, guppies breed, and the "
               "surplus surfaces as food to harvest (--no-guppies to disable)")
+
+    # Predatory guppies are BASELINE (on unless --no-guppy-predator). Module default False keeps the battery
+    # byte-identical; only bites when the shoal is overgrown (and only inside the guppy tick).
+    if not getattr(args, 'no_guppy_predator', False):
+        globals()['GUPPY_PREDATOR_ENABLED'] = True
+        print("[SHOAL] an overgrown shoal turns predatory - big guppies drag exposed spawn into the water "
+              "and surface as huntable beasts (--no-guppy-predator to disable)")
 
     # The terrestrial cricket swarm is BASELINE (on unless --no-crickets). Module default
     # CRICKETS_ENABLED stays False so the regression battery is byte-identical; the game flips it on.

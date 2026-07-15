@@ -83,9 +83,9 @@ BEAST_GLYPHS = {
     'hornets': "∴", 'rabbit': "∩", 'squirrel': "∪", 'rodent': "◦",
     # smaller / keeper-introduced fauna (previously fell through to "?")
     'cricket': "λ", 'ant': "α", 'fly': "×", 'small_spider': "⋆", 'mouse': "ω",
-    'cat': "Ψ", 'beetle': "⊙",
+    'cat': "Ψ", 'beetle': "⊙", 'guppy': "»",
 }
-BEAST_PREDATORS = frozenset(('spider', 'scorpion', 'snake', 'anteater', 'bird', 'hornets', 'cat'))
+BEAST_PREDATORS = frozenset(('spider', 'scorpion', 'snake', 'anteater', 'bird', 'hornets', 'cat', 'guppy'))
 PREDATOR_COLOR = (235, 95, 70)      # warm red — a threat
 NEUTRAL_BEAST_COLOR = (150, 175, 150)  # cool grey-green — harmless
 BEAST_COLOR = (200, 80, 220)        # legacy violet (fallback / BLOCKS mode)

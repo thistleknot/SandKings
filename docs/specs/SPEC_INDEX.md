@@ -13,6 +13,7 @@ contract). Governing decision records live under `docs/decisions/`.
 - **SPEC_TIMBER_AND_FLAME.md** — timber, bone & flame: fortifications, organic weapons, decay, fire.
 - **SPEC_HYDRO_HAND.md** (HH1–HH5) — the hand's water & seeds (Phase 2 / Hydro-Hand).
 - **SPEC_ARENA.md** (AR1–AR7) — arena mode: the keeper's gifts, wrath, and neutrals.
+- **SPEC_FAUNA_ECOLOGY.md** (FE1–FE3) — a world alive: visible fish/boats, new fauna (beetle/guppy), and an overgrown shoal that turns predatory.
 
 ## The keeper & the great other (god layer)
 - **SPEC_KEEPER.md** (K1–K7) — the keeper: the hand that feeds, the gift ladder, the terminal.
