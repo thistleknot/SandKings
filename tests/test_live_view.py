@@ -452,6 +452,26 @@ def test_poison_cloud_renders_pure():
         "the poison overlay must not mutate the sim (pure renderer)"
 
 
+def test_sky_sign_renders_pure():
+    """Revelation (SPEC_REVELATION R1): the night-sky sign inscription draws without crashing and mutates
+    nothing — a pure read of sim.sky_sign."""
+    import pygame
+    sim = make_sim()
+    for _ in range(10):
+        sim.step()
+    sim.sky_sign = {'kind': 'edict', 'since': sim.step_count, 'decoded_by': set()}
+    viewer = LiveViewer(sim, max_steps=1)
+    pygame.init()
+    viewer._screen = pygame.display.set_mode(
+        (sim.world.width * viewer.cell_size + 400, sim.world.height * viewer.cell_size + 40))
+    viewer._load_fonts()
+    sign_before, step0 = dict(sim.sky_sign), sim.step_count
+    viewer._render_body()
+    pygame.quit()
+    assert sim.sky_sign == sign_before and sim.step_count == step0, \
+        "the night-sky sign overlay must not mutate the sim (pure renderer)"
+
+
 def test_siege_tower_renders_pure():
     """Siege (SPEC_SIEGE SE2): the siege-tower overlay draws without crashing and mutates nothing — a pure
     read of sim.siege_towers."""

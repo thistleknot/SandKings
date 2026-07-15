@@ -268,6 +268,17 @@ BOLT_SPEED = 6                   # a bolt flies faster than a lobbed shot (SHOT_
 SIEGE_TOWER_DEPLOY = 120         # SE2: cadence a siege house rolls out a tower toward its war target
 SIEGE_TOWER_SPEED = 1            # cells/step the tower advances (slow, ominous — crosses open ground)
 SIEGE_TOWER_BREACH = 1           # Chebyshev radius of palisade the tower breaches on arrival
+# Revelation (SPEC_REVELATION R1): signs in the night sky the maw must LEARN to decode (Plato's cave). A
+# per-colony literacy curriculum; decode grants a polymorphic, always-useful payoff by sign kind. The keeper-
+# as-god spine (keeper_sentiment/worshipped/enlightened) is the payoff surface. Gated -> byte-identical off.
+REVELATION_ENABLED = False       # module default False (battery byte-identical); entrypoint flips (--no-revelation)
+SIGN_INTERVAL = 200              # steps between a retired sign and the next appearing
+SIGN_DURATION = 120              # steps a sign stays up in the sky
+SIGN_KINDS = ('writing', 'omen_war', 'omen_plenty', 'edict')   # deterministic rotation (no RNG)
+LITERACY_GAIN = 0.02             # literacy gained per step a colony studies a sign
+LITERACY_DEVOUT_MULT = 2.0       # the devout (worshipped / high sentiment) read faster
+DECODE_THRESHOLD = 1.0           # literacy at which a colony decodes the sign
+SIGN_NUDGE = 0.15                # magnitude of a stat/sentiment nudge on decode
 
 # Sentience Arc constants (SPEC_SENTIENCE.md S1-S4)
 RESONANCE_RANGE = 6          # Chebyshev radius of thought contagion
@@ -2094,6 +2105,10 @@ class SandKingsSimulation:
         if SIEGE_ENGINES_ENABLED:
             self._ballista_tick()
             self._siege_tower_tick()
+
+        # 3c-r. REVELATION (SPEC_REVELATION R1): a sign burns in the sky; the maws learn to decode it
+        if REVELATION_ENABLED:
+            self._revelation_tick()
 
         # 3c-c. CALTROPS (SPEC_TECH TE13): loose tacks prick whoever crosses
         self._caltrop_tick()
@@ -4268,6 +4283,64 @@ class SandKingsSimulation:
                         py + int(np.sign(ty - py)) * SIEGE_TOWER_SPEED, pz)
             alive.append(t)
         self.siege_towers = alive
+
+    def _apply_sign_payoff(self, colony: Colony, kind: str) -> str:
+        """R1 (SPEC_REVELATION): the polymorphic, always-useful reward for DECODING a sky sign, dispatched by
+        kind. Reuses the existing keeper/tech/genome fields (no parallel god system). Returns a short phrase for
+        the chronicle. Pure of RNG (deterministic tech pick). Sets enlightened (EN8: the mind that reads the
+        sky is enlightened)."""
+        colony.enlightened = True
+        if kind == 'writing':                       # unearthed writing -> a technology
+            unknown = [t for t in TECH_NATIVE if t not in getattr(colony, 'techs', set())]
+            if unknown:
+                self._grant_tech(colony, unknown[0])
+                return f"the writing teaches {unknown[0]}"
+            kind = 'edict'                          # knows all native tech -> fall through to a divine edict
+        if kind == 'omen_war':                      # a portent of war -> boldness
+            colony.genome.aggression = float(np.clip(getattr(colony.genome, 'aggression', 0.5) + SIGN_NUDGE, 0.0, 1.0))
+            colony.confidence = float(np.clip(getattr(colony, 'confidence', 0.5) + SIGN_NUDGE, 0.0, 1.0))
+            return "an omen of war stirs the blood"
+        if kind == 'omen_plenty':                   # a sign of favor -> growth + devotion
+            colony.genome.expansion_rate = float(np.clip(getattr(colony.genome, 'expansion_rate', 0.5) + SIGN_NUDGE, 0.0, 1.0))
+            colony.keeper_sentiment = float(np.clip(getattr(colony, 'keeper_sentiment', 0.5) + SIGN_NUDGE, 0.0, 1.0))
+            return "an omen of plenty promises growth"
+        # 'edict' (default): a divine directive -> favor + confidence
+        colony.keeper_sentiment = float(np.clip(getattr(colony, 'keeper_sentiment', 0.5) + 2 * SIGN_NUDGE, 0.0, 1.0))
+        colony.confidence = float(np.clip(getattr(colony, 'confidence', 0.5) + SIGN_NUDGE, 0.0, 1.0))
+        return "a divine edict raises the house"
+
+    def _revelation_tick(self) -> None:
+        """R1 (SPEC_REVELATION): raise a sign in the night sky, let colonies STUDY it (literacy curriculum;
+        the devout read faster), fire the polymorphic payoff on decode, retire the sign. The keeper's Plato's-
+        cave projection the maw must learn to read. Gated caller (REVELATION_ENABLED) -> byte-identical off."""
+        sign = getattr(self, 'sky_sign', None)
+        if sign is None:
+            # RAISE: a new sign appears on cadence, kind chosen by deterministic rotation (no RNG)
+            if self.step_count % SIGN_INTERVAL == 0 and self.step_count:
+                n = getattr(self, '_sign_count', 0)
+                self.sky_sign = {'kind': SIGN_KINDS[n % len(SIGN_KINDS)],
+                                 'since': self.step_count, 'decoded_by': set()}
+                self._sign_count = n + 1
+                self._log_event("A sign burns in the sky beyond the glass — the maws strain to read it")
+            return
+        # STUDY: living colonies accrue literacy (the devout read faster) and decode past the threshold
+        kind = sign['kind']
+        for colony in self.colonies:
+            if not colony.is_alive() or colony.colony_id in sign['decoded_by']:
+                continue
+            gain = LITERACY_GAIN
+            if getattr(colony, 'worshipped', False) or getattr(colony, 'keeper_sentiment', 0.5) >= 0.66:
+                gain *= LITERACY_DEVOUT_MULT
+            lit = min(1.0, getattr(colony, 'literacy', 0.0) + gain)
+            colony.literacy = lit
+            if lit >= DECODE_THRESHOLD:
+                phrase = self._apply_sign_payoff(colony, kind)
+                sign['decoded_by'].add(colony.colony_id)
+                colony.literacy = 0.0               # ready for the next sign
+                self._log_event(f"House {self._house_name(colony)} reads the sign — {phrase}")
+        # RETIRE: the sign fades after its duration
+        if self.step_count - sign['since'] >= SIGN_DURATION:
+            self.sky_sign = None
 
     def _plunder_techs(self, fallen: Colony):
         """T3 conquest-steal: the aggressor at war with a fallen house seizes
@@ -9361,6 +9434,9 @@ def main():
     parser.add_argument('--no-siege', action='store_true',
                         help='Disable siege engines beyond the catapult (baseline: ON — a siege house looses a '
                              'fast direct ballista bolt at its war target; SPEC_SIEGE).')
+    parser.add_argument('--no-revelation', action='store_true',
+                        help='Disable revelation (baseline: ON — signs burn in the night sky; the maws learn '
+                             'to decode them for tech, omens, and divine edicts; SPEC_REVELATION).')
     parser.add_argument('--no-crickets', action='store_true',
                         help='Disable the cricket swarm (baseline: ON — the terrestrial food guild; '
                              'breeds on plant matter, booms in Dust, dies in flood/frost; SPEC_FOOD_WEB).')
@@ -9552,6 +9628,10 @@ def main():
     if not getattr(args, 'no_siege', False):
         globals()['SIEGE_ENGINES_ENABLED'] = True
         print("[SIEGE] siege houses loose fast ballista bolts across the board (--no-siege)")
+    # Revelation is BASELINE (on unless --no-revelation). Module default False keeps the battery byte-identical.
+    if not getattr(args, 'no_revelation', False):
+        globals()['REVELATION_ENABLED'] = True
+        print("[SKY] signs burn in the night sky; the maws learn to decode them for boons (--no-revelation)")
 
     # The terrestrial cricket swarm is BASELINE (on unless --no-crickets). Module default
     # CRICKETS_ENABLED stays False so the regression battery is byte-identical; the game flips it on.

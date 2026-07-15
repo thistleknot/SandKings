@@ -81,6 +81,12 @@ POISON_GLYPH = "§"                  # poison-cloud overlay (SPEC_CHEMICAL_WAR C
 POISON_COLOR = (120, 210, 60)       # sickly chemical green
 SIEGE_TOWER_GLYPH = "⊓"             # mobile siege tower (SPEC_SIEGE SE2)
 SIEGE_TOWER_COLOR = (170, 120, 70)  # timber brown
+SIGN_SKY = {                        # night-sky signs (SPEC_REVELATION R1): glyph + tint by kind
+    'writing':     ("‡", (180, 200, 255)),   # strange writing — cold starlight
+    'omen_war':    ("†", (255, 90, 80)),     # a portent of war — blood red
+    'omen_plenty': ("❀", (150, 235, 120)),   # a sign of plenty — green
+    'edict':       ("✶", (255, 215, 110)),   # a divine edict — gold
+}
 # Fauna (T48): shape-distinct glyphs, colored by DANGER CLASS so threat is pre-attentive.
 BEAST_GLYPHS = {
     'spider': "Ж", 'scorpion': "‡", 'snake': "§", 'anteater': "▼", 'bird': "⌃",
@@ -918,6 +924,7 @@ def build_legend_compact() -> List[Tuple[str, Tuple[int, int, int]]]:
     cats['pond'] = [(f"{FISH_GLYPHS[0]}  fish", FISH_COLOR), (f"{BOAT_GLYPH}  raft", BOAT_COLOR)]
     cats['hazards'] = [(f"{FIRE_GLYPH}  fire", FIRE_COLOR), (f"{POISON_GLYPH}  poison", POISON_COLOR)]
     cats['siege'] = [(f"{SIEGE_TOWER_GLYPH}  siege tower", SIEGE_TOWER_COLOR)]
+    cats['sky'] = [(f"{g}  {k.replace('_', ' ')}", c) for k, (g, c) in SIGN_SKY.items()]
     cats['terrain'] = [(f"{GLYPHS[v.value]}  {v.name.lower().replace('_', ' ')}",
                         tuple(int(c) for c in palette[v.value]))
                        for v in (VoxelType.FOOD, VoxelType.WATER, VoxelType.CROP_RIPE, VoxelType.CORPSE,
@@ -1776,6 +1783,14 @@ class LiveViewer:
             else:
                 rect = pygame.Rect(pos[0] * cell, pos[1] * cell, cell, cell)
                 pygame.draw.rect(self._screen, FIRE_COLOR, rect, 1)
+
+        # Night-sky sign (SPEC_REVELATION R1): while a sign burns beyond the glass, inscribe it across the top
+        # "sky" row of the board (Plato's cave). Pure read of sim.sky_sign; glyph-mode only.
+        sign = getattr(self.sim, 'sky_sign', None)
+        if sign is not None and glyph_mode:
+            glyph, tint = SIGN_SKY.get(sign.get('kind'), ("‡", (200, 200, 220)))
+            for sx in range(0, self.sim.world.width, 3):     # sparse inscription across the sky
+                self._blit_glyph(glyph, tint, sx * cell, 0)
 
         # Poison overlay (SPEC_CHEMICAL_WAR CW1): a lingering chemical cloud glows sickly green. Pure read
         # of the sim's transient poison dict (empty unless POISON_ENABLED lobbed a shell).
