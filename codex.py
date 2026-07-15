@@ -112,7 +112,7 @@ class Codex:
     """The read-only library. Built from files; never pickled (CX5)."""
 
     def __init__(self, corpus_dir: str = CORPUS_DIR,
-                 spec_dir: Optional[str] = _HERE):
+                 spec_dir: Optional[str] = os.path.join(_HERE, "docs", "specs")):
         self.passages: List[Tuple[str, str, Optional[np.ndarray],
                                   List[str]]] = []
         self._ingest_corpus(corpus_dir)

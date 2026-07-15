@@ -81,7 +81,7 @@ and colonies must **adapt their foraging** (which the maw *learns* via its forag
 Coupled into one web: crickets eat crops (a pest) → fall into the water (a guppy feast, flood-amplified)
 → fauna cull the swarm; guppies' diet spans algae + crickets + crop droppings. **Snares** — spider webs
 and keeper string/toothpick weirs by the water — passively catch guppies and crickets. See
-[SPEC_FOOD_WEB.md](SPEC_FOOD_WEB.md) and [SPEC_GUPPIES.md](SPEC_GUPPIES.md).
+[SPEC_FOOD_WEB.md](docs/specs/SPEC_FOOD_WEB.md) and [SPEC_GUPPIES.md](docs/specs/SPEC_GUPPIES.md).
 
 ### 🌦️ World & weather
 A closed **biome**: a water-level and sunlight budget you set behind the glass, from which weather
@@ -156,7 +156,7 @@ mutates/mates/grafts these across generations; the RL warm-starts from and is tu
 - `neuroevolution.py` — the GA (mutate/crossover/graft). `live_view.py` — the pygame viewer + HUD.
 - `tools/` — `fit_learned_basis.py` (fits `learned_basis.npz`), `measure_objective.py` (RL metrics).
 - `run_tests.py` — the single-process regression battery (`tests/test_*.py`).
-- **Design docs** — `SPEC_*.md` (per-subsystem specs, indexed in [SPEC_INDEX.md](SPEC_INDEX.md)),
+- **Design docs** — `docs/specs/SPEC_*.md` (per-subsystem specs, indexed in [SPEC_INDEX.md](docs/specs/SPEC_INDEX.md)),
   `docs/decisions/` (accepted designs), [INSPIRATIONS.md](INSPIRATIONS.md).
 
 ---
