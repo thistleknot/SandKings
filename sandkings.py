@@ -292,6 +292,20 @@ PROPHET_BREAK_MADNESS = 0.5      # colony madness at which a prophet BREAKS (Cth
 SOOTHSAYER_SENTIMENT_MIN = 0.66  # keeper_sentiment above which a devout unit may be ordained a soothsayer
 SOOTHSAYER_DECODE_MULT = 1.5     # soothsayers accelerate decode modestly (stable clergy)
 SOOTHSAYER_TITHE = 0.5           # food a soothsayer gathers to the maw per priest-tick (the political tithe)
+# Aztec sacrifice (SPEC_REVELATION R3): a priest offers a captured/tribute thrall to the gods beyond the glass
+# — relieves the colony's madness, appeases the keeper, steels morale. Ties the priesthood to the madness and
+# the subjugation/suzerain thrall systems. Gated under PRIESTHOOD_ENABLED.
+SACRIFICE_TICK = 40              # cadence of the sacrifice rite
+SACRIFICE_MADNESS_MIN = 0.15     # colony madness above which the priests call for blood (or keeper wrath)
+SACRIFICE_RELIEF = 0.25          # fraction of colony madness a sacrifice relieves
+SACRIFICE_FAVOR = 0.2            # keeper_sentiment + confidence a sacrifice grants (the gods appeased)
+# Holy war (SPEC_REVELATION R4): the priestly class drives wars between maw populations of divergent faith.
+# A zealous, priest-led house crusades against the infidel (divergent keeper_sentiment / enlightenment).
+HOLY_WAR_TICK = 60               # cadence a zealous priesthood may launch a holy war
+HOLY_WAR_SENTIMENT_MIN = 0.6     # our keeper_sentiment above which we are zealous enough to crusade
+HOLY_WAR_DIVERGENCE = 0.3        # keeper_sentiment gap (or enlightenment mismatch) marking an "infidel"
+HOLY_WAR_DURATION = 300          # steps a holy war resists the poverty stand-down
+HOLY_WAR_TRUST_HIT = 60.0        # trust driven down on declaration (forecloses truce/alliance)
 
 # Sentience Arc constants (SPEC_SENTIENCE.md S1-S4)
 RESONANCE_RANGE = 6          # Chebyshev radius of thought contagion
@@ -2123,9 +2137,12 @@ class SandKingsSimulation:
         if REVELATION_ENABLED:
             self._revelation_tick()
 
-        # 3c-pr. PRIESTHOOD (SPEC_REVELATION R2): ordain prophets/soothsayers; channel, break, tithe
+        # 3c-pr. PRIESTHOOD (SPEC_REVELATION R2/R3): ordain prophets/soothsayers; channel, break, tithe;
+        # and offer captives to the gods (Aztec sacrifice) to ease madness and appease the keeper
         if PRIESTHOOD_ENABLED:
             self._priest_tick()
+            self._sacrifice_tick()
+            self._holy_war_tick()      # R4: zealous priesthoods crusade on infidel maws
 
         # 3c-c. CALTROPS (SPEC_TECH TE13): loose tacks prick whoever crosses
         self._caltrop_tick()
@@ -2337,6 +2354,10 @@ class SandKingsSimulation:
                 poor = colony.maw.food_stored < WAR_CHEST / 2
                 if scarcity_war:
                     poor = False   # the starving fight ON — hunger drives the raid, not retreat
+                # SPEC_REVELATION R4: a declared HOLY WAR resists the poverty stand-down — zeal, not the
+                # hoard, sustains the crusade until the infidel falls. Gated -> byte-identical off.
+                if PRIESTHOOD_ENABLED and getattr(colony, 'holy_war_until', 0) > self.step_count:
+                    poor = False
                 if (poor
                         or target_colony is None
                         or not target_colony.is_alive()
@@ -4416,6 +4437,84 @@ class SandKingsSimulation:
             for u in priests:
                 if getattr(u, 'priest_kind', '') == 'soothsayer' and u in colony.units:
                     colony.maw.eat(SOOTHSAYER_TITHE)
+
+    def _held_thrall(self, colony: Colony):
+        """R3 helper: the first captive laboring for `colony` (a unit in another house's ranks whose
+        `laboring_for` is our id), plus its owning colony — or (None, None). Pure read."""
+        for other in self.colonies:
+            for u in other.units:
+                if getattr(u, 'laboring_for', -1) == colony.colony_id:
+                    return u, other
+        return None, None
+
+    def _sacrifice_tick(self) -> None:
+        """R3 (SPEC_REVELATION): a priest-led house that holds a captive and is troubled (maddened, or the
+        keeper is wrathful) offers a thrall to the gods beyond the glass — the captive dies on the altar,
+        colony madness eases, keeper favor and morale rise. Deterministic (no RNG) -> byte-identical off
+        (gated caller). Ties the priesthood to the madness (SPEC_MADNESS) and thrall (subjugation) systems."""
+        if self.step_count % SACRIFICE_TICK or not self.step_count:
+            return
+        for colony in self.colonies:
+            if not colony.is_alive():
+                continue
+            if not any(getattr(u, 'is_priest', False) for u in colony.units):
+                continue                                   # only a priest-led house performs the rite
+            troubled = (getattr(colony, 'madness', 0.0) >= SACRIFICE_MADNESS_MIN
+                        or self.keeper_attitude(colony) == 'wrathful')
+            if not troubled:
+                continue
+            thrall, owner = self._held_thrall(colony)
+            if thrall is None:
+                continue
+            owner.remove_unit(thrall)                      # the captive dies on the altar
+            self.world.set_voxel(*thrall.position, VoxelType.CORPSE)
+            colony.madness = float(np.clip(getattr(colony, 'madness', 0.0) * (1.0 - SACRIFICE_RELIEF), 0.0, 1.0))
+            colony.keeper_sentiment = float(np.clip(
+                getattr(colony, 'keeper_sentiment', 0.5) + SACRIFICE_FAVOR, 0.0, 1.0))
+            colony.confidence = float(np.clip(getattr(colony, 'confidence', 0.5) + SACRIFICE_FAVOR, 0.0, 1.0))
+            self._log_event(f"House {self._house_name(colony)} sacrifices a captive to the gods beyond the "
+                            f"glass — the maw's madness eases")
+
+    def _holy_war_tick(self) -> None:
+        """R4 (SPEC_REVELATION): the priesthood drives wars between maws of divergent faith. On HOLY_WAR_TICK
+        cadence, a zealous, priest-led house not already at war names the most divergent living infidel
+        (keeper_sentiment gap, or an enlightenment schism) and launches a HOLY WAR — sets war_target, drives
+        trust down (foreclosing truce), and marks holy_war_until so zeal (not the hoard) sustains it.
+        Deterministic (no RNG) -> byte-identical off (gated caller)."""
+        if self.step_count % HOLY_WAR_TICK or not self.step_count:
+            return
+        d = getattr(self, 'diplomacy', None)
+        if d is None:
+            return
+        from politics import hostile as _hostile
+        for colony in self.colonies:
+            cid = colony.colony_id
+            if (not colony.is_alive()
+                    or d.war_target.get(cid) is not None
+                    or getattr(colony, 'keeper_sentiment', 0.5) < HOLY_WAR_SENTIMENT_MIN
+                    or not any(getattr(u, 'is_priest', False) for u in colony.units)):
+                continue
+            best, best_div = None, HOLY_WAR_DIVERGENCE
+            for other in self.colonies:
+                if other is colony or not other.is_alive():
+                    continue
+                if not _hostile(self, cid, other.colony_id):
+                    continue                                   # never crusade on kin / allies / covassals
+                div = abs(getattr(colony, 'keeper_sentiment', 0.5)
+                          - getattr(other, 'keeper_sentiment', 0.5))
+                if getattr(colony, 'enlightened', False) != getattr(other, 'enlightened', False):
+                    div += HOLY_WAR_DIVERGENCE                  # an enlightenment schism deepens the divide
+                if div >= best_div:
+                    best, best_div = other, div
+            if best is None:
+                continue
+            d.war_target[cid] = best.colony_id
+            colony.at_war = True
+            colony.holy_war_until = self.step_count + HOLY_WAR_DURATION
+            d.rel(cid, best.colony_id).adjust(-HOLY_WAR_TRUST_HIT)
+            d.rel(best.colony_id, cid).adjust(-HOLY_WAR_TRUST_HIT)
+            self._log_event(f"House {self._house_name(colony)} launches a HOLY WAR against the "
+                            f"infidel House {self._house_name(best)}!")
 
     def _plunder_techs(self, fallen: Colony):
         """T3 conquest-steal: the aggressor at war with a fallen house seizes

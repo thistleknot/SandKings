@@ -87,15 +87,36 @@ cost → byte-identical. `live_view` tints prophets violet, soothsayers gold (pu
   (unit removed). A soothsayer tithes food to the maw.
 - Gate off → no ordination, full battery byte-identical.
 
-## R3 — Aztec sacrifice — PHASE 3
+## R3 — Aztec sacrifice
 
-A priest sacrifices a captured/tribute thrall (`laboring_for == our colony`) to the gods → relieves colony
-madness + raises `keeper_sentiment` + morale. Ties to subjugation/suzerain tribute. Detailed spec on build.
+`_sacrifice_tick` (gated `PRIESTHOOD_ENABLED`, cadence `SACRIFICE_TICK`): a priest-led house that HOLDS a
+captive (`_held_thrall` — a unit in another house's ranks whose `laboring_for` is our id) and is TROUBLED
+(`madness >= SACRIFICE_MADNESS_MIN` or the keeper is `wrathful`) offers the thrall to the gods beyond the glass:
+- the captive dies on the altar (removed from its owner, drops a `CORPSE`);
+- colony `madness *= (1 - SACRIFICE_RELIEF)` (the rite eases the raving — a second pressure valve alongside the
+  R2 prophet-break);
+- `keeper_sentiment` and `confidence` rise by `SACRIFICE_FAVOR` (the gods appeased, the house steeled).
+Deterministic (no RNG); ties the priesthood to the madness (SPEC_MADNESS) and the subjugation/suzerain thrall
+systems. Gate off → no rite → byte-identical.
 
-## R4 — Holy war — PHASE 4
+**Acceptance R3 (`tests/test_revelation.py`).** A priest-led, maddened house holding a thrall sacrifices it:
+the thrall is removed, colony madness drops, keeper favor rises. No thrall / no priest / untroubled → no rite.
 
-The priestly class drives holy wars between maw populations of divergent revelation (different decoded signs /
-keeper attitudes). Detailed spec on build.
+## R4 — Holy war
+
+`_holy_war_tick` (gated `PRIESTHOOD_ENABLED`, cadence `HOLY_WAR_TICK`): a zealous, priest-led house
+(`keeper_sentiment >= HOLY_WAR_SENTIMENT_MIN`) not already at war names the most divergent living INFIDEL — the
+non-kin, non-allied house with the largest `keeper_sentiment` gap (plus a bump for an enlightenment schism,
+`>= HOLY_WAR_DIVERGENCE`) — and launches a HOLY WAR: sets `war_target`, `at_war`, drives mutual trust down by
+`HOLY_WAR_TRUST_HIT` (foreclosing truce/alliance), and marks `holy_war_until = step + HOLY_WAR_DURATION`. A
+gated one-line guard in the war-footing stand-down (sandkings.py ~2349) clears `poor` while `holy_war_until`
+holds, so ZEAL — not the hoard — sustains the crusade until the infidel falls. War is hostile-by-default, so
+R4 DIRECTS aggression (not flips it): the priesthood chooses the enemy by faith. Deterministic (no RNG). Gate
+off → no crusade, and the stand-down guard is inert → byte-identical.
+
+**Acceptance R4 (`tests/test_revelation.py`).** A zealous, priest-led house with a divergent-faith neighbor
+launches a holy war (`war_target` set to that neighbor, `holy_war_until` in the future, trust driven down).
+A house with no priest / low zeal / no divergent neighbor does not.
 
 ## Constants (sandkings.py)
 

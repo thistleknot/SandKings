@@ -159,6 +159,92 @@ def test_prophet_breaks_at_dire_madness():
     assert len(colony.units) == n0 - 1, "the broken prophet is removed"
 
 
+def test_sacrifice_eases_madness_and_appeases_keeper():
+    """R3: a priest-led, maddened house holding a captive sacrifices it — the thrall dies, madness drops,
+    keeper favor rises."""
+    if not HAVE:
+        return _skip()
+    from sandkings import SACRIFICE_TICK, SACRIFICE_MADNESS_MIN
+    sim, colony = _priest_sim()
+    if colony is None:
+        return _skip()
+    # ordain a priest on our house
+    victim_priest = colony.units[0]
+    victim_priest.is_priest = True; victim_priest.priest_kind = 'soothsayer'
+    # a captive of ANOTHER house laboring for us
+    other = next((c for c in sim.colonies if c is not colony and c.units), None)
+    if other is None:
+        return _skip()
+    thrall = other.units[0]
+    thrall.laboring_for = colony.colony_id
+    colony.madness = SACRIFICE_MADNESS_MIN + 0.2
+    colony.keeper_sentiment = 0.4
+    mad0, favor0 = colony.madness, colony.keeper_sentiment
+    sim.step_count = SACRIFICE_TICK
+    sim._sacrifice_tick()
+    assert thrall not in other.units, "the captive is sacrificed (removed)"
+    assert colony.madness < mad0, "the rite eases the colony's madness"
+    assert colony.keeper_sentiment > favor0, "the gods are appeased — keeper favor rises"
+
+
+def test_sacrifice_needs_priest_and_captive():
+    """R3: no rite without a priest, a captive, and a troubled house (guards)."""
+    if not HAVE:
+        return _skip()
+    from sandkings import SACRIFICE_TICK
+    sim, colony = _priest_sim()
+    if colony is None:
+        return _skip()
+    colony.madness = 0.9                     # troubled, but NO priest and NO captive
+    for u in colony.units:
+        u.is_priest = False
+    sim.step_count = SACRIFICE_TICK
+    mad0 = colony.madness
+    sim._sacrifice_tick()
+    assert colony.madness == mad0, "no priest / no captive -> no sacrifice, no relief"
+
+
+def test_zealous_priesthood_launches_holy_war():
+    """R4: a zealous, priest-led house names a divergent-faith infidel and launches a holy war."""
+    if not HAVE:
+        return _skip()
+    from sandkings import HOLY_WAR_TICK, HOLY_WAR_SENTIMENT_MIN, HOLY_WAR_DIVERGENCE
+    sim, colony = _priest_sim()
+    if colony is None:
+        return _skip()
+    infidel = next((c for c in sim.colonies if c is not colony and c.is_alive()), None)
+    if infidel is None:
+        return _skip()
+    colony.units[0].is_priest = True; colony.units[0].priest_kind = 'soothsayer'
+    colony.keeper_sentiment = HOLY_WAR_SENTIMENT_MIN + 0.2      # zealous
+    infidel.keeper_sentiment = colony.keeper_sentiment - (HOLY_WAR_DIVERGENCE + 0.1)  # divergent faith
+    colony.house = 'Alpha'; infidel.house = 'Beta'             # non-kin
+    sim._kin_epoch = getattr(sim, '_kin_epoch', 0) + 1
+    d = sim._diplomacy(); d.war_target[colony.colony_id] = None
+    sim.step_count = HOLY_WAR_TICK
+    sim._holy_war_tick()
+    assert d.war_target.get(colony.colony_id) == infidel.colony_id, "the crusade targets the infidel"
+    assert getattr(colony, 'holy_war_until', 0) > sim.step_count, "zeal sustains the war past poverty"
+    assert d.rel(colony.colony_id, infidel.colony_id).trust < 0, "trust is driven down (no truce)"
+
+
+def test_holy_war_needs_zeal_and_priest():
+    """R4: no crusade without a priest and high zeal (guards)."""
+    if not HAVE:
+        return _skip()
+    from sandkings import HOLY_WAR_TICK
+    sim, colony = _priest_sim()
+    if colony is None:
+        return _skip()
+    for u in colony.units:
+        u.is_priest = False                     # no priest
+    colony.keeper_sentiment = 0.9               # zealous but priestless
+    d = sim._diplomacy(); d.war_target[colony.colony_id] = None
+    sim.step_count = HOLY_WAR_TICK
+    sim._holy_war_tick()
+    assert d.war_target.get(colony.colony_id) is None, "no priest -> no holy war"
+
+
 def test_priest_gate_off_no_ordination():
     """Gate OFF: even a maddened colony ordains no priest through the step loop (byte-identical path)."""
     if not HAVE:
