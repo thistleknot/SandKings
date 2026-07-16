@@ -34,8 +34,9 @@ import numpy as np
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 TESTS = os.path.join(ROOT, "tests")
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+SIM = os.path.join(ROOT, "sim")
+if SIM not in sys.path:
+    sys.path.insert(0, SIM)
 
 import sandkings  # torch imported exactly once here (via neural_hive)
 

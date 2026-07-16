@@ -9,7 +9,7 @@ import os
 import random
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sim"))
 
 import numpy as np
 
@@ -449,7 +449,7 @@ def test_checkpoint_loads_across_script_module_identity():
         db = os.path.join(tmp, "tank.db")
         env = dict(os.environ, SDL_VIDEODRIVER="dummy", PYTHONIOENCODING="utf-8")
         result = subprocess.run(
-            [sys.executable, "sandkings.py", "--live", "--steps", "8",
+            [sys.executable, os.path.join("sim", "sandkings.py"), "--live", "--steps", "8",
              "--persist", db], cwd=repo, env=env, capture_output=True, timeout=300)
         assert result.returncode == 0, result.stderr.decode(errors="replace")[-500:]
         sim = load_checkpoint(db)

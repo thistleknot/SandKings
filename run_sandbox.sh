@@ -37,7 +37,7 @@ if [ "${MODE}" = "--console" ] || [ "${MODE}" = "console" ]; then
   exec docker run "${COMMON[@]}" \
     -p 127.0.0.1:8000:8000 \
     "${IMAGE}" \
-    python dashboard.py --persist /state/terrarium.db --port 8000 --host 0.0.0.0
+    python sim/dashboard.py --persist /state/terrarium.db --port 8000 --host 0.0.0.0
 else
   # ISOLATED: no network stack at all. Maximum containment; the sim runs
   # headless and autosaves. Inspect via: docker exec <id> sh
@@ -45,5 +45,5 @@ else
   exec docker run "${COMMON[@]}" \
     --network none \
     "${IMAGE}" \
-    python sandkings.py --persist /state/terrarium.db --steps 100000
+    python sim/sandkings.py --persist /state/terrarium.db --steps 100000
 fi

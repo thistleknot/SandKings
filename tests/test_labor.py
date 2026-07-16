@@ -18,7 +18,7 @@ import random
 import numpy as np
 
 # Add the repo root to sys.path so we can import sandkings
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'sim')))
 
 from sandkings import (
     SandKingsSimulation, SandKing, Colony, Maw, ColonyGenome, VoxelType,

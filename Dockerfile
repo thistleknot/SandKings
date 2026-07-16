@@ -45,4 +45,4 @@ ENV PYTHONUNBUFFERED=1 PYTHONIOENCODING=utf-8 SANDKING_STATE=/state
 
 # default: run the sim headless, autosaving to the mounted /state volume.
 # (The web console is opt-in via run_sandbox --console.)
-CMD ["python", "sandkings.py", "--persist", "/state/terrarium.db"]
+CMD ["python", "sim/sandkings.py", "--persist", "/state/terrarium.db"]

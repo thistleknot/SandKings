@@ -21,8 +21,9 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-GLOVE_PATH = os.path.join(_HERE, "glove-wiki-gigaword-50.gz")
-CORPUS_DIR = os.path.join(_HERE, "corpus")
+_ROOT = os.path.dirname(_HERE)
+GLOVE_PATH = os.path.join(_ROOT, "glove-wiki-gigaword-50.gz")
+CORPUS_DIR = os.path.join(_ROOT, "corpus")
 GLOVE_TOP = 40_000        # frequency-ordered words loaded for embedding
 CORPUS_MAX_PASSAGES = 400  # cap per plain-text file (a WikiText dump is huge)
 
@@ -112,7 +113,7 @@ class Codex:
     """The read-only library. Built from files; never pickled (CX5)."""
 
     def __init__(self, corpus_dir: str = CORPUS_DIR,
-                 spec_dir: Optional[str] = os.path.join(_HERE, "docs", "specs")):
+                 spec_dir: Optional[str] = os.path.join(_ROOT, "docs", "specs")):
         self.passages: List[Tuple[str, str, Optional[np.ndarray],
                                   List[str]]] = []
         self._ingest_corpus(corpus_dir)

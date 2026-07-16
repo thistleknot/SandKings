@@ -11,7 +11,7 @@ import os
 import random
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sim"))
 
 import numpy as np
 
@@ -141,7 +141,7 @@ def test_glyph_mirror_endpoint_and_toggle():
 def test_no_dangerous_imports():
     """DB1/DB8: the dashboard never reaches the shell or the network."""
     path = os.path.join(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__))), "dashboard.py")
+        os.path.abspath(__file__))), "sim", "dashboard.py")
     with open(path, encoding="utf-8") as fh:
         tree = ast.parse(fh.read())
     banned = {"subprocess", "socket", "requests", "urllib", "os.system"}

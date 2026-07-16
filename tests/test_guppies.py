@@ -4,7 +4,7 @@ catch only above the floor. Plus the gate-off default guard. Pure function -> fa
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sim"))
 
 from sandkings import (guppy_dynamics, GUPPIES_ENABLED, GUPPY_CAP, ALGAE_CAP,
                        GUPPY_YIELD_MIN, GUPPY_SEED, ALGAE_SEED)

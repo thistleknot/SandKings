@@ -4,7 +4,7 @@ only above the floor. Plus the gate-off default/no-state guard and a gate-on in-
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sim"))
 
 from sandkings import (cricket_dynamics, CRICKETS_ENABLED, CRICKET_CAP, CRICKET_SEED,
                        CRICKET_YIELD_MIN, CRICKET_TICK)

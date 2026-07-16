@@ -55,7 +55,7 @@ def _load_learned_basis():
     if _LEARNED_BASIS is not None:
         return _LEARNED_BASIS if _LEARNED_BASIS != () else None
     import os
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learned_basis.npz")
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "learned_basis.npz")
     try:
         import numpy as _np
         d = _np.load(path)

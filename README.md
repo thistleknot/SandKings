@@ -27,7 +27,7 @@ poison cloud (`§`) drifts, and a gold-marked soothsayer (`Ω`) walks among the 
 ## Quick start
 
 ```bash
-python sandkings.py --live --fresh
+python sim/sandkings.py --live --fresh
 
 #  --live      real-time pygame window (omit for a headless GIF/soak run)
 #  --fresh     ignore any saved tank and start a new world
@@ -41,7 +41,7 @@ python sandkings.py --live --fresh
 ```
 
 > Use whichever Python 3.10 interpreter has the deps installed (`torch`, `numpy`, `pygame`). On Windows
-> that may be `py -3.10 sandkings.py ...`. Avoid a bare `python` if it is not your 3.10 environment.
+> that may be `py -3.10 sim/sandkings.py ...`. Avoid a bare `python` if it is not your 3.10 environment.
 
 A fresh live run prints its active systems, e.g.:
 
@@ -207,10 +207,10 @@ mutates/mates/grafts these across generations; the RL warm-starts from and is tu
 
 ## Project map
 
-- `sandkings.py` — the simulation (world, colonies, food web, seasons, fauna, politics, keeper, entrypoint).
-- `maw_brain.py` — the real-RL maw/spawn policies (RLOO, entropy, warm-start, dreaming, directives).
-- `neural_hive.py` — the frozen encoder (ZCA + Kanerva codebook) + evolvable readout + soldier layers.
-- `neuroevolution.py` — the GA (mutate/crossover/graft). `live_view.py` — the pygame viewer + HUD.
+- `sim/sandkings.py` — the simulation (world, colonies, food web, seasons, fauna, politics, keeper, entrypoint).
+- `sim/maw_brain.py` — the real-RL maw/spawn policies (RLOO, entropy, warm-start, dreaming, directives).
+- `sim/neural_hive.py` — the frozen encoder (ZCA + Kanerva codebook) + evolvable readout + soldier layers.
+- `sim/neuroevolution.py` — the GA (mutate/crossover/graft). `sim/live_view.py` — the pygame viewer + HUD.
 - `tools/` — `fit_learned_basis.py` (fits `learned_basis.npz`), `measure_objective.py` (RL metrics).
 - `run_tests.py` — the single-process regression battery (`tests/test_*.py`).
 - **Design docs** — `docs/specs/SPEC_*.md` (per-subsystem specs, indexed in [SPEC_INDEX.md](docs/specs/SPEC_INDEX.md)),

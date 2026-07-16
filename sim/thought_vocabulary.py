@@ -25,7 +25,7 @@ import numpy as np
 
 GLOVE_URL = ("https://github.com/piskvorky/gensim-data/releases/download/"
              "glove-wiki-gigaword-50/glove-wiki-gigaword-50.gz")
-CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+CACHE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "glove-wiki-gigaword-50.gz")
 OUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "thought_vocabulary.json")

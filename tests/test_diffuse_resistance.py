@@ -9,7 +9,7 @@ REPRESSION_COST_FOOD to read a clean accrual, and set overlord.genome.aggression
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sim"))
 
 try:
     import random
