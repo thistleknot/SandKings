@@ -34,6 +34,10 @@ python sandkings.py --live --fresh
 #  --persist   the tank lives between sessions (sqlite autosave; resumes if present)
 #  --steps N   run N steps then stop (headless) / auto-exit (live)
 #  --num-colonies K, --width/--height/--depth   world shape
+#  --log [FILE]           write a per-turn JSONL chronicle (state + drama, every turn)
+#  --log-every N          log every N steps (default 1)
+#  --summarize-every M    every M lines, a local Ollama model writes a saga to <log>.story.md
+#  --summary-model NAME   Ollama model (default qwen3:4b); fail-soft if Ollama is absent
 ```
 
 > Use whichever Python 3.10 interpreter has the deps installed (`torch`, `numpy`, `pygame`). On Windows

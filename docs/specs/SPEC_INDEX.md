@@ -9,6 +9,7 @@ contract). Governing decision records live under `docs/decisions/`.
 - **SPEC_BIOME.md** (BI1–BI7) — the closed biome & the panel (Phase 3): the sealed world and its glass.
 - **SPEC_SEASONS_AND_STONE.md** — seasons, scarcity, farming, the oasis, ore, colony learning.
 - **SPEC_WEATHER.md** (W1–W6) — desert weather: storm, hail, cold, flood.
+- **SPEC_STORY_LOG.md** (SL1–SL3) — per-turn JSONL game chronicle (`--log`) + an optional, fail-soft local-LLM saga (`--summarize-every` via Ollama qwen). Opt-in, byte-identical off.
 - **SPEC_FLOOD_REFUGEE.md** (FR1–FR4, DRAFT) — water's double edge: irrigated crops immune to heat swells (FR1), the flood-refugee state (cut off from tunnels → surface-forage) (FR2), overthrow of the devastated (FR3), and ICE — a hard freeze turns a defensive moat/lake into a walkable bridge, the winter assault opportunity (FR4). Catalogs the already-emergent flood/irrigation mechanics; specs the four gaps.
 - **SPEC_SEMIPERMEABLE.md** (SP1–SP8) — semi-permeable params: a reusable soft-param primitive (distributional scalar `jitter` + logistic `soft_gate`) with the daylight tracer (`sun_effective` drawn per biome-day); identity at neutral (`SUN_JITTER_SD=0`).
 - **SPEC_TIMBER_AND_FLAME.md** — timber, bone & flame: fortifications, organic weapons, decay, fire.

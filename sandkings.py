@@ -2460,6 +2460,11 @@ class SandKingsSimulation:
             self._population_tick()           # fill-in when sparse, bud when crowded
         self._maw_rl_tick()                  # 85% tier: maw real-RL directive (gated)
 
+        # 8. STORY LOG (SPEC_STORY_LOG SL1): append this turn's JSONL snapshot (opt-in via --log; None-by-
+        # default -> inert, byte-identical). Pure read; consumes no RNG.
+        if getattr(self, 'story_log', None) is not None:
+            self.story_log.record(self)
+
     def _maw_strategy_mode(self, d):
         """Map a maw directive (aggression, mobility, verticality) to a strategic ARCHETYPE for the
         drama feed — so the player watches the learned personality surface as narrative. Returns a
@@ -9577,6 +9582,18 @@ def main():
     parser.add_argument('--harsh', action='store_true',
                         help='Skip the 2-year dole ramp: full seasonal scarcity '
                         'from step 0 (T17)')
+    # Story log (SPEC_STORY_LOG): per-turn JSONL chronicle + optional local-LLM saga (opt-in).
+    parser.add_argument('--log', nargs='?', const='sandkings.jsonl', default=None, metavar='PATH',
+                        help='Write a per-turn JSONL game chronicle (default file: sandkings.jsonl).')
+    parser.add_argument('--log-every', type=int, default=1, metavar='N',
+                        help='Log every N steps (default 1 = every turn).')
+    parser.add_argument('--summarize-every', type=int, default=0, metavar='M',
+                        help='Every M logged lines, ask a local Ollama model to write a saga to <log>.story.md '
+                             '(default 0 = off; fail-soft if Ollama is absent).')
+    parser.add_argument('--summary-model', default='qwen3:4b', metavar='NAME',
+                        help='Ollama model for the saga (default qwen3:4b).')
+    parser.add_argument('--summary-host', default='http://localhost:11434', metavar='URL',
+                        help='Ollama host (default http://localhost:11434).')
     parser.add_argument('--num-colonies', type=int, default=0, help='Number of colonies (0=random 3-5)')
     parser.add_argument('--no-dynamic', action='store_true',
                         help='Disable dynamic population + succession (baseline: ON — the '
@@ -9726,6 +9743,15 @@ def main():
                                  canon=getattr(args, 'canon', False),
                                  dynamic_population=not getattr(args, 'no_dynamic', False))
     sim.harsh = args.harsh  # T17 ramp control (applies to resumed sims too)
+
+    # Story log (SPEC_STORY_LOG): attach a per-turn JSONL chronicle if requested. None-by-default -> the
+    # sim.step() hook stays inert (byte-identical). Closed at run end (both --live and headless paths).
+    sim.story_log = None
+    if getattr(args, 'log', None):
+        from story_log import StoryLog
+        sim.story_log = StoryLog(args.log, every=args.log_every,
+                                 summarize_every=args.summarize_every,
+                                 model=args.summary_model, host=args.summary_host)
 
     # --subjugation: turn the capture economy ON for this run only. The module
     # default CAPTURE_CHANCE stays 0.0 (regression battery byte-identical); here
@@ -9946,6 +9972,8 @@ def main():
         run_live(sim, max_steps=args.steps, steps_per_second=args.sps,
                  save_path=args.persist, serve=args.web, host=args.host,
                  port=args.port, save_every=args.save_every)
+        if sim.story_log is not None:
+            sim.story_log.close()
         print("\n" + sim.get_status())
         return
 
@@ -9984,6 +10012,8 @@ def main():
                          duration=500, loop=0)
     
     # Final status
+    if sim.story_log is not None:
+        sim.story_log.close()
     print("\n" + sim.get_status())
     print("\n[S] Saved sandkings_2d.gif (2D cross-section)")
     print("[S] Saved sandkings_3d.gif (3D clustered view)")
