@@ -87,10 +87,31 @@ Why it fits the "don't author rules" goal: the author defines only the **potenti
 *emerges*; one potential feeds many affordances (pleiotropy) through different interactions. The maw-RL reads
 the **potentials and/or the liability levels** as features and expresses the affordance situationally.
 
-**Still-open sub-questions for the discussion:** (a) does the RL read raw potentials, the interaction terms, or
-the thresholded levels as features? (b) hard vs soft/learnable cut (lean soft, per SEMIPERMEABLE); (c) how many
-potentials, and are they NEW latent genes or the existing temperament genes reused as potentials; (d) which
-interaction map for the first affordances (livestock/granary/scorched-earth). **Deferred.**
+**Sub-questions — proposed resolutions (orchestrator's lean, PENDING user sign-off; D1 stays OPEN):**
+
+- **(a) What the RL reads as features** → the **quantized liability *levels*** (the expressed affordance
+  strength — "how available is scorch-earth to me"), NOT the raw potentials. The interaction+threshold already
+  did the epistasis; the policy decides off what the organism can do, and the input stays small + legible. Raw
+  potentials remain in the genome as the evolvable substrate only.
+- **(b) Cut** → **soft/learnable** (`soft_gate`, identity at neutral — SEMIPERMEABLE). Near the cut a trait
+  expresses partially/probabilistically, not on/off; differentiable if we ever learn the cut.
+- **(c) Potentials** → **reuse the existing continuous temperament genes** (aggression, loyalty, expansion,
+  patience, resilience, tunnel_preference, plasticity) as the potentials to start — already evolved, already
+  warm-start the RL. Add a NEW latent potential only when an affordance needs a dimension temperament can't
+  express. Keeps the genome from ballooning.
+- **(d) Interaction map — concrete first cut** (2-term non-additive products of existing genes, quantized,
+  soft-cut; epistasis visible — a trait needs BOTH terms; pleiotropy visible — `patience` feeds two):
+
+  | affordance        | liability (interaction)   | reading                                   |
+  |-------------------|---------------------------|-------------------------------------------|
+  | **scorched earth**| `aggression · (1 − loyalty)` | cruel AND faithless → burns what it can't hold |
+  | **builds granaries** | `patience · expansion`  | patient growth → stockpiles + builds      |
+  | **keeps livestock** | `patience · resilience`  | a husbandry temperament                   |
+
+**Proposed reference implementation (pending sign-off):** prototype ONE affordance — **scorched earth** —
+end-to-end as the pattern's reference: liability `aggression·(1−loyalty)` → soft-cut → level fed to the maw-RL
+→ the policy chooses to ignite an adjacent enemy grain store (reusing T45 fire). Small, testable, proves the
+architecture before generalizing the map. **Not started.**
 
 ## First worked example (spec target once D1 lands): livestock, granaries & scorched earth
 
