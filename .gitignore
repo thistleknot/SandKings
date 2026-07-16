@@ -225,3 +225,7 @@ terrarium_saga.txt
 *.pkl
 # Generated whole-codebase dump (regenerate on demand)
 codebase.md
+
+# Story log runtime output (--log)
+*.jsonl
+*.story.md
