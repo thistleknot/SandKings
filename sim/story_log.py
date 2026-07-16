@@ -82,6 +82,33 @@ def snapshot(sim, since_step: Optional[int] = None) -> Dict[str, Any]:
     }
 
 
+_COMPASS = (("NW", "N", "NE"), ("W", "C", "E"), ("SW", "S", "SE"))
+_BANDS = ("deep", "mid", "surface")   # indexed by z-third; z=0 is bedrock
+
+
+def hotspots(world, prev_voxels, prev_ownership, top: int = 3) -> List[Dict[str, Any]]:
+    """SL4: named-region counts of cells whose voxel type OR ownership changed since the last logged line.
+
+    Pure numpy compare against the caller-held previous copies — no RNG, no sim mutation. Regions are a 3x3
+    compass grid over (x, y) crossed with depth thirds (surface/mid/deep). Returns up to `top`
+    {"where": "<compass> <band>", "changes": N} entries, largest first; zero-change regions are omitted.
+    """
+    diff = (world.voxels != prev_voxels) | (world.ownership != prev_ownership)
+    w, h, d = diff.shape
+    xs = (0, w // 3, 2 * w // 3, w)
+    ys = (0, h // 3, 2 * h // 3, h)
+    zs = (0, d // 3, 2 * d // 3, d)
+    out = []
+    for yi in range(3):
+        for xi in range(3):
+            for zi in range(3):
+                n = int(diff[xs[xi]:xs[xi + 1], ys[yi]:ys[yi + 1], zs[zi]:zs[zi + 1]].sum())
+                if n:
+                    out.append({"where": f"{_COMPASS[yi][xi]} {_BANDS[zi]}", "changes": n})
+    out.sort(key=lambda r: -r["changes"])
+    return out[:top]
+
+
 def _build_prompt(rows: List[Dict[str, Any]]) -> str:
     """A bounded chronicler prompt: the season arc, the surviving houses' end-state, and the run of events."""
     a, b = rows[0], rows[-1]
@@ -104,6 +131,14 @@ def _build_prompt(rows: List[Dict[str, Any]]) -> str:
     fallen = [c for c in b["colonies"] if not c["alive"]]
     if fallen:
         lines.append(f"Fallen/empty slots: {len(fallen)}.")
+    agg: Dict[str, int] = {}
+    for r in rows:
+        for hs in r.get("hotspots") or []:
+            agg[hs["where"]] = agg.get(hs["where"], 0) + int(hs["changes"])
+    if agg:
+        where = sorted(agg.items(), key=lambda kv: -kv[1])[:3]
+        lines.append("Where the action was (terrain/territory churn): "
+                     + ", ".join(f"{k} ({v} cells)" for k, v in where))
     lines += ["", "Chronicle of events (step: what happened):"]
     events = [f"  {r['step']}: {e}" for r in rows for e in r["events"]]
     lines += events[:80] if events else ["  (a quiet interval — no notable drama)"]
@@ -136,6 +171,8 @@ class StoryLog:
         self._fh = open(path, "a", encoding="utf-8")
         self._buf: List[Dict[str, Any]] = []
         self._last_step: Optional[int] = None    # for the events-since-last-line window
+        self._prev_voxels = None                 # SL4: previous logged world.voxels copy
+        self._prev_ownership = None              # SL4: previous logged world.ownership copy
         print(f"[STORY] logging each turn -> {path}"
               + (f"; saga every {self.summarize_every} via {self.model}"
                  if self.summarize_every else " (JSONL only; --summarize-every to add sagas)"))
@@ -145,6 +182,12 @@ class StoryLog:
         if sim.step_count % self.every:
             return
         row = snapshot(sim, since_step=self._last_step)   # events since the previous logged line
+        if self._prev_voxels is None:
+            row["hotspots"] = []                          # SL4: first line has no baseline
+        else:
+            row["hotspots"] = hotspots(sim.world, self._prev_voxels, self._prev_ownership)
+        self._prev_voxels = sim.world.voxels.copy()
+        self._prev_ownership = sim.world.ownership.copy()
         self._last_step = sim.step_count
         self._fh.write(json.dumps(row, ensure_ascii=False) + "\n")
         self._fh.flush()

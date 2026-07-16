@@ -1,4 +1,4 @@
-# SPEC: Story Log — per-turn JSONL chronicle + optional local-LLM saga — SL1…SL3
+# SPEC: Story Log — per-turn JSONL chronicle + optional local-LLM saga — SL1…SL4
 
 Governing intent (user): "track a jsonl log of the game each turn… so an LLM can review and tell a story by
 summarizing the state every ~100 lines (settable)… leverage a local Ollama qwen model to generate summaries
@@ -49,6 +49,26 @@ manual/live check, not a unit test, since it depends on an external model.)
 (default 0 = off), `--summary-model NAME`, `--summary-host URL`. Built after sim creation, attached as
 `sim.story_log`, closed at run end (both the `--live` and headless paths, via `sim.step()`-driven logging).
 
+## SL4 — Spatial hotspots (where the action is)
+
+Governing intent (user): the chronicle should carry WHERE the action happened, "frame by frame (a delta)" —
+but symbolically, not as imagery: "we probably have to intelligently summarize sets of the state." Averaged or
+3D renders are not LLM-interpretable; a named-region delta count is.
+
+Each logged line gains `hotspots`: up to 3 `{"where": "<region> <band>", "changes": N}` entries ranked by the
+count of cells whose voxel type OR ownership changed since the PREVIOUS logged line. Regions: 3x3 compass grid
+over (x, y) — `NW N NE W C E SW S SE`. Bands: depth thirds — z in the top third is `surface`, middle `mid`,
+bottom `deep` (z=0 is bedrock). The first logged line has `hotspots: []` (no baseline yet). Pure numpy diff of
+`world.voxels` + `world.ownership` against copies kept by `StoryLog` — no RNG, no sim mutation, O(w·h·d)
+compare per logged line. Zero-change regions are never listed.
+
+The saga prompt (SL2) aggregates the batch's hotspots into one "where the action was" line (top 3 regions by
+summed changes), so the chronicler can place the drama.
+
+**Acceptance SL4.** With `--log`, every line parses with a `hotspots` list; line 1 has `[]`; after steps in
+which colonies dig/build/fight, some line has a nonempty `hotspots` whose entries match the
+`"<compass> <band>"` vocabulary with positive integer `changes`.
+
 ## Constants / files
-- `story_log.py` — `StoryLog`, `snapshot(sim)`, the Ollama call. No new sim constants; no `_GATE_NAMES` entry
-  (opt-in, None-by-default, not a sim gate).
+- `story_log.py` — `StoryLog`, `snapshot(sim)`, `hotspots` region diff (SL4), the Ollama call. No new sim
+  constants; no `_GATE_NAMES` entry (opt-in, None-by-default, not a sim gate).

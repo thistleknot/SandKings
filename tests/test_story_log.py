@@ -101,6 +101,35 @@ def test_summary_is_fail_soft_when_ollama_absent():
     assert n == 4, "all JSONL lines written despite the summary failing"
 
 
+def test_hotspots_named_region_deltas():
+    """SL4: every logged line carries `hotspots`; line 1 is [] (no baseline); later lines' entries use the
+    '<compass> <band>' vocabulary with positive integer changes, ranked largest-first, at most 3."""
+    if not HAVE:
+        return _skip()
+    compass = {"NW", "N", "NE", "W", "C", "E", "SW", "S", "SE"}
+    bands = {"surface", "mid", "deep"}
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "run.jsonl")
+        sim = _sim()
+        sim.story_log = StoryLog(path, every=1)
+        for _ in range(8):
+            sim.step()
+        sim.story_log.close()
+        lines = [json.loads(l) for l in open(path, encoding="utf-8") if l.strip()]
+    assert all("hotspots" in r for r in lines), "every line has hotspots"
+    assert lines[0]["hotspots"] == [], "first logged line has no baseline"
+    nonempty = [r["hotspots"] for r in lines[1:] if r["hotspots"]]
+    assert nonempty, "an active young world produces region churn"
+    for hs in nonempty:
+        assert len(hs) <= 3
+        changes = [e["changes"] for e in hs]
+        assert changes == sorted(changes, reverse=True), "ranked largest-first"
+        for e in hs:
+            region, band = e["where"].split()
+            assert region in compass and band in bands, f"bad region name {e['where']!r}"
+            assert isinstance(e["changes"], int) and e["changes"] > 0
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

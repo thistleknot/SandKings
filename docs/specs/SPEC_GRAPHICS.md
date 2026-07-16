@@ -56,3 +56,23 @@ representational sprites are generated the way the ISO view already is, not load
 ## All three phases shipped
 Distinctive glyphs + Gestalt attributes (P1), toggleable sidebar legend (P2), procedural top-down sprite
 tiles (P3). `R` cycles GLYPH/BLOCKS/TILES; `TAB` cycles TOPDOWN/SLICE/ISO; `L` toggles the sidebar legend.
+
+## Headless GIF frames (Phase H) — fixed views, no 3D
+
+Governing intent (user): the matplotlib 3D frame is not useful ("I'm not sure a 3d frame is useful here") and
+adaptive/averaged composites are noisy without a model to read them; keep it "simple like a top-level view,
+and maybe a few views under ground." Fixed viewpoints keep frames comparable step-to-step, so change reads as
+motion.
+
+- The headless (GIF-mode) frame is a horizontal tile of FOUR fixed views, every step:
+  1. **Top-down surface** — for each (x, y) column, the topmost non-AIR voxel's color (z scanned from
+     depth-1 down); all units and maws overdrawn regardless of depth (the "where is everyone" view).
+  2-4. **Underground slices** at fixed z = int(d*0.6) (shallow), int(d*0.4) (mid), substrate+1 (deep) —
+     the existing `render_z_slice`, unchanged.
+- The matplotlib 3D path (`generate_3d_frame`, `sandkings_3d.gif`) is REMOVED from the headless loop — it was
+  ~all of the per-step wall clock and unreadable (occlusion). The single output is `sandkings_2d.gif`.
+- Voxel color mapping is one shared table (`Visualizer._voxel_color`) used by both the slice and top-down
+  renderers — no palette forks.
+
+**Acceptance H.** A headless N-step run emits N tiled frames and saves only `sandkings_2d.gif`; wall-clock per
+step is dominated by the sim, not the render; the frame width equals 4 view widths + separators.

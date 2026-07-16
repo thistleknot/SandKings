@@ -1684,99 +1684,117 @@ class CellularAutomata:
 class Visualizer:
     """Handles 2D slice views and 3D GIF generation"""
     
+    _VOXEL_COLORS = {
+        VoxelType.GLASS: (100, 100, 100),
+        VoxelType.STONE: (50, 50, 50),
+        VoxelType.SAND: (194, 178, 128),
+        VoxelType.TUNNEL_WALL: (139, 90, 43),
+        VoxelType.CASTLE: (200, 195, 210),
+        VoxelType.FOOD: (0, 255, 0),
+        VoxelType.CORPSE: (128, 0, 0),
+        VoxelType.TILLED: (110, 80, 50),
+        VoxelType.CROP: (80, 160, 60),
+        VoxelType.CROP_RIPE: (190, 220, 60),
+        VoxelType.COPPER_ORE: (184, 115, 51),
+        VoxelType.GOLD_ORE: (255, 208, 0),
+        VoxelType.HULL: (120, 130, 150),
+        VoxelType.SALVAGE: (170, 190, 210),
+        VoxelType.WOOD: (34, 139, 34),
+        VoxelType.WOOD_WALL: (139, 105, 20),
+        VoxelType.WEB: (210, 210, 220),
+    }
+
     @staticmethod
-    def render_z_slice(world: VoxelWorld, colonies: List[Colony], z_level: int, 
+    def _voxel_color(voxel: 'VoxelType', owner: int, colonies: List[Colony]) -> Tuple[int, int, int]:
+        """One shared palette for every 2D view (spec: SPEC_GRAPHICS Phase H — no palette forks)."""
+        if voxel == VoxelType.AIR:
+            if owner >= 0:
+                colony = next((c for c in colonies if c.colony_id == owner), None)
+                if colony:
+                    return tuple(int(c * 0.3) for c in colony.color)   # owned air = faint colony color
+            return (20, 20, 20)
+        return Visualizer._VOXEL_COLORS.get(voxel, (0, 0, 0))
+
+    @staticmethod
+    def _draw_actors(img_array: np.ndarray, colonies: List[Colony], scale: int,
+                     w: int, h: int, z_level: Optional[int] = None) -> None:
+        """Overdraw units (colony-color dots) and maws (yellow squares). z_level=None draws every depth
+        (the top-down 'where is everyone' view); an int restricts to that slice."""
+        for colony in colonies:
+            for unit in colony.units:
+                if z_level is not None and unit.position[2] != z_level:
+                    continue
+                ux, uy = unit.position[0], unit.position[1]
+                cx, cy = ux * scale + scale // 2, uy * scale + scale // 2
+                for dx in range(-1, 2):
+                    for dy in range(-1, 2):
+                        nx, ny = cx + dx, cy + dy
+                        if 0 <= nx < w * scale and 0 <= ny < h * scale:
+                            img_array[ny, nx] = colony.color
+            if z_level is None or colony.maw.position[2] == z_level:
+                mx, my = colony.maw.position[0], colony.maw.position[1]
+                for dx in range(-2, 3):
+                    for dy in range(-2, 3):
+                        nx = mx * scale + scale // 2 + dx
+                        ny = my * scale + scale // 2 + dy
+                        if 0 <= nx < w * scale and 0 <= ny < h * scale:
+                            img_array[ny, nx] = (255, 255, 0)  # yellow for Maw
+
+    @staticmethod
+    def render_z_slice(world: VoxelWorld, colonies: List[Colony], z_level: int,
                        title: str = "") -> Image.Image:
         """Render 2D cross-section at given Z level"""
         w, h, _ = world.dimensions
-        
+
         # Create RGB image (scale up for visibility)
         scale = 4
         img_array = np.zeros((h * scale, w * scale, 3), dtype=np.uint8)
-        
+
         for x in range(w):
             for y in range(h):
                 voxel = VoxelType(world.voxels[x, y, z_level])
                 owner = world.ownership[x, y, z_level]
-                
-                # Color mapping
-                if voxel == VoxelType.GLASS:
-                    color = (100, 100, 100)
-                elif voxel == VoxelType.STONE:
-                    color = (50, 50, 50)
-                elif voxel == VoxelType.SAND:
-                    color = (194, 178, 128)
-                elif voxel == VoxelType.TUNNEL_WALL:
-                    color = (139, 90, 43)
-                elif voxel == VoxelType.CASTLE:
-                    color = (200, 195, 210)
-                elif voxel == VoxelType.FOOD:
-                    color = (0, 255, 0)
-                elif voxel == VoxelType.CORPSE:
-                    color = (128, 0, 0)
-                elif voxel == VoxelType.TILLED:
-                    color = (110, 80, 50)
-                elif voxel == VoxelType.CROP:
-                    color = (80, 160, 60)
-                elif voxel == VoxelType.CROP_RIPE:
-                    color = (190, 220, 60)
-                elif voxel == VoxelType.COPPER_ORE:
-                    color = (184, 115, 51)
-                elif voxel == VoxelType.GOLD_ORE:
-                    color = (255, 208, 0)
-                elif voxel == VoxelType.HULL:
-                    color = (120, 130, 150)
-                elif voxel == VoxelType.SALVAGE:
-                    color = (170, 190, 210)
-                elif voxel == VoxelType.WOOD:
-                    color = (34, 139, 34)
-                elif voxel == VoxelType.WOOD_WALL:
-                    color = (139, 105, 20)
-                elif voxel == VoxelType.WEB:
-                    color = (210, 210, 220)
-                elif voxel == VoxelType.AIR:
-                    if owner >= 0:
-                        # Owned air = faint colony color
-                        colony = next((c for c in colonies if c.colony_id == owner), None)
-                        if colony:
-                            color = tuple(int(c * 0.3) for c in colony.color)
-                        else:
-                            color = (20, 20, 20)
-                    else:
-                        color = (20, 20, 20)
-                else:
-                    color = (0, 0, 0)
-                
-                # Draw scaled pixel
+                color = Visualizer._voxel_color(voxel, owner, colonies)
                 img_array[y*scale:(y+1)*scale, x*scale:(x+1)*scale] = color
-        
-        # Draw units
-        for colony in colonies:
-            for unit in colony.units:
-                if unit.position[2] == z_level:
-                    ux, uy = unit.position[0], unit.position[1]
-                    # Draw unit as bright dot
-                    unit_color = colony.color
-                    cx, cy = ux * scale + scale//2, uy * scale + scale//2
-                    for dx in range(-1, 2):
-                        for dy in range(-1, 2):
-                            nx, ny = cx + dx, cy + dy
-                            if 0 <= nx < w*scale and 0 <= ny < h*scale:
-                                img_array[ny, nx] = unit_color
-            
-            # Draw Maw
-            if colony.maw.position[2] == z_level:
-                mx, my = colony.maw.position[0], colony.maw.position[1]
-                # Draw Maw as larger bright square
-                for dx in range(-2, 3):
-                    for dy in range(-2, 3):
-                        nx = mx * scale + scale//2 + dx
-                        ny = my * scale + scale//2 + dy
-                        if 0 <= nx < w*scale and 0 <= ny < h*scale:
-                            img_array[ny, nx] = (255, 255, 0)  # Yellow for Maw
-        
+
+        Visualizer._draw_actors(img_array, colonies, scale, w, h, z_level=z_level)
         img = Image.fromarray(img_array, 'RGB')
         return img
+
+    @staticmethod
+    def render_topdown(world: VoxelWorld, colonies: List[Colony], title: str = "") -> Image.Image:
+        """Top-down surface view (SPEC_GRAPHICS Phase H): each (x, y) column shows its topmost non-AIR
+        voxel's color; all units and maws are overdrawn regardless of depth."""
+        w, h, d = world.dimensions
+        scale = 4
+        img_array = np.zeros((h * scale, w * scale, 3), dtype=np.uint8)
+        solid = world.voxels != VoxelType.AIR.value
+        rev = solid[:, :, ::-1]
+        top_z = d - 1 - rev.argmax(axis=2)        # argmax on reversed z = topmost solid
+        any_solid = rev.any(axis=2)
+        for x in range(w):
+            for y in range(h):
+                if any_solid[x, y]:
+                    z = int(top_z[x, y])
+                    color = Visualizer._voxel_color(VoxelType(world.voxels[x, y, z]),
+                                                    world.ownership[x, y, z], colonies)
+                else:
+                    color = (20, 20, 20)
+                img_array[y*scale:(y+1)*scale, x*scale:(x+1)*scale] = color
+        Visualizer._draw_actors(img_array, colonies, scale, w, h, z_level=None)
+        return Image.fromarray(img_array, 'RGB')
+
+    @staticmethod
+    def tile(views: List[Image.Image], gap: int = 2) -> Image.Image:
+        """Concatenate views horizontally with a black separator — one comparable frame per step."""
+        height = max(v.height for v in views)
+        width = sum(v.width for v in views) + gap * (len(views) - 1)
+        canvas = Image.new('RGB', (width, height), (0, 0, 0))
+        x = 0
+        for v in views:
+            canvas.paste(v, (x, 0))
+            x += v.width + gap
+        return canvas
     
     @staticmethod
     def generate_3d_frame(world: VoxelWorld, colonies: List[Colony]) -> Image.Image:
@@ -9979,44 +9997,32 @@ def main():
 
     viz = Visualizer()
 
-    # Run simulation and capture frames
+    # Run simulation and capture frames (SPEC_GRAPHICS Phase H: four FIXED views per step —
+    # top-down surface + shallow/mid/deep slices — tiled into one comparable frame; no 3D render)
     num_steps = args.steps if args.steps is not None else 20
+    d = sim.world.depth
+    z_views = (max(1, int(d * 0.6)), max(1, int(d * 0.4)), d // 5 + 1)  # shallow, mid, deep (above bedrock)
     frames_2d = []
-    frames_3d = []
-    
+
     print(f"\nRunning {num_steps} steps...")
-    
+
     for step in tqdm(range(num_steps)):
         sim.step()
-        
-        # Capture 2D slice every step
-        z_level = sim.world.depth // 2
-        frame_2d = viz.render_z_slice(sim.world, sim.colonies, z_level, 
-                                      title=f"Step {step+1}")
-        frames_2d.append(frame_2d)
-        
-        # Capture 3D frame every 5 steps (slower to render)
-        if step % 5 == 0:
-            print(f"\nGenerating 3D frame for step {step+1}...")
-            frame_3d = viz.generate_3d_frame(sim.world, sim.colonies)
-            frames_3d.append(frame_3d)
-    
-    # Save GIFs
-    print("\nSaving 2D animation...")
-    frames_2d[0].save('sandkings_2d.gif', save_all=True, append_images=frames_2d[1:], 
+        views = [viz.render_topdown(sim.world, sim.colonies)]
+        views += [viz.render_z_slice(sim.world, sim.colonies, z) for z in z_views]
+        # quantize to palette per frame: bounds RAM on long runs, and GIF is palettized anyway
+        frames_2d.append(viz.tile(views).quantize(colors=128))
+
+    # Save GIF
+    print("\nSaving animation...")
+    frames_2d[0].save('sandkings_2d.gif', save_all=True, append_images=frames_2d[1:],
                      duration=200, loop=0)
-    
-    print("Saving 3D animation...")
-    if frames_3d:
-        frames_3d[0].save('sandkings_3d.gif', save_all=True, append_images=frames_3d[1:], 
-                         duration=500, loop=0)
     
     # Final status
     if sim.story_log is not None:
         sim.story_log.close()
     print("\n" + sim.get_status())
-    print("\n[S] Saved sandkings_2d.gif (2D cross-section)")
-    print("[S] Saved sandkings_3d.gif (3D clustered view)")
+    print("\n[S] Saved sandkings_2d.gif (top-down + shallow/mid/deep slices, tiled)")
 
     if args.persist:
         save_checkpoint(sim, args.persist)
