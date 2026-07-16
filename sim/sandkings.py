@@ -482,7 +482,7 @@ DIFFUSE_RESISTANCE_ENABLED = False  # module default False (battery byte-identic
 # Fitness-based live selection (SPEC_SELECTION, Evolution Proper Phase 1): the live GA's parent pick is uniform
 # random.choice(survivors) today (no fitness pressure). Under the gate, a fitness-weighted tournament replaces it
 # so the strong seed the next arrival — survival of the fittest. Off -> random.choice verbatim (byte-identical).
-FITNESS_SELECTION_ENABLED = False  # module default False (battery byte-identical); entrypoint flips on (opt-out --no-fitness-selection)
+FITNESS_SELECTION_ENABLED = False  # module default False (battery byte-identical); entrypoint flips on unconditionally
 FITNESS_TOURNAMENT_K = 3           # contenders sampled per tournament (selection pressure knob)
 FITNESS_TERRITORY_W = 2.0          # fitness weight on territory size (expansion)
 FITNESS_LONGEVITY_W = 5.0          # fitness weight on lineage depth (generation = survival across respawns)
@@ -9726,11 +9726,6 @@ def main():
                              'rules by the whip (fast krypteia -> revolt, Mycenae/Sparta), a peaceable one by '
                              'the wage (softened grudge -> durable order + a small permanent foot-drag, Minoan); '
                              'the wage outlasts the whip; SPEC_DIFFUSE_RESISTANCE).')
-    parser.add_argument('--no-fitness-selection', action='store_true',
-                        help='Disable fitness-based parent selection (baseline: ON — a dead colony\'s slot is '
-                             'seeded by a fitness-weighted tournament among survivors instead of a uniform '
-                             'random pick, so the strong seed the next arrival — survival of the fittest; '
-                             'SPEC_SELECTION).')
     parser.add_argument('--no-learned-basis', action='store_true',
                         help='Use the random Kanerva codebook instead of the learned shared encoder '
                              'basis (baseline: ON — a ZCA+codebook fit to the state manifold, ~28x '
@@ -9973,12 +9968,11 @@ def main():
               "or the wage (peaceable: durable but foot-dragged, Minoan); the wage outlasts the whip "
               "(--no-diffuse-resistance)")
 
-    # Fitness-based selection is BASELINE (on unless --no-fitness-selection). Module global only; default False
-    # keeps the battery byte-identical (gate off -> the original random.choice parent pick).
-    if not getattr(args, 'no_fitness_selection', False):
-        globals()['FITNESS_SELECTION_ENABLED'] = True
-        print("[EVO] survival of the fittest — a dead house's nest is seeded by a fitness tournament among the "
-              "living, not a coin flip; the strong beget the next arrival (--no-fitness-selection)")
+    # Fitness-based selection is BASELINE — always on from the entrypoint, no flag. Module global only;
+    # default False keeps the battery byte-identical (gate off -> the original random.choice parent pick).
+    globals()['FITNESS_SELECTION_ENABLED'] = True
+    print("[EVO] survival of the fittest — a dead house's nest is seeded by a fitness tournament among the "
+          "living, not a coin flip; the strong beget the next arrival")
 
     if args.live:
         # When run as a script this module is '__main__'; alias it so

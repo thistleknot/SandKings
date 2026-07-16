@@ -1,6 +1,6 @@
 # SPEC — Fitness-based live selection ("evolution proper", Phase 1)
 
-Status: IN PROGRESS (Evolution Proper arc, Phase 1). Baseline-ON, opt-out `--no-fitness-selection`. Foundational:
+Status: IN PROGRESS (Evolution Proper arc, Phase 1). Baseline-ON, no CLI flag (entrypoint-unconditional). Foundational:
 makes the existing live GA actually select for fitness. Standalone (no dependency on the later caste phases).
 
 ## Why
@@ -13,7 +13,7 @@ likely to seed the next arrival. A real fitness-ranked GA exists but only in the
 survival-respawn into **survival of the fittest**.
 
 Gate `FITNESS_SELECTION_ENABLED` (sandkings module default False → battery byte-identical; in `_GATE_NAMES`;
-baseline-on `--no-fitness-selection`). Module global only (no cross-module reader). Deterministic given RNG.
+entrypoint flips it on unconditionally — no opt-out flag). Module global only (no cross-module reader). Deterministic given RNG.
 Constants (sandkings.py, provisional/configurable): `FITNESS_TOURNAMENT_K=3` (contenders per tournament),
 `FITNESS_TERRITORY_W=2.0`, `FITNESS_LONGEVITY_W=5.0` (fitness weights on territory size and lineage depth).
 
