@@ -41,7 +41,9 @@ import torch.nn as nn
 MAW_RL_ENABLED = False
 
 # --- hyperparameters ---
-MAW_DIRECTIVE_DIM = 4        # aggression, mobility, verticality, forage-mode (d3 read by the sim, not the action tilt)
+MAW_DIRECTIVE_DIM = 7        # d0-3 aggression/mobility/verticality/forage; d4-6 affordance channels (SPEC_AFFORDANCES
+                            # AF2: scorched_earth/granaries/livestock) — read by the sim's affordance sites, not the action tilt
+MAW_AFFORDANCE_CHANNELS = 3  # d4-d6: the affordance policy channels appended after the four core directive dims
 MAW_HIDDEN = 32
 MAW_LR = 3e-3
 MAW_LOG_STD_INIT = -0.5      # exp(-0.5) ~ 0.61 initial exploration std

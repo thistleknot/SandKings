@@ -1,7 +1,10 @@
 # SPEC — Fitness-based live selection ("evolution proper", Phase 1)
 
 Status: IN PROGRESS (Evolution Proper arc, Phase 1). Baseline-ON, no CLI flag (entrypoint-unconditional). Foundational:
-makes the existing live GA actually select for fitness. Standalone (no dependency on the later caste phases).
+makes the existing live GA actually select for fitness. Standalone: Phase 2 (the heritable behavioral repertoire —
+`SPEC_AFFORDANCES`, the liability/affordance model that supersedes the old "caste phases" placeholder) reads and is
+selected on by this Phase-1 fitness signal, but this phase has no dependency on it. Shared seam: `_respawn_colony` +
+the genome.
 
 ## Why
 

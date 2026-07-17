@@ -31,6 +31,7 @@ class RenderStyle(Enum):
     GLYPH = 0     # DF-style character grid (default; spec R18)
     BLOCKS = 1    # plain colored rects
     TILES = 2     # procedural top-down sprites (creatures LOOK like bugs/beasts; reuses the iso forge)
+    TILESET = 3   # SPEC_GRAPHICS P4: image tiles from a loaded pack (per-tile fallback to TILES; opt-in --tileset)
 
 HUD_WIDTH = 320
 DEFAULT_CELL_SIZE = 12
@@ -40,7 +41,7 @@ MAX_STEPS_PER_FRAME = 10
 MIRROR_MIN_MS = 700  # U8: min wall-ms between glyph-view mirror snapshots
 RETREAT_BORDER_COLOR = (255, 0, 255)
 RETREAT_FILL_FACTOR = 0.4
-MAX_WINDOW = (1600, 900)
+MAX_WINDOW = (1920, 1080)   # cap; raised so a mid-range (~24px) cell fits a wide world (SPEC_GRAPHICS P4)
 TERRITORY_TINT = 0.3  # matches Visualizer.render_z_slice owned-air factor
 DEPTH_SHADE_FACTOR = 0.85  # brightness multiplier per z-level of depth
 DEPTH_SHADE_MIN = 0.3      # floor so deep terrain stays legible
@@ -74,6 +75,7 @@ GLYPHS = {                 # DF-style terrain glyphs (spec R18/R22)
     VoxelType.WATER.value: "≈",        # standing water (HYDRO flow sim)
     VoxelType.SHRUB.value: "♣",        # growing berry bush — not yet food (SPEC_FLORA)
     VoxelType.SHRUB_RIPE.value: "♠",   # ripe berries — forageable food
+    VoxelType.GRANARY.value: "▦",      # stone granary — a husbandry house's winter store (SPEC_AFFORDANCES AF4)
 }
 FIRE_GLYPH = "^"                    # burning-cell overlay (T46)
 FIRE_COLOR = (255, 120, 0)
@@ -1246,7 +1248,8 @@ class LiveViewer:
     def __init__(self, target, cell_size: int = DEFAULT_CELL_SIZE,
                  steps_per_second: float = DEFAULT_STEPS_PER_SECOND,
                  max_steps: Optional[int] = None,
-                 save_path: Optional[str] = None):
+                 save_path: Optional[str] = None,
+                 tileset: Optional[str] = None):
         # U2: attach to a TerrariumRunner (the shared engine), or wrap a bare
         # sim in one so the standalone/test path keeps a single, deterministic
         # lock discipline. Either way the viewer never steps the sim itself.
@@ -1293,6 +1296,21 @@ class LiveViewer:
         self._maw_font = None
         self._glyph_cache: dict = {}  # (char, color, big) -> Surface
         self._last_mirror_ms = 0      # U8: last glyph-mirror snapshot tick
+        # SPEC_GRAPHICS P4: opt-in image tileset. None (default) -> every view is byte-identical to today; the
+        # TILESET render style + its R-cycle entry only appear when a pack actually loaded. Load never raises.
+        self.tile_atlas = None
+        self._atlas_surf_cache: dict = {}   # (key, tint, tw) -> pygame Surface
+        if tileset:
+            try:
+                from tile_atlas import TileAtlas
+                self.tile_atlas = TileAtlas.load(tileset)
+                if self.tile_atlas is not None:
+                    self.render_style = RenderStyle.TILESET   # --tileset starts IN tileset mode (R still toggles)
+                    print(f"[view] tileset loaded: {tileset} — starting in TILESET mode (press R to cycle to ASCII)")
+                else:
+                    print(f"[view] tileset NOT loaded (missing/malformed pack): {tileset} — using ASCII/procedural")
+            except Exception:
+                self.tile_atlas = None
 
     @property
     def paused(self) -> bool:
@@ -1407,7 +1425,12 @@ class LiveViewer:
             elif key == pygame.K_p:
                 self.overlay_index = (self.overlay_index + 1) % len(PHEROMONE_OVERLAYS)
             elif key == pygame.K_r:
-                order = (RenderStyle.GLYPH, RenderStyle.BLOCKS, RenderStyle.TILES)
+                # P4: TILESET joins the cycle only when a pack loaded (else the view is exactly as before).
+                order = [RenderStyle.GLYPH, RenderStyle.BLOCKS, RenderStyle.TILES]
+                if self.tile_atlas is not None:
+                    order.append(RenderStyle.TILESET)
+                if self.render_style not in order:
+                    self.render_style = RenderStyle.GLYPH
                 self.render_style = order[(order.index(self.render_style) + 1) % len(order)]
             elif key == pygame.K_m:
                 self.manager_open = not self.manager_open
@@ -1628,10 +1651,44 @@ class LiveViewer:
         self._screen.blit(surface, (cx + (span - surface.get_width()) // 2,
                                     cy + (span - surface.get_height()) // 2))
 
+    def _atlas_surface(self, key: str, tint, tw: int) -> "Optional[pygame.Surface]":
+        """SPEC_GRAPHICS P4: an image tile from the loaded pack as a cached pygame Surface scaled to tw, or None if
+        the pack does not define `key` (-> caller falls back to the forge/glyph). Tinted keys are masked by `tint`.
+        Fully guarded — a bad tile returns None, never raises into the render loop."""
+        atlas = self.tile_atlas
+        if atlas is None:
+            return None
+        ck = (key, tint, tw)
+        surf = self._atlas_surf_cache.get(ck)
+        if surf is not None:
+            return surf
+        try:
+            rgba = atlas.tile(key)
+            if rgba is None:
+                return None
+            if tint is not None and atlas.is_tinted(key):
+                from tile_atlas import TileAtlas
+                rgba = TileAtlas.tint(rgba, tint)
+            ts = atlas.tile_size
+            surf = pygame.image.frombuffer(rgba.tobytes(), (ts, ts), "RGBA").convert_alpha()
+            if tw != ts:
+                surf = pygame.transform.smoothscale(surf, (tw, tw))
+            self._atlas_surf_cache[ck] = surf
+            return surf
+        except Exception:
+            return None
+
     def _sprite(self, kind: str, arg, tint, tw: int) -> "pygame.Surface":
-        """Forge (internally cached) a top-down creature sprite for TILES mode, reusing the ISO forge —
-        so a soldier LOOKS like a mandibled bug, a spider like a spider. kind: 'bug' (arg=caste,
-        tint=colony) | 'maw' (tint=color) | 'beast' (arg=species)."""
+        """A top-down creature sprite. In TILESET mode with a loaded pack, prefer the image tile
+        (unit/<CASTE>, maw, beast/<species>); otherwise (or if the pack omits it) forge it procedurally,
+        reusing the ISO forge — so a soldier LOOKS like a mandibled bug, a spider like a spider. kind: 'bug'
+        (arg=caste, tint=colony) | 'maw' (tint=color) | 'beast' (arg=species, tint=danger color)."""
+        if self.render_style == RenderStyle.TILESET and self.tile_atlas is not None:
+            key = (f"unit/{str(arg).upper()}" if kind == 'bug'
+                   else "maw" if kind == 'maw' else f"beast/{arg}")
+            surf = self._atlas_surface(key, tint, tw)
+            if surf is not None:
+                return surf
         from iso_sprites import forge_bug, forge_maw, forge_beast
         if kind == 'bug':
             return forge_bug(arg, tint, tw)
@@ -1689,8 +1746,10 @@ class LiveViewer:
 
         glyph_mode = (self.render_style == RenderStyle.GLYPH
                       and cell >= GLYPH_MIN_CELL)
-        tiles_mode = (self.render_style == RenderStyle.TILES
-                      and cell >= GLYPH_MIN_CELL)   # procedural top-down creature sprites
+        tileset_mode = (self.render_style == RenderStyle.TILESET
+                        and self.tile_atlas is not None and cell >= GLYPH_MIN_CELL)  # P4 image tiles
+        tiles_mode = ((self.render_style == RenderStyle.TILES or tileset_mode)
+                      and cell >= GLYPH_MIN_CELL)   # creature sprites (procedural forge, or P4 atlas via _sprite)
 
         topdown = self.view_mode == ViewMode.TOPDOWN
         if topdown:
@@ -1721,6 +1780,32 @@ class LiveViewer:
                                                 int(tc[1] * TERRAIN_GLYPH_DIM),
                                                 int(tc[2] * TERRAIN_GLYPH_DIM)),
                                          x * cell, y * cell)
+
+        elif tileset_mode:
+            # SPEC_GRAPHICS P4: blit image terrain tiles (voxel/<NAME>) over the flat color fill; a voxel the pack
+            # omits shows the flat fill (graceful mix-and-match). Entities are drawn below via _sprite (atlas-first).
+            if topdown:
+                found_voxels, _, has_terrain, _ = topdown_cells(self.sim.world, self.z_level)
+                cell_voxels = np.where(has_terrain, found_voxels, VoxelType.AIR.value)
+            else:
+                cell_voxels = self.sim.world.voxels[:, :, self.z_level]
+            for x in range(w):
+                col_voxels = cell_voxels[x]
+                col_colors = colors[x]
+                for y in range(h):
+                    v = int(col_voxels[y])
+                    if v == VoxelType.AIR.value:
+                        continue
+                    try:
+                        name = VoxelType(v).name
+                    except ValueError:
+                        continue
+                    # Pass the palette color as tint: a greyscale font pack (voxel/* tinted) colorizes the glyph by
+                    # terrain color; a pre-colored pack (voxel/* NOT tinted) ignores it and uses the tile as-is.
+                    tc = col_colors[y]
+                    surf = self._atlas_surface(f"voxel/{name}", (int(tc[0]), int(tc[1]), int(tc[2])), cell)
+                    if surf is not None:
+                        self._screen.blit(surf, (x * cell, y * cell))
 
         overlay_type = PHEROMONE_OVERLAYS[self.overlay_index]
         if overlay_type is not None:
@@ -1855,7 +1940,7 @@ class LiveViewer:
                      else (PREDATOR_COLOR if beast.species in BEAST_PREDATORS else NEUTRAL_BEAST_COLOR))
             color = tuple(int(c * depth_shade(depth)) for c in klass)
             if tiles_mode:
-                spr = self._sprite('beast', beast.species, None, cell)
+                spr = self._sprite('beast', beast.species, color, cell)   # P4: color tints an atlas beast mask
                 self._screen.blit(spr, (bx * cell + (cell - spr.get_width()) // 2,
                                         by * cell + (cell - spr.get_height()) // 2))
             elif glyph_mode:
@@ -2255,7 +2340,8 @@ def run_live(sim: SandKingsSimulation, max_steps: Optional[int] = None,
              steps_per_second: float = DEFAULT_STEPS_PER_SECOND,
              save_path: Optional[str] = None, serve: bool = False,
              host: str = "127.0.0.1", port: int = 8010,
-             save_every: int = 600) -> None:
+             save_every: int = 600, tileset: Optional[str] = None,
+             cell_size: int = DEFAULT_CELL_SIZE) -> None:
     """Entry point from sandkings.main(): the pygame window on the MAIN thread,
     driven by ONE shared TerrariumRunner (U1). When `serve`, the web console
     attaches to the SAME runner via uvicorn on a daemon thread (U5), so the
@@ -2268,8 +2354,8 @@ def run_live(sim: SandKingsSimulation, max_steps: Optional[int] = None,
     `max_steps`. Only an OPEN-ENDED run attaches the background engine and the
     web console."""
     if max_steps is not None:
-        LiveViewer(sim, steps_per_second=steps_per_second,
-                   max_steps=max_steps, save_path=save_path).run()
+        LiveViewer(sim, cell_size=cell_size, steps_per_second=steps_per_second,
+                   max_steps=max_steps, save_path=save_path, tileset=tileset).run()
         return
     from dashboard import TerrariumRunner
     runner = TerrariumRunner(sim, sps=steps_per_second, save_path=save_path,
@@ -2285,7 +2371,7 @@ def run_live(sim: SandKingsSimulation, max_steps: Optional[int] = None,
         threading.Thread(target=server.run, daemon=True).start()
         print(f"[keeper] web console attached on http://{host}:{port}")
     try:
-        LiveViewer(runner, steps_per_second=steps_per_second).run()
+        LiveViewer(runner, cell_size=cell_size, steps_per_second=steps_per_second, tileset=tileset).run()
     finally:
         if server is not None:
             server.should_exit = True

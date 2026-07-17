@@ -1,0 +1,5 @@
+cp437 tile pack — built from libtcod 'terminal16x16_gs_ro.png' (python-tcod:
+https://github.com/libtcod/python-tcod, fonts/libtcod/). The libtcod terminal fonts are
+redistributable (libtcod is BSD-3-Clause; these bitmap CP437 fonts ship with it). Luminance was
+converted to alpha so glyphs sit on a transparent field; keys map our GLYPHS to CP437 codepoints.
+Beasts are unmapped and fall back to the game's procedural sprites.

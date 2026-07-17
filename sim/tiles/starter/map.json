@@ -1,0 +1,183 @@
+{
+  "tile_size": 16,
+  "sheet": "atlas.png",
+  "tiles": {
+    "voxel/SAND": [
+      0,
+      0
+    ],
+    "voxel/STONE": [
+      1,
+      0
+    ],
+    "voxel/GLASS": [
+      2,
+      0
+    ],
+    "voxel/FOOD": [
+      3,
+      0
+    ],
+    "voxel/CORPSE": [
+      4,
+      0
+    ],
+    "voxel/TUNNEL_WALL": [
+      5,
+      0
+    ],
+    "voxel/TILLED": [
+      6,
+      0
+    ],
+    "voxel/CROP": [
+      7,
+      0
+    ],
+    "voxel/CROP_RIPE": [
+      0,
+      1
+    ],
+    "voxel/COPPER_ORE": [
+      1,
+      1
+    ],
+    "voxel/GOLD_ORE": [
+      2,
+      1
+    ],
+    "voxel/HULL": [
+      3,
+      1
+    ],
+    "voxel/SALVAGE": [
+      4,
+      1
+    ],
+    "voxel/WOOD": [
+      5,
+      1
+    ],
+    "voxel/WOOD_WALL": [
+      6,
+      1
+    ],
+    "voxel/WEB": [
+      7,
+      1
+    ],
+    "voxel/CASTLE": [
+      0,
+      2
+    ],
+    "voxel/WATER": [
+      1,
+      2
+    ],
+    "voxel/SHRUB": [
+      2,
+      2
+    ],
+    "voxel/SHRUB_RIPE": [
+      3,
+      2
+    ],
+    "voxel/GRANARY": [
+      4,
+      2
+    ],
+    "unit/WORKER": [
+      5,
+      2
+    ],
+    "unit/SOLDIER": [
+      6,
+      2
+    ],
+    "unit/SCOUT": [
+      7,
+      2
+    ],
+    "maw": [
+      0,
+      3
+    ],
+    "beast/spider": [
+      1,
+      3
+    ],
+    "beast/scorpion": [
+      2,
+      3
+    ],
+    "beast/snake": [
+      3,
+      3
+    ],
+    "beast/anteater": [
+      4,
+      3
+    ],
+    "beast/bird": [
+      5,
+      3
+    ],
+    "beast/hornets": [
+      6,
+      3
+    ],
+    "beast/rabbit": [
+      7,
+      3
+    ],
+    "beast/squirrel": [
+      0,
+      4
+    ],
+    "beast/rodent": [
+      1,
+      4
+    ],
+    "beast/cricket": [
+      2,
+      4
+    ],
+    "beast/ant": [
+      3,
+      4
+    ],
+    "beast/fly": [
+      4,
+      4
+    ],
+    "beast/small_spider": [
+      5,
+      4
+    ],
+    "beast/mouse": [
+      6,
+      4
+    ],
+    "beast/cat": [
+      7,
+      4
+    ],
+    "beast/beetle": [
+      0,
+      5
+    ],
+    "beast/bee": [
+      1,
+      5
+    ],
+    "beast/guppy": [
+      2,
+      5
+    ]
+  },
+  "tinted": [
+    "unit/*",
+    "maw",
+    "beast/*"
+  ]
+}

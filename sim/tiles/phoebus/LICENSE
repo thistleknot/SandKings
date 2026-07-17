@@ -1,0 +1,4 @@
+phoebus tile pack — composed from the Phoebus DF graphics set (github.com/DFgraphics/Phoebus):
+terrain = data/art/Phoebus_16x16.png (greyscale CP437 tiles, palette-tinted at render); beast
+sprites = raw/graphics/nwkohaku/{bugs,birds}.png (colored, as-is). See the Phoebus repo README for
+terms. Units/maw and unmatched beasts fall back to the game's procedural colony-tinted sprites.

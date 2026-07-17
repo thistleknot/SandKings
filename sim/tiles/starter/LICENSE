@@ -1,0 +1,5 @@
+Starter tile pack — procedurally generated placeholder (public domain / CC0).
+Terrain = flat palette tiles; entities = white masks tinted by colony color.
+Replace with an openly-licensed pack (Dungeon Crawl Stone Soup tiles: public-domain-grade;
+Kenney: CC0) by overwriting atlas.png and map.json with matching keys. The repo is PUBLIC —
+bundle only openly-licensed art and keep this LICENSE current.

@@ -65,6 +65,15 @@ This is the lineage, mapped to the specs and mechanics each one shaped.
   SPEC_HYDRO_HAND), the firecracker/flood/drought as god-view
   DISASTERS the keeper unleashes (arena/wrath), and the top-down
   god's-eye view itself. Providence with a cursor.
+- **Black & White (the judged god)**: not just a hands-on deity but a
+  JUDGED one — the keeper's every act (feed, favor, starve, torch for
+  sport) is remembered by the creatures and curdles worship into
+  resentment or love. The faces they sculpt turn fond or monstrous. Ours
+  aims this at the Sandkings ending: keeper sentiment + revelation/
+  priesthood + madness + the metamorphosis turning become one covenant
+  ledger — mistreat them under the rising heat and a Shade-stage maw
+  wakes and calls you out on the terminal (the emergency broadcast). The
+  god is watched by what it made.
 - **Syndicate / Syndicate Wars**: dispatching a small team out from
   home base into hostile ground on a MISSION — recon, tribute,
   sabotage — and getting them back alive. The maw-as-handler envoy

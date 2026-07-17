@@ -487,6 +487,27 @@ FITNESS_TOURNAMENT_K = 3           # contenders sampled per tournament (selectio
 FITNESS_TERRITORY_W = 2.0          # fitness weight on territory size (expansion)
 FITNESS_LONGEVITY_W = 5.0          # fitness weight on lineage depth (generation = survival across respawns)
 
+# Affordances (SPEC_AFFORDANCES, Evolution Proper Phase 2): the heritable behavioral repertoire. A capability's presence
+# is a LIABILITY = a non-additive product of two existing temperament genes (Tukey one-df epistasis), quantized to an
+# ordinal level and passed through a soft cut (soft_gate). The author writes ONLY the interaction map + the cut;
+# expression emerges and evolves. Off -> no affordance behavior (battery byte-identical). Liability/level are pure genome
+# reads (no RNG); expression draws ride the seeded module `random` stream.
+AFFORDANCES_ENABLED = False        # module default False (battery byte-identical); entrypoint flips on unconditionally
+AFF_LEVELS = 4                     # ordinal strength buckets for _affordance_level
+AFF_CENTER = 0.25                  # liability at which the soft cut is a coin-flip (neutral all-0.5 genome sits at the cut)
+AFF_TEMP = 0.0                     # soft-cut softness (0 = identity/hard step at AFF_CENTER; >0 = logistic; learnable)
+# The ONLY authored rule: which two potentials interact for each affordance. A term is a gene name (its value) or
+# ('inv', name) for (1 - value). Names are real ColonyGenome fields (note: expansion_rate, not expansion).
+AFFORDANCE_MAP = {
+    'scorched_earth':   ('aggression', ('inv', 'loyalty')),   # aggression * (1 - loyalty): cruel AND faithless
+    'builds_granaries': ('patience', 'expansion_rate'),        # patience * expansion_rate: patient growth stockpiles
+    'keeps_livestock':  ('patience', 'resilience'),            # patience * resilience: a husbandry temperament
+}
+# The maw-RL directive channel (AF2) each affordance reads as its policy term. d0-d3 are the pre-existing
+# aggression/mobility/verticality/forage channels; d4-d6 are the affordance channels (present once AF2 extends
+# MAW_DIRECTIVE_DIM). Absent (non-neural or pre-AF2) -> policy term neutral -> permit (trait-only).
+AFFORDANCE_CHANNEL = {'scorched_earth': 4, 'builds_granaries': 5, 'keeps_livestock': 6}
+
 
 def cricket_dynamics(cricket: float, forage: float, dry: bool, flood: bool, frost: bool):
     """Pure land-swarm step (SPEC_FOOD_WEB): the terrestrial consumer-resource model. Returns
@@ -780,6 +801,7 @@ class VoxelType(Enum):
     #                    blocks gravity, tunnel(), and walking (boats cross it).
     SHRUB = 19         # Growing bush - not food yet; a perennial root (SPEC_FLORA FL2)
     SHRUB_RIPE = 20    # Ripe berries - food to everyone; foraged then regrows in place
+    GRANARY = 21       # Stone granary/barn - a husbandry house's winter store; never rots (SPEC_AFFORDANCES AF4)
 
     def is_tunnelable(self):
         return self in (VoxelType.SAND, VoxelType.AIR)
@@ -788,7 +810,7 @@ class VoxelType(Enum):
         return self in (VoxelType.STONE, VoxelType.GLASS, VoxelType.TUNNEL_WALL,
                         VoxelType.COPPER_ORE, VoxelType.GOLD_ORE,
                         VoxelType.HULL, VoxelType.SALVAGE, VoxelType.WOOD,
-                        VoxelType.WOOD_WALL, VoxelType.CASTLE)
+                        VoxelType.WOOD_WALL, VoxelType.CASTLE, VoxelType.GRANARY)
 
 def box_blur(field: np.ndarray, passes: int = 2) -> np.ndarray:
     """Neighbor-mean smoothing via np.roll (wraps at edges); 2D or 3D fields."""
@@ -939,6 +961,39 @@ class GateParam:
     temp: float = 0.0
     def prob(self, metric: float) -> float:
         return soft_gate(metric, self.center, self.temp)
+
+
+def _affordance_term(genome, term) -> float:
+    """SPEC_AFFORDANCES AF1: read one liability term off a genome. A term is a gene name (its value) or ('inv', name)
+    for (1 - value). getattr-guarded to 0.5 so pre-feature genomes read as neutral. Pure — no RNG, no mutation."""
+    if isinstance(term, tuple):
+        return 1.0 - float(getattr(genome, term[1], 0.5))
+    return float(getattr(genome, term, 0.5))
+
+
+def _affordance_liability(genome, key: str) -> float:
+    """SPEC_AFFORDANCES AF1: a capability's liability = the non-additive product of its two mapped potentials (Tukey
+    one-degree-of-freedom epistasis). In [0,1] for genes in [0,1]. The trait needs BOTH terms (epistasis); one potential
+    can feed several affordances (pleiotropy).
+
+    Require:  key in AFFORDANCE_MAP; genome exposes the mapped genes (else neutral 0.5).
+    Guarantee: result in [0,1]; neutral genome (all 0.5) -> scorched_earth == 0.25; deterministic, consumes NO RNG.
+    """
+    a, b = AFFORDANCE_MAP[key]
+    return _affordance_term(genome, a) * _affordance_term(genome, b)
+
+
+def _affordance_level(liability: float) -> int:
+    """SPEC_AFFORDANCES AF1: quantize a liability to an ordinal strength level in 0..AFF_LEVELS-1 (even buckets) — the
+    'how available is this affordance' grade the maw-RL reads as a feature. Pure, no RNG."""
+    return int(np.clip(liability * AFF_LEVELS, 0, AFF_LEVELS - 1))
+
+
+def _affordance_p(liability: float) -> float:
+    """SPEC_AFFORDANCES AF1: presence probability of an affordance = soft_gate(liability, AFF_CENTER, AFF_TEMP). The
+    CALLER draws rng.random() < p. AFF_TEMP <= 0 (default) is the hard step (1.0 if liability > AFF_CENTER else 0.0) —
+    identity with an authored threshold; no RNG here."""
+    return soft_gate(liability, AFF_CENTER, AFF_TEMP)
 
 
 class VoxelWorld:
@@ -2527,7 +2582,9 @@ class SandKingsSimulation:
                         for u in colony.units)                     # combat success (obs + reward)
             # append RAW colony STATE so the directive is state-responsive and less dependent on the
             # random Kanerva basis — the policy learns from real signal (war footing, season, materials),
-            # not just the frozen random projection. Fixed dim (39) for a stable policy.
+            # not just the frozen random projection. Fixed dim (42) for a stable policy.
+            _gaf = colony.genome
+            _lvl = AFF_LEVELS - 1
             stats = torch.tensor([
                 min(len(colony.units) / 20.0, 2.0),                       # population
                 min(colony.maw.food_stored / 100.0, 3.0),                 # food stores
@@ -2536,6 +2593,10 @@ class SandKingsSimulation:
                 1.0 if getattr(colony, 'at_war', False) else 0.0,         # war footing
                 min(float(getattr(colony, 'wood', 0)) / 50.0, 3.0),       # materials on hand
                 self.season_index() / 3.0,                                # seasonal phase (learn seasonal strategy)
+                # SPEC_AFFORDANCES AF2: the quantized affordance levels the policy reads as features (39 -> 42).
+                _affordance_level(_affordance_liability(_gaf, 'scorched_earth')) / _lvl,
+                _affordance_level(_affordance_liability(_gaf, 'builds_granaries')) / _lvl,
+                _affordance_level(_affordance_liability(_gaf, 'keeps_livestock')) / _lvl,
             ], dtype=torch.float32)
             obs = torch.cat([base, stats])
             rl = getattr(colony, 'maw_rl', None)
@@ -2548,6 +2609,10 @@ class SandKingsSimulation:
                     float(getattr(g, 'expansion_rate', 0.5)),      # d1 mobility
                     float(getattr(g, 'tunnel_preference', 0.5)),   # d2 verticality
                     0.5,                                           # d3 forage-mode (neutral; the RL learns it)
+                    # SPEC_AFFORDANCES AF2: d4-d6 affordance channels warm-started from the genome's affordance levels.
+                    _affordance_level(_affordance_liability(g, 'scorched_earth')) / _lvl,   # d4 scorched earth
+                    _affordance_level(_affordance_liability(g, 'builds_granaries')) / _lvl,  # d5 granaries
+                    _affordance_level(_affordance_liability(g, 'keeps_livestock')) / _lvl,   # d6 livestock
                 ], dtype=torch.float32)
                 lr = MAW_LR * (0.5 + float(getattr(g, 'plasticity', 0.5)))
                 gamma = patience_to_gamma(float(getattr(g, 'patience', 0.5)))  # patience gene -> discount
@@ -5920,6 +5985,15 @@ class SandKingsSimulation:
             return True
         if self._dike_step(unit, colony):
             return True
+        # SPEC_AFFORDANCES AF4: a husbandry house raises a granary against the Chill. PRECONDITION is physical (it is
+        # cold AND there is a surplus above bare survival worth sheltering); DECISION is the builds_granaries trait +
+        # policy, not an authored threshold. Gate off -> the `and` chain short-circuits (byte-identical, no RNG).
+        if (AFFORDANCES_ENABLED
+                and self.season_index() == 3
+                and colony.maw.food_stored > BOOTSTRAP_FLOOR
+                and self._affordance_take(colony, 'builds_granaries')
+                and self._granary_step(unit, colony)):
+            return True
         if (colony.maw.food_stored > WAR_CHEST
                 and (self.keeper_attitude(colony) == 'reverent'
                      or self._is_prosperous(colony))
@@ -5969,6 +6043,40 @@ class SandKingsSimulation:
             self._milestone(colony, 'castle',
                             f"House {self._house_name(colony)} raises"
                             " a castle", unit)
+            return True
+        return self._step_toward(unit, best, colony)
+
+    def _granary_step(self, unit: SandKing, colony: Colony) -> bool:
+        """SPEC_AFFORDANCES AF4: a husbandry house raises a stone GRANARY on the complementary maw-ring cells (the odd
+        crenellations the castle leaves free). The MECHANIC is the castle ring-build reused; never rots. A standing
+        granary shelters the colony's winter store (see _feed_terrarium). DECISION = builds_granaries trait + policy
+        (checked by the caller). Costs 2 food (labor fed). No RNG."""
+        mx, my, mz = colony.maw.position
+        r = PALISADE_RING + 1
+        best, best_dist = None, None
+        ux, uy, uz = unit.position
+        for dx in range(-r, r + 1):
+            for dy in range(-r, r + 1):
+                if max(abs(dx), abs(dy)) != r or (dx + dy) % 2 == 0:
+                    continue  # odd cells: the store between the castle crenellations
+                pos = (mx + dx, my + dy, mz)
+                if not self.world.in_bounds(*pos):
+                    continue
+                if self.world.voxels[pos] != VoxelType.AIR.value:
+                    continue
+                dist = abs(pos[0] - ux) + abs(pos[1] - uy) + abs(pos[2] - uz)
+                if best_dist is None or dist < best_dist:
+                    best, best_dist = pos, dist
+        if best is None:
+            return False
+        if max(abs(best[0] - ux), abs(best[1] - uy), abs(best[2] - uz)) <= 1:
+            colony.maw.food_stored -= 2  # labor is fed
+            self.world.voxels[best] = VoxelType.GRANARY.value
+            self.world.ownership[best] = colony.colony_id
+            colony.granaries = getattr(colony, 'granaries', 0) + 1
+            self._milestone(colony, 'granary',
+                            f"House {self._house_name(colony)} raises"
+                            " a granary against the Chill", unit)
             return True
         return self._step_toward(unit, best, colony)
 
@@ -6094,6 +6202,11 @@ class SandKingsSimulation:
             bx, by, bz = beast.position
             for colony in self.colonies:
                 if not colony.is_alive():
+                    continue
+                # SPEC_AFFORDANCES AF5: keeps-livestock affordance decides WHICH houses husband beasts (trait
+                # patience*resilience + policy d6), rather than the global flag deciding for all. Gate off -> the
+                # loop is unchanged (byte-identical). No RNG at AFF_TEMP=0 (p in {0,1}); the taming draw is untouched.
+                if AFFORDANCES_ENABLED and not self._affordance_take(colony, 'keeps_livestock'):
                     continue
                 near = any(max(abs(u.position[0] - bx), abs(u.position[1] - by),
                                abs(u.position[2] - bz)) <= 1 for u in colony.units)
@@ -6730,7 +6843,12 @@ class SandKingsSimulation:
         # (a stockpiled one rides its non-decaying hoard). Off -> not(False and ...) -> floor as today.
         floor_lifts = WINTER_BITE_ENABLED and self.season_index() == 3
         for colony in self.colonies:
-            if colony.is_alive() and not floor_lifts:
+            if not colony.is_alive():
+                continue
+            # SPEC_AFFORDANCES AF4: a standing granary shelters the winter store — a granary-owning house keeps the
+            # bootstrap floor even when the Chill lifts it for everyone else. Gate off / no granary -> exact WI1.
+            sheltered = AFFORDANCES_ENABLED and getattr(colony, 'granaries', 0) > 0
+            if not floor_lifts or sheltered:
                 colony.maw.food_stored = max(colony.maw.food_stored, BOOTSTRAP_FLOOR)
         self._log_event(f"Keeper scatters {placed} food")
 
@@ -8858,6 +8976,58 @@ class SandKingsSimulation:
         per_colony[colony.colony_id] = enc_map
         return enc_map
 
+    def _affordance_take(self, colony: Colony, key: str) -> bool:
+        """SPEC_AFFORDANCES AF2 decision: `trait AND policy-wants-it`. The trait term is _affordance_p on the genome
+        liability (a soft cut, identity/hard-step at AFF_TEMP<=0); the policy term is the maw-RL directive channel
+        AFFORDANCE_CHANNEL[key] when present, else neutral -> permit (non-neural or pre-AF2 directives fall back to
+        trait-only). Returns True iff the affordance is taken. No RNG at AFF_TEMP<=0 (p in {0,1}); one draw only in
+        the soft regime. Pure w.r.t. all state except the single conditional RNG draw."""
+        d = getattr(colony, 'maw_directive', None)
+        idx = AFFORDANCE_CHANNEL[key]
+        ch = float(d[idx]) if (d is not None and getattr(d, 'numel', lambda: 0)() > idx) else None
+        if ch is not None and ch <= 0.5:
+            return False                                  # policy declines (no draw)
+        p = _affordance_p(_affordance_liability(colony.genome, key))
+        if p <= 0.0:
+            return False                                  # trait absent (no draw)
+        if p < 1.0 and random.random() >= p:              # soft regime only -> one draw
+            return False
+        return True
+
+    def _scorched_earth_step(self, unit: SandKing, colony: Colony) -> bool:
+        """SPEC_AFFORDANCES AF3: the scorched-earth affordance — an at-war soldier of a cruel-AND-faithless house may
+        ignite an adjacent enemy field to starve the rival out. The MECHANIC is a thin reuse of _ignite (T45 fire);
+        the DECISION is `trait AND policy-wants-it`, not an authored `if at_war and adjacent` threshold.
+
+        Require:  AFFORDANCES_ENABLED (checked by the caller); a soldier with a valid position.
+        Guarantee: ignites at most one adjacent enemy-owned CROP/CROP_RIPE voxel, and only when the war precondition,
+                   the trait soft-cut, and the maw-RL scorched-earth channel (d4, when present) all pass. Returns True
+                   iff it ignited (the action is consumed). No RNG in the identity regime (AFF_TEMP<=0 -> p in {0,1}).
+        Maintain: reuses the fire registry; adds no new voxel-damage path.
+        """
+        if not getattr(colony, 'at_war', False):
+            return False                                  # precondition: war footing (no draw)
+        from politics import hostile as _hostile
+        target = None                                     # nearest adjacent enemy-owned field
+        for nx, ny, nz in self.world.get_neighbors_3d(unit.position, radius=1):
+            owner = int(self.world.ownership[nx, ny, nz])
+            if owner < 0 or owner == colony.colony_id or not _hostile(self, colony.colony_id, owner):
+                continue
+            if self.world.voxels[nx, ny, nz] in (VoxelType.CROP.value, VoxelType.CROP_RIPE.value):
+                target = (nx, ny, nz)
+                break
+        if target is None:
+            return False                                  # nothing to burn (no draw — RNG conserved)
+        # DECISION: trait soft-cut AND the maw-RL scorched-earth channel (d4), via the shared AF2 helper. Only reached
+        # once a burn is genuinely possible, so RNG is conserved exactly like the torch/raze branches.
+        if not self._affordance_take(colony, 'scorched_earth'):
+            return False
+        self._ignite(target)
+        self._log_event(
+            f"House {self._house_name(colony)} torches Colony"
+            f" {int(self.world.ownership[target])}'s fields to starve them out!")
+        return True
+
     def _execute_unit_ai(self, unit: SandKing, colony: Colony):
         """Simple AI for unit behavior - NEURAL or RULE-BASED"""
         x, y, z = unit.position
@@ -9129,6 +9299,10 @@ class SandKingsSimulation:
 
         # Soldiers: NEURAL AI or RULE-BASED
         elif unit.unit_type == UnitType.SOLDIER:
+            # SPEC_AFFORDANCES AF3: scorched earth — a cruel, faithless house at war may torch an adjacent enemy field.
+            # Covers both AI paths (trait+policy decision); consumes the turn like the torch/raze branches. Gate off -> skip.
+            if AFFORDANCES_ENABLED and self._scorched_earth_step(unit, colony):
+                return
             # NEURAL AI PATH
             if (NEURAL_AVAILABLE and 
                 colony.genome.use_neural and 
@@ -9592,6 +9766,13 @@ def main():
                         help='Open a real-time pygame viewer instead of rendering GIFs')
     parser.add_argument('--sps', type=float, default=5.0,
                         help='Live mode: initial simulation steps per second')
+    parser.add_argument('--tileset', nargs='?', const='STARTER', default=None,
+                        metavar='PACK_DIR',
+                        help='Live mode: render with an image tile pack (SPEC_GRAPHICS P4). Bare --tileset uses the '
+                        'bundled starter pack; give a dir for your own. Toggle in-view with R. Off = ASCII/procedural.')
+    parser.add_argument('--cell', type=int, default=None, metavar='PX',
+                        help='Live mode: on-screen cell size in px (clamped to the window). Defaults to 24 when a '
+                        '--tileset is used (mid-range), else 12.')
     parser.add_argument('--fresh', action='store_true',
                         help='Ignore any saved state and start a new terrarium')
     parser.add_argument('--persist', nargs='?', const='terrarium.db', default=None,
@@ -9974,6 +10155,13 @@ def main():
     print("[EVO] survival of the fittest — a dead house's nest is seeded by a fitness tournament among the "
           "living, not a coin flip; the strong beget the next arrival")
 
+    # Affordances are BASELINE — always on from the entrypoint, no flag (SPEC_AFFORDANCES, Evolution Proper Phase 2).
+    # Module global only; default False keeps the battery byte-identical. A capability (scorched earth, granaries,
+    # livestock) is expressed by the genome's liability + the maw-RL, not an authored threshold.
+    globals()['AFFORDANCES_ENABLED'] = True
+    print("[EVO] affordances live — a house scorches, stockpiles, or herds by temperament (genome liability x "
+          "policy), not by a hand-tuned rule; expression evolves")
+
     if args.live:
         # When run as a script this module is '__main__'; alias it so
         # live_view's `from sandkings import ...` binds to these same
@@ -9981,9 +10169,14 @@ def main():
         import sys
         sys.modules.setdefault('sandkings', sys.modules[__name__])
         from live_view import run_live
+        tileset = args.tileset
+        if tileset == 'STARTER':   # bare --tileset -> the bundled starter pack (SPEC_GRAPHICS P4)
+            import os as _os
+            tileset = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'tiles', 'starter')
+        cell = args.cell if args.cell is not None else (24 if tileset else 12)  # mid-range default with tiles
         run_live(sim, max_steps=args.steps, steps_per_second=args.sps,
                  save_path=args.persist, serve=args.web, host=args.host,
-                 port=args.port, save_every=args.save_every)
+                 port=args.port, save_every=args.save_every, tileset=tileset, cell_size=cell)
         if sim.story_log is not None:
             sim.story_log.close()
         print("\n" + sim.get_status())

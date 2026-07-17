@@ -1,0 +1,112 @@
+{
+  "tile_size": 16,
+  "sheet": "atlas.png",
+  "tiles": {
+    "voxel/SAND": [
+      0,
+      11
+    ],
+    "voxel/STONE": [
+      2,
+      11
+    ],
+    "voxel/GLASS": [
+      3,
+      2
+    ],
+    "voxel/FOOD": [
+      7,
+      0
+    ],
+    "voxel/CORPSE": [
+      5,
+      2
+    ],
+    "voxel/TUNNEL_WALL": [
+      0,
+      15
+    ],
+    "voxel/TILLED": [
+      14,
+      7
+    ],
+    "voxel/CROP": [
+      11,
+      3
+    ],
+    "voxel/CROP_RIPE": [
+      10,
+      2
+    ],
+    "voxel/COPPER_ORE": [
+      12,
+      9
+    ],
+    "voxel/GOLD_ORE": [
+      4,
+      2
+    ],
+    "voxel/HULL": [
+      5,
+      1
+    ],
+    "voxel/SALVAGE": [
+      6,
+      2
+    ],
+    "voxel/WOOD": [
+      4,
+      1
+    ],
+    "voxel/WOOD_WALL": [
+      12,
+      7
+    ],
+    "voxel/WEB": [
+      5,
+      12
+    ],
+    "voxel/CASTLE": [
+      15,
+      7
+    ],
+    "voxel/WATER": [
+      7,
+      15
+    ],
+    "voxel/SHRUB": [
+      5,
+      0
+    ],
+    "voxel/SHRUB_RIPE": [
+      6,
+      0
+    ],
+    "voxel/GRANARY": [
+      14,
+      15
+    ],
+    "unit/WORKER": [
+      9,
+      0
+    ],
+    "unit/SOLDIER": [
+      4,
+      0
+    ],
+    "unit/SCOUT": [
+      14,
+      1
+    ],
+    "maw": [
+      10,
+      14
+    ]
+  },
+  "tinted": [
+    "voxel/*",
+    "unit/*",
+    "maw",
+    "beast/*"
+  ]
+}

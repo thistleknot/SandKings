@@ -137,9 +137,11 @@ def test_colony_maw_rl_learns():
         return _skip()
     from maw_brain import ColonyMawRL
     torch.manual_seed(5)
-    rl = ColonyMawRL(obs_dim=4, update_every=8)
+    # Pin the CORE directive dim (4): this toy validates REINFORCE convergence, not the SPEC_AFFORDANCES d4-d6
+    # channels (their warm-start is covered in test_affordances). A wider uniform-target toy just needs more budget.
+    rl = ColonyMawRL(obs_dim=4, update_every=8, directive_dim=4)
     obs = torch.ones(4)
-    target = torch.full((MAW_DIRECTIVE_DIM,), 0.8)
+    target = torch.full((4,), 0.8)
 
     def dist():
         d, _ = rl.policy.act(obs, deterministic=True)
@@ -413,9 +415,11 @@ def test_colony_maw_gamma_learns():
         return _skip()
     from maw_brain import ColonyMawRL
     torch.manual_seed(6)
-    rl = ColonyMawRL(obs_dim=4, update_every=8, gamma=0.9)
+    # Pin the CORE directive dim (4) — see test_colony_maw_learns; this toy tests discounted convergence, not the
+    # SPEC_AFFORDANCES affordance channels.
+    rl = ColonyMawRL(obs_dim=4, update_every=8, gamma=0.9, directive_dim=4)
     obs = torch.ones(4)
-    target = torch.full((MAW_DIRECTIVE_DIM,), 0.3)
+    target = torch.full((4,), 0.3)
 
     def dist():
         d, _ = rl.policy.act(obs, deterministic=True)

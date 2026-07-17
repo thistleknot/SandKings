@@ -1,0 +1,5 @@
+mixed tile pack — borrows from BOTH traditions:
+  terrain: Phoebus DF set, data/art/Phoebus_16x16.png (github.com/DFgraphics/Phoebus)
+  creatures: rltiles, rltiles-2d.png (github.com/statico/rltiles — RL Tiles, NetHack + Crawl 2D
+    tiles), resized 32->16, colored as-is. See each source repo for terms.
+Units/maw and unmatched beasts fall back to the game's procedural colony-tinted sprites.

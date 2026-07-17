@@ -1,0 +1,121 @@
+{
+  "tile_size": 16,
+  "sheet": "atlas.png",
+  "tiles": {
+    "voxel/SAND": [
+      0,
+      0
+    ],
+    "voxel/STONE": [
+      1,
+      0
+    ],
+    "voxel/GLASS": [
+      2,
+      0
+    ],
+    "voxel/FOOD": [
+      3,
+      0
+    ],
+    "voxel/CORPSE": [
+      4,
+      0
+    ],
+    "voxel/TUNNEL_WALL": [
+      5,
+      0
+    ],
+    "voxel/TILLED": [
+      6,
+      0
+    ],
+    "voxel/CROP": [
+      7,
+      0
+    ],
+    "voxel/CROP_RIPE": [
+      0,
+      1
+    ],
+    "voxel/COPPER_ORE": [
+      1,
+      1
+    ],
+    "voxel/GOLD_ORE": [
+      2,
+      1
+    ],
+    "voxel/HULL": [
+      3,
+      1
+    ],
+    "voxel/SALVAGE": [
+      4,
+      1
+    ],
+    "voxel/WOOD": [
+      5,
+      1
+    ],
+    "voxel/WOOD_WALL": [
+      6,
+      1
+    ],
+    "voxel/WEB": [
+      7,
+      1
+    ],
+    "voxel/CASTLE": [
+      0,
+      2
+    ],
+    "voxel/WATER": [
+      1,
+      2
+    ],
+    "voxel/SHRUB": [
+      2,
+      2
+    ],
+    "voxel/SHRUB_RIPE": [
+      3,
+      2
+    ],
+    "voxel/GRANARY": [
+      4,
+      2
+    ],
+    "beast/spider": [
+      5,
+      2
+    ],
+    "beast/small_spider": [
+      6,
+      2
+    ],
+    "beast/scorpion": [
+      7,
+      2
+    ],
+    "beast/cricket": [
+      0,
+      3
+    ],
+    "beast/fly": [
+      1,
+      3
+    ],
+    "beast/hornets": [
+      2,
+      3
+    ],
+    "beast/bird": [
+      3,
+      3
+    ]
+  },
+  "tinted": [
+    "voxel/*"
+  ]
+}
