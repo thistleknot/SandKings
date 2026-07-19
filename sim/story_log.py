@@ -29,7 +29,12 @@ def _colony_row(sim, colony, diplomacy) -> Dict[str, Any]:
     except Exception:
         epithet = ""
     wt = diplomacy.war_target.get(colony.colony_id) if diplomacy is not None else None
+    try:
+        wrath = sim.keeper_attitude(colony) == "wrathful"      # K3: keeper's wrath upon this house (derived)
+    except Exception:
+        wrath = False
     return {
+        "wrath": bool(wrath),
         "id": colony.colony_id,
         "house": getattr(colony, "house", "") or "",
         "epithet": epithet,
@@ -74,6 +79,9 @@ def snapshot(sim, since_step: Optional[int] = None) -> Dict[str, Any]:
         "season": SEASONS[sim.season_index()],
         "hegemon": (d.hegemon if d is not None else None),
         "weather": weather,
+        "water": round(float(getattr(sim, "water_level", 0.6)), 2),       # closed-budget water level [0,1] (scalar)
+        "drought": bool(getattr(sim, "drought", False)),                  # keeper withholds -> the pond thins
+        "dole": round(float(sim.dole_factor()), 2) if hasattr(sim, "dole_factor") else 1.0,
         "pond": {"guppies": round(float(getattr(sim, "guppy_pop", 0.0) or 0.0)),
                  "algae": round(float(getattr(sim, "algae", 0.0) or 0.0))},
         "sign": (sky.get("kind") if isinstance(sky, dict) else None),

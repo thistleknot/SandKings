@@ -9,10 +9,8 @@ import threading
 import time
 import urllib.request
 
-DEFAULT_MODEL = "qwen3.5-oc:2b"       # fast NON-thinking model — the only viable live default. The 9b models here
-#   are reasoning-thinking-256k types: a single call ran >120s (huge think pass), which would freeze the live game
-#   for minutes per update. For richer prose without the freeze, pull a fast NON-thinking mid model (qwen2.5:7b,
-#   llama3.1:8b) and set it here. Fail-soft if absent.
+DEFAULT_MODEL = "qwen3.5-oc:4b"       # fast NON-thinking 4b (~14s/call, richer prose than 2b). The reasoning-
+#   thinking-256k 4b/9b variants run >120s (huge think pass) and would freeze the live tick — avoid those. Fail-soft.
 DEFAULT_HOST = "127.0.0.1:11434"
 _STOP_SIGNS = ("<think>", "</think>")
 
@@ -31,6 +29,8 @@ def standings(rec):
             flags.append("breached")
         if c.get("madness", 0) > 0.5:
             flags.append("MAD")
+        if c.get("wrath"):
+            flags.append("under the keeper's WRATH")
         out.append(
             f"{c['house']}(gen{c['gen']}: {c['units']} units, granary {c.get('food', 0):.0f}, "
             f"maw-health {c['maw_hp']}, {c.get('priests', 0)} priests, {len(c.get('techs', []))} techs, "
@@ -73,20 +73,25 @@ def delta(prev, cur):
 def narrate(host, model, prev, cur, events, thoughts=""):
     """Return 2-4 sentences calling the ROLLING WINDOW between BEFORE and NOW, or '' on any failure (fail-soft).
     The LLM is shown both states and deciphers the movement itself — where the ball went, who leads/falls."""
+    wx = ", ".join(cur.get("weather", [])) or "clear skies"
+    cond = (f"weather: {wx}; water {int(cur.get('water', 0.6) * 100)}%"
+            + ("; DROUGHT (the keeper withholds)" if cur.get("drought") else "")
+            + (f"; dole {int(cur.get('dole', 1.0) * 100)}%"))
     prompt = (
         "You chronicle the AGES of a MEDIEVAL terrarium of sentient insectoid colonies — ant-hives with kings, "
-        "priests, catapults, tunnels, granaries, and tech (irrigation, gunpowder), sealed under glass. Each report "
-        "covers ONE AGE (a span of steps). This is NOT sport — it is war and survival, life and death under glass. "
-        "NO sci-fi, no space. HARD RULES: the glass NEVER breaks and no colony escapes; never claim otherwise. Do "
-        "NOT invent deaths/victories not implied by the data. Never use sport words (ball/match/playoff/score).\n\n"
-        "You are given the standings at the START of this age and NOW, the battles between, and what each house "
-        "brooded on (its unspoken thoughts). Compare START vs NOW and chronicle how the BALANCE OF POWER moved this "
-        "age, in 2-4 grim, vivid sentences: who gained ground, who is falling, what battles decided it, and what the "
-        "houses were thinking. Concrete; name the houses; ground it in the terrarium (sand, tunnels, the maw). No lists.\n\n"
+        "priests, catapults, tunnels, granaries, water and weather and tech (irrigation, gunpowder). They live out "
+        "war and survival, life and death, sealed in a tank they cannot leave (do not dwell on the glass). Each "
+        "report covers ONE AGE (a span of steps). NO sci-fi/space, no sport words (ball/match/score). Do NOT invent "
+        "events not in the data below.\n\n"
+        "Discuss EVERYTHING salient this age — the balance of power (who gained ground, who is falling), the battles, "
+        "the WEATHER and WATER and DROUGHT, artifacts unearthed, creature encounters, contracts and truces, the "
+        "keeper's WRATH and any madness, births and deaths, discoveries — anything the data shows. 3-5 grim, vivid "
+        "sentences. Name the houses; ground it in the tank (sand, tunnels, the maw). No lists.\n\n"
         f"THE AGE: Year {cur.get('year')}, {cur.get('season')} season, steps {prev.get('step')}->{cur.get('step')}.\n"
+        f"CONDITIONS: {cond}.\n"
         f"START OF AGE: {standings(prev)}\n"
         f"NOW:          {standings(cur)}\n"
-        f"BATTLES THIS AGE: {'; '.join(events) if events else 'an uneasy lull, no blood spilled'}.\n"
+        f"HAPPENINGS THIS AGE: {'; '.join(events) if events else 'an uneasy lull, no blood spilled'}.\n"
         f"THOUGHTS (what each house brooded on): {thoughts or 'inscrutable'}.\n"
     )
     body = json.dumps({"model": model, "prompt": prompt, "stream": False, "think": False,
@@ -108,7 +113,7 @@ class CasterThread(threading.Thread):
     it snapshots the sim (pure read), narrates the delta since the last snapshot, and appends any commentary. All
     errors are swallowed (fail-soft) — a missing Ollama just yields an empty feed, never a crash or a game stall."""
 
-    def __init__(self, sim, out, model=DEFAULT_MODEL, host=DEFAULT_HOST, interval=20.0,
+    def __init__(self, sim, out, model=DEFAULT_MODEL, host=DEFAULT_HOST, interval=40.0,
                  is_active=None, lock=None):
         super().__init__(daemon=True)
         self.sim, self.out = sim, out

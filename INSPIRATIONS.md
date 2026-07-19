@@ -286,6 +286,19 @@ This is the lineage, mapped to the specs and mechanics each one shaped.
   harsh growth curves, a single grandmaster raising an order from nothing (the
   one-city-civ again).
 
+## Biomimicry as the Efficiency Engine
+
+- **Ant nestmate recognition (cuticular-hydrocarbon signatures)** + **stigmergy (Grassé)**: the antenna model for
+  combat. Insects don't scan 26 cells omnisciently — they read a chemical **signature as a banded frequency**, learn
+  their nest's band, and flag **out-of-band** as foe, with room for error they must calibrate to. Friend/foe becomes
+  a LEARNED soft discrimination in the dynamic weights, not a hardcoded rule → misidentification, kin-attacks, and
+  the selective pressure to sharpen the antenna are all emergent. (SPEC_SKIRMISH_COMBAT.)
+- **THE FIRST PRINCIPLE — "use ML to INCREASE efficiency through dynamic systems."** The keeper's inversion of the
+  usual assumption: a learned/dynamic system is the SHORTCUT, not the overhead. A small per-unit *learned
+  discrimination* replaces a global *all-pairs scan* — the biomimetic model must profile **cheaper** than the
+  brute force it replaces, or it doesn't ship. Every dynamic-system feature is held to this: ML earns its keep by
+  making the sim *leaner*, not richer-at-a-cost. (Escalates "balance objective with computational efficiency.")
+
 ## The Standing Directive
 
 "Dazzle me, but keep it ASCII" (the glyph views) — later joined by

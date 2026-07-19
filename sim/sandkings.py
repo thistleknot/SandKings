@@ -638,6 +638,27 @@ MAW_RL_ENABLED = False       # 85% tier: maw real-RL directive (identity-at-neut
 COMPREHENSION_RL_ENABLED = False   # SPEC_COMPREHENSION_RL I1: Tongue comprehension + Maslow(need) gate the maw
 #   reward objective. Module default False -> the exact Δsnap reward (battery byte-identical); entrypoint flips
 #   baseline-on. Understanding unlocks the civilized objective; famine collapses it to survival (nature > nurture).
+SIGNATURE_PEGS = 8                  # SPEC_SKIRMISH_COMBAT I2: fixed quantile-pegged frequency-comb width (mouse: tools/mouse_antenna.py)
+# I2 antenna RL hyperparameters (Boltzmann contextual-bandit policy gradient; mouse-tuned in tools/mouse_antenna.py:
+# band self-organizes from zero to 0.98 strike-correctness in a median 278 updates). These are policy knobs, not
+# gameplay thresholds — the DISCRIMINATION BAND is learned, never authored.
+ANTENNA_LR = 0.25                   # REINFORCE step size
+ANTENNA_T0 = 2.0                    # Boltzmann temperature, hot (explore)
+ANTENNA_TMIN = 0.4                  # Boltzmann temperature floor (exploit)
+ANTENNA_CLASSES = 2                 # the antenna separates exactly TWO categories: friend vs foe (a structural fact of
+#                                     binary discrimination, not a tuned knob) — the REAL constant the settle threshold derives from.
+ANTENNA_ANNEAL = float(ANTENNA_CLASSES)   # accountable once it has plausibly met BOTH classes it must tell apart (~2
+#                                     engagements) — DERIVED from the class count, never authored. The band is then
+#                                     essentially the INHERITED prior, tuned across GENERATIONS by culling defectives
+#                                     (genetic), NOT within-life RL (update-starved/inert per [[frozen-fm-router-feudal-brain]] H2).
+ANTENNA_COMB = 1.0 / (SIGNATURE_PEGS - 1)  # RBF width of the sensing comb = the PEG SPACING (a structural quantity,
+#                                     not a tuned knob): each peg's field reaches its neighbours, no authored 0.14.
+ANTENNA_MUT = 0.06                  # I2b heritable-prior mutation at mating (selection prunes defective antenna genes)
+_ANTENNA_PEGS = np.linspace(0.0, 1.0, SIGNATURE_PEGS)
+SKIRMISH_ANTENNA_ENABLED = False   # SPEC_SKIRMISH_COMBAT I2 gate; module default False (battery byte-identical);
+#   entrypoint flips baseline-on. On -> a soft learned-style frequency-band antenna reads each foe's pheromone
+#   signature at the co-located cell (ROOM FOR ERROR: near-band foes are misread as kin and slip the strike),
+#   replacing hostile()'s omniscient certainty. Off -> hostile() alone (no antenna draw), byte-identical.
 GRAIN_SCALE = 60.0           # forecast error normaliser (CU2)
 GRAIN_MINT = 5.0             # grains for a perfect forecast
 
@@ -1013,6 +1034,24 @@ def _affordance_p(liability: float) -> float:
     return soft_gate(liability, AFF_CENTER, AFF_TEMP)
 
 
+_NEIGHBOR_OFFSETS: Dict[int, list] = {}
+
+
+def _neighbor_offsets(radius: int) -> list:
+    """Cached (dx,dy,dz) offsets for a cube of the given radius, EXCLUDING (0,0,0), in the same dx-major/dy/dz order
+    the old triple-loop produced — so VoxelWorld.get_neighbors_3d stays value+order-identical while skipping the
+    per-call range() rebuild. Built once per radius."""
+    offs = _NEIGHBOR_OFFSETS.get(radius)
+    if offs is None:
+        offs = [(dx, dy, dz)
+                for dx in range(-radius, radius + 1)
+                for dy in range(-radius, radius + 1)
+                for dz in range(-radius, radius + 1)
+                if not (dx == 0 and dy == 0 and dz == 0)]
+        _NEIGHBOR_OFFSETS[radius] = offs
+    return offs
+
+
 class VoxelWorld:
     """800x400x200 3D voxel terrarium with physics"""
 
@@ -1273,18 +1312,17 @@ class VoxelWorld:
         return False
     
     def get_neighbors_3d(self, pos: Tuple[int, int, int], radius: int = 1):
-        """Get 3D neighbors (26 for radius=1)"""
+        """Get 3D neighbors (26 for radius=1). Value-identical to the old triple-loop (same order) but reuses a
+        cached offset table (no range() rebuild each call) and inlines the bounds check (no per-cell in_bounds
+        function call) — this is the #1 hot-path helper called per unit per step."""
         x, y, z = pos
-        neighbors = []
-        for dx in range(-radius, radius + 1):
-            for dy in range(-radius, radius + 1):
-                for dz in range(-radius, radius + 1):
-                    if dx == dy == dz == 0:
-                        continue
-                    nx, ny, nz = x + dx, y + dy, z + dz
-                    if self.in_bounds(nx, ny, nz):
-                        neighbors.append((nx, ny, nz))
-        return neighbors
+        w, h, d = self.width, self.height, self.depth
+        out = []
+        for dx, dy, dz in _neighbor_offsets(radius):
+            nx, ny, nz = x + dx, y + dy, z + dz
+            if 0 <= nx < w and 0 <= ny < h and 0 <= nz < d:
+                out.append((nx, ny, nz))
+        return out
 
 # ============================================================================
 # COLONY GENOME & EVOLUTION
@@ -2658,6 +2696,10 @@ class SandKingsSimulation:
             # not just the frozen random projection. Fixed dim (42) for a stable policy.
             _gaf = colony.genome
             _lvl = AFF_LEVELS - 1
+            try:
+                _wrath = 1.0 if self.keeper_attitude(colony) == 'wrathful' else 0.0
+            except Exception:
+                _wrath = 0.0
             stats = torch.tensor([
                 min(len(colony.units) / 20.0, 2.0),                       # population
                 min(colony.maw.food_stored / 100.0, 3.0),                 # food stores
@@ -2670,6 +2712,15 @@ class SandKingsSimulation:
                 _affordance_level(_affordance_liability(_gaf, 'scorched_earth')) / _lvl,
                 _affordance_level(_affordance_liability(_gaf, 'builds_granaries')) / _lvl,
                 _affordance_level(_affordance_liability(_gaf, 'keeps_livestock')) / _lvl,
+                # ENVIRONMENTAL AWARENESS: the maw now perceives water/drought/weather/wrath so its RL can respond
+                # (hoard in drought, shelter in flood, appease a wrathful keeper). Obs grows -> the policy rebuilds
+                # for colonies whose saved policy has the old width (handled by the obs_dim check below).
+                float(getattr(self, 'water_level', 0.6)),                            # water level [0,1] (scalar budget)
+                1.0 if getattr(self, 'drought', False) else 0.0,                     # keeper drought
+                1.0 if getattr(self, 'flood_until', 0) > self.step_count else 0.0,   # flood active
+                1.0 if (getattr(self, 'storm_until', 0) > self.step_count
+                        or getattr(self, 'hail_until', 0) > self.step_count) else 0.0,  # storm/hail active
+                _wrath,                                                              # the keeper's wrath upon this house
             ], dtype=torch.float32)
             obs = torch.cat([base, stats])
             rl = getattr(colony, 'maw_rl', None)
@@ -7237,21 +7288,27 @@ class SandKingsSimulation:
         return self._farm_counts(colony)[0]
 
     def _find_farm_site(self, colony: Colony) -> Optional[Tuple[int, int, int]]:
-        """Best tillable surface SAND near the maw: oasis first, then close."""
+        """Best tillable surface SAND near the maw: oasis first, then close. VECTORIZED: one column-max pass over the
+        farm box replaces the per-cell surface_z Python scan (killed the ~FARM_RADIUS^2 surface_z calls/site).
+        Byte-identical — same interior cells, and the SAND scan runs in dx/dy (row-major) order so `key < best_key`
+        first-wins ties exactly as before."""
         mx, my, _ = colony.maw.position
         w, h, _d = self.world.dimensions
+        x0, x1 = max(1, mx - FARM_RADIUS), min(w - 1, mx + FARM_RADIUS + 1)
+        y0, y1 = max(1, my - FARM_RADIUS), min(h - 1, my + FARM_RADIUS + 1)
+        if x0 >= x1 or y0 >= y1:
+            return None
+        box = self.world.voxels[x0:x1, y0:y1, :]                          # (bx, by, depth)
+        nonair = box != VoxelType.AIR.value
+        surf = box.shape[2] - 1 - np.argmax(nonair[:, :, ::-1], axis=2)   # highest non-AIR z per column (== surface_z)
+        surf = np.where(nonair.any(axis=2), surf, 0)                      # empty column -> 0, matching surface_z
+        surf_vox = np.take_along_axis(box, surf[:, :, None], axis=2)[:, :, 0]
         best, best_key = None, None
-        for dx in range(-FARM_RADIUS, FARM_RADIUS + 1):
-            for dy in range(-FARM_RADIUS, FARM_RADIUS + 1):
-                px, py = mx + dx, my + dy
-                if not (1 <= px < w - 1 and 1 <= py < h - 1):
-                    continue
-                pz = self.world.surface_z(px, py)
-                if self.world.voxels[px, py, pz] != VoxelType.SAND.value:
-                    continue
-                key = (not self.in_oasis(px, py), abs(dx) + abs(dy))
-                if best_key is None or key < best_key:
-                    best, best_key = (px, py, pz), key
+        for i, j in np.argwhere(surf_vox == VoxelType.SAND.value):        # SAND cells only, in dx-major/dy-minor order
+            px, py = x0 + int(i), y0 + int(j)
+            key = (not self.in_oasis(px, py), abs(px - mx) + abs(py - my))
+            if best_key is None or key < best_key:
+                best, best_key = (px, py, int(surf[i, j])), key
         return best
 
     def _farm_step(self, unit: SandKing, colony: Colony) -> bool:
@@ -9770,12 +9827,95 @@ class SandKingsSimulation:
                             unit.move(new_pos)
 
     
+    def _colony_signature(self, colony):
+        """SPEC_SKIRMISH_COMBAT I2: a colony's pheromone frequency signature in [0,1] — a stable band pegged from
+        its id onto the fixed quantile comb. Distinct per house (ids 0..N-1 < SIGNATURE_PEGS); heritable per-colony
+        antenna acuity (drift + combat-outcome calibration) is the I2b increment."""
+        return (colony.colony_id % SIGNATURE_PEGS) / float(SIGNATURE_PEGS - 1)
+
+    def _antenna_encode(self, freq):
+        """SPEC_SKIRMISH_COMBAT I2: a sensed frequency -> soft comb over the fixed quantile pegs (the linear features
+        the antenna weights read). No decision here — just the encoding basis."""
+        return np.exp(-((freq - _ANTENNA_PEGS) ** 2) / (2.0 * ANTENNA_COMB ** 2))
+
+    def _antenna_prior(self, colony):
+        """SPEC_SKIRMISH_COMBAT I2b GENETIC warm-start: an INSTINCT to hold own band, strike out-of-band — DERIVED
+        from the colony's own signature geometry, never authored. w = −encode(own) (own-band pegs lower foe-ness);
+        b = half the self-overlap = the nearest-centroid boundary between the own-band prototype and a far (~zero-
+        overlap) foe. At fast-settle (ANNEAL = class-count) within-life RL is vestigial, so the band is this inherited
+        instinct refined across generations by CULLING — NOT a blank innocent prior (which collapses to pacifism at
+        this settle speed: mouse-shown). Not the rejected fixed RBF: it is heritable, mutated, Boltzmann-sampled, and
+        defective variants are culled."""
+        own = self._antenna_encode(self._colony_signature(colony))
+        return -own.copy(), float(own @ own) * 0.5
+
+    def _antenna_decide(self, unit, colony, enemy_colony, is_true_foe):
+        """SPEC_SKIRMISH_COMBAT I2/I2b: the PER-UNIT antenna — a heritable INSTINCT band + BOLTZMANN strike policy that
+        REPLACES hostile()'s omniscient certainty at every co-located pair (kin/ally/foe). At fast-settle the band is
+        the inherited genetic instinct (from `_antenna_prior`); culling of defectives prunes it (per-unit → genetic).
+          - encode the OTHER unit's pheromone signature; logit z=w.x+b; P(strike)=sigmoid(z/T), T annealed hot→cold
+            over the unit's own update count. Prior = the genetic instinct (hold own band, strike out-of-band).
+          - CALIBRATE (young, n<ANNEAL): sample the action (explore). DEPLOY (settled, n≥ANNEAL): act near-greedily —
+            now a mis-fire is a real DEFECT.
+          - REINFORCE every engagement against the diplomacy ground truth `is_true_foe` (a vestigial within-life nudge
+            at fast-settle; the real tuning is genetic — inheritance + culling).
+        Returns (strike, lethal_ff): strike = execute; lethal_ff = strike on a NON-foe while SETTLED → real friendly
+        fire + the offender is culled. Cheap (one 8-d dot + one update). RNG only when gated on (off → no draw,
+        byte-identical). Mouse: tools/mouse_antenna.py + tools/mouse_antenna_cull.py (real combat, self-culls, no collapse).
+        """
+        w = getattr(unit, '_ant_w', None)
+        if w is None:
+            w, b0 = self._antenna_prior(colony)          # born with the genetic kin-recognition instinct
+            unit._ant_w = w; unit._ant_b = b0; unit._ant_n = 0
+        n = unit._ant_n
+        settled = n >= ANTENNA_ANNEAL
+        T = max(ANTENNA_TMIN, ANTENNA_T0 * (1.0 - n / ANTENNA_ANNEAL))
+        x = self._antenna_encode(self._colony_signature(enemy_colony))
+        p = 1.0 / (1.0 + np.exp(-float(w @ x + unit._ant_b) / T))
+        a = (1 if p > 0.5 else 0) if settled else (1 if np.random.random() < p else 0)
+        r = ((1.0 if is_true_foe else -1.0) if a == 1 else (-1.0 if is_true_foe else 0.5))
+        g = (a - p) / T
+        w += ANTENNA_LR * r * g * x; unit._ant_b += ANTENNA_LR * r * g
+        unit._ant_n = n + 1
+        return a == 1, (a == 1 and not is_true_foe and settled)
+
+    def _antenna_inherit(self, child, colony, p1, p2):
+        """SPEC_SKIRMISH_COMBAT I2b: offspring inherit the blended parental antenna band + mutation, then RE-CALIBRATE
+        (n reset to 0). This makes the antenna HERITABLE, so culling defectives prunes bad genes and selection sharpens
+        the band across generations. A parent that never sensed contributes the colony's genetic instinct prior."""
+        w1 = getattr(p1, '_ant_w', None); w2 = getattr(p2, '_ant_w', None)
+        prior_w, prior_b = self._antenna_prior(colony)
+        base_w = ((w1 if w1 is not None else prior_w) + (w2 if w2 is not None else prior_w)) / 2.0
+        base_b = (getattr(p1, '_ant_b', prior_b) + getattr(p2, '_ant_b', prior_b)) / 2.0
+        child._ant_w = base_w + np.random.randn(SIGNATURE_PEGS) * ANTENNA_MUT
+        child._ant_b = base_b + float(np.random.randn()) * ANTENNA_MUT
+        child._ant_n = 0
+
+    def _antenna_friendly_fire(self, unit, victim, colony, victim_colony, units_to_remove):
+        """SPEC_SKIRMISH_COMBAT I2b: a SETTLED antenna mis-struck a non-foe. The strike is REAL — the victim (kin or
+        ally) takes damage — and the offending unit is CULLED by its own maw (the Spartan/insect purge of a defective
+        member), pruning its heritable antenna gene and averting the ruinous war a mis-fire on an ally would risk."""
+        if unit.brain_layer is not None:
+            unit.brain_layer.damage_dealt += unit.attack
+        if victim.take_damage(unit.attack, victim_colony.genome.resilience):
+            units_to_remove.setdefault(victim_colony.colony_id, []).append(victim)   # the ally/kin falls
+        units_to_remove.setdefault(colony.colony_id, []).append(unit)                # cull the defective member
+        self._ff_culls = getattr(self, '_ff_culls', 0) + 1                           # I2b telemetry: defectives purged
+
     def _resolve_conflicts(self):
         """Resolve combat with area-of-effect (radius 1) + NEURAL MATING"""
         units_to_remove = {}  # Track units to remove after combat
         mating_pairs = []  # Track soldier encounters for mating
         
         from politics import hostile
+        # position -> [(colony, unit)] index, built ONCE in colony/unit order so the encounter order below (and thus
+        # the 5% mating RNG draw + all damage/capture/diplomacy mutations) is byte-identical to the old per-unit
+        # rescan. Nothing moves or removes units during this loop (_try_capture: no migration; deaths deferred to
+        # units_to_remove), so the index stays valid throughout. Turns the O(26·U^2) inner rescan into O(26·U).
+        pos_index = {}
+        for _ec in self.colonies:
+            for _e in _ec.units:
+                pos_index.setdefault(_e.position, []).append((_ec, _e))
         for colony in self.colonies:
             for unit in colony.units:
                 if getattr(unit, 'gift_to', -1) >= 0:
@@ -9784,16 +9924,37 @@ class SandKingsSimulation:
                 neighbors = self.world.get_neighbors_3d(unit.position, radius=1)
 
                 for nx, ny, nz in neighbors:
-                    # Find enemy units at this position
+                    at_cell = pos_index.get((nx, ny, nz))
+                    if not at_cell:
+                        continue  # empty cell — the old scan matched nothing here (no RNG/mutation), so skip it
+                    # Find enemy units at this position (via the index bucket, in colony/unit order)
                     for enemy_colony in self.colonies:
-                        if not hostile(self, colony.colony_id,
-                                       enemy_colony.colony_id):
+                        # I2b: the antenna decides friend/foe, so when it is ON we do NOT pre-skip non-foes — the unit
+                        # can mis-read (and mis-strike) a kin/ally. `is_true_foe` is the diplomacy GROUND TRUTH used
+                        # for the RL reward and to classify a mis-fire. OFF: skip non-foes exactly as before (P9).
+                        is_true_foe = hostile(self, colony.colony_id, enemy_colony.colony_id)
+                        if not SKIRMISH_ANTENNA_ENABLED and not is_true_foe:
                             continue  # truce/ally/co-belligerent (P9)
 
-                        for enemy in enemy_colony.units:
+                        for enemy in (e for (ec, e) in at_cell if ec is enemy_colony):
+                            if SKIRMISH_ANTENNA_ENABLED and enemy is unit:
+                                continue  # never engage self (own colony is now visited when the antenna is on)
                             if (getattr(enemy, 'gift_to', -1) == colony.colony_id):
                                 continue  # inbound envoys are sacrosanct (P3)
                             if enemy.position == (nx, ny, nz):
+                                # SPEC_SKIRMISH_COMBAT I2b: the per-unit RL antenna decides the strike at EVERY
+                                # co-located pair. A held foe slips (room for error); a SETTLED strike on a NON-foe is
+                                # LETHAL friendly fire and the offender is CULLED (Spartan purge of a defective member,
+                                # pruning its heritable antenna gene). Gated off -> old path, no draw, byte-identical.
+                                if SKIRMISH_ANTENNA_ENABLED:
+                                    strike, lethal_ff = self._antenna_decide(unit, colony, enemy_colony, is_true_foe)
+                                    if not strike:
+                                        continue  # antenna held (read as kin) -> no engagement
+                                    if not is_true_foe:
+                                        if lethal_ff:
+                                            self._antenna_friendly_fire(unit, enemy, colony, enemy_colony,
+                                                                        units_to_remove)
+                                        continue  # never run the foe-combat/mating path against a non-foe
                                 # SJ7b: THRALL HOSTILITY - captor does not kill its own labor
                                 if (getattr(enemy, 'laboring_for', -1) == colony.colony_id
                                         or getattr(unit, 'laboring_for', -1) == enemy_colony.colony_id):
@@ -9878,6 +10039,8 @@ class SandKingsSimulation:
                     new_soldier = stronger_colony.maw.spawn_unit(UnitType.SOLDIER)
                     if new_soldier:
                         new_soldier.brain_layer = offspring_layer
+                        if SKIRMISH_ANTENNA_ENABLED:
+                            self._antenna_inherit(new_soldier, stronger_colony, unit1, unit2)  # I2b: heritable antenna prior + mutation
                         stronger_colony.units.append(new_soldier)
         
         # Remove dead units and create corpses
@@ -10228,6 +10391,11 @@ def main():
         globals()['COMPREHENSION_RL_ENABLED'] = True
         print("[MIND] comprehension drives the maw — understanding unlocks the civilized objective; "
               "famine collapses it to bare survival (nature > nurture)")
+        # SPEC_SKIRMISH_COMBAT I2: the antenna — units read a foe's pheromone frequency signature and can misread a
+        # near-band foe as kin (room for error), replacing hostile()'s omniscient certainty. Cheaper than any scan.
+        globals()['SKIRMISH_ANTENNA_ENABLED'] = True
+        print("[ANTENNA] biomimetic kin-recognition — soldiers sense friend/foe by pheromone frequency band; "
+              "near-band foes slip the strike (they must calibrate to tell blood from stranger)")
 
     # The oasis guppy pond is BASELINE — non-optional. Module default GUPPIES_ENABLED stays False so the
     # regression battery is byte-identical; the game flips it on here.

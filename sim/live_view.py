@@ -1421,6 +1421,12 @@ class LiveViewer:
             elif key in (pygame.K_MINUS, pygame.K_COMMA, pygame.K_KP_MINUS):
                 self.pacer.slower()
                 self.runner.sps = self.pacer.steps_per_second  # U4
+            elif self.caster_open and key in (pygame.K_UP, pygame.K_DOWN,
+                                              pygame.K_PAGEUP, pygame.K_PAGEDOWN):
+                # broadcast scroll takes priority whenever B is open (before look-cursor / z-nav)
+                step = 5 if key in (pygame.K_PAGEUP, pygame.K_PAGEDOWN) else 2   # lines per press
+                up = key in (pygame.K_UP, pygame.K_PAGEUP)                       # 0 = newest; up = into the past
+                self.caster_scroll = max(0, self.caster_scroll + (step if up else -step))
             elif self.look_mode and key in (pygame.K_UP, pygame.K_DOWN,
                                             pygame.K_LEFT, pygame.K_RIGHT):
                 step = 10 if (event.mod & pygame.KMOD_SHIFT) else 1   # Shift = jump 10 cells
@@ -1430,11 +1436,6 @@ class LiveViewer:
                     max(0, min(self.sim.world.width - 1, self.cursor[0] + dx)),
                     max(0, min(self.sim.world.height - 1, self.cursor[1] + dy)))
                 self.follow = False  # steering the cursor breaks the leash
-            elif self.caster_open and key in (pygame.K_UP, pygame.K_DOWN,
-                                              pygame.K_PAGEUP, pygame.K_PAGEDOWN):
-                step = 6 if key in (pygame.K_PAGEUP, pygame.K_PAGEDOWN) else 1   # scroll the broadcast history
-                up = key in (pygame.K_UP, pygame.K_PAGEUP)                       # (0 = newest; up = into the past)
-                self.caster_scroll = max(0, self.caster_scroll + (step if up else -step))
             elif key == pygame.K_UP:
                 self.z_level = min(self.sim.world.depth - 1, self.z_level + 1)
             elif key == pygame.K_DOWN:
@@ -1617,6 +1618,8 @@ class LiveViewer:
                 with self.runner.lock:
                     if hasattr(self.sim, '_log_event'):
                         self.sim._log_event("The keeper preserves the terrarium")
+        elif event.type == pygame.MOUSEWHEEL and self.caster_open:
+            self.caster_scroll = max(0, self.caster_scroll + event.y * 3)   # wheel scrolls the broadcast history
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             # R34b: while the legend is open, a click on a section header folds/unfolds it
             if self.legend_open and self._legend_click(event.pos):
