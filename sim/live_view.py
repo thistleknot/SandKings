@@ -618,7 +618,7 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
     for help_line in ("", "SPACE pause  S step", "+/- speed  </> or UP/DN z",
                       "TAB/shift+TAB view  P pheromones  R style",
                       "I inspect (click too)  F follow  L legend",
-                      "M manager  H saga  G capture  ESC quit",
+                      "M manager  H saga  B broadcast  G capture  ESC quit",
                       "GIFTS: 1food 2crick 3ant 4spidr 5tech",
                       "       w rain  j seeds",
                       "WRATH: 6spidr 7scorp 8snake 9drgt 0cat",
@@ -1287,6 +1287,18 @@ class LiveViewer:
         self.manager_colony = 0
         self.saga_open = False      # SPEC_DYNASTIES D5
         self.legend_open = False    # R34
+        self.caster_open = False    # SPEC_STORY_LOG: B broadcast — live AI sportscaster commentary
+        self.caster_scroll = 0      # lines scrolled up into history (0 = newest pinned to the bottom)
+        from collections import deque as _deque
+        self.caster = _deque(maxlen=40)          # (step, year, season, text) rolling commentary
+        try:                                     # fail-soft: no Ollama -> empty feed, never a crash/stall
+            from saga_cast import CasterThread
+            self._caster_thread = CasterThread(          # ALWAYS accruing, ASYNC (daemon) so the game never waits;
+                self.sim, self.caster,                   # snapshots UNDER the stepper lock so it can't stutter the sim
+                lock=getattr(self.runner, "lock", None))
+            self._caster_thread.start()
+        except Exception:
+            self._caster_thread = None
         self.legend_collapsed: set = set()   # R34b: accordion — category names currently collapsed
         self._legend_hitboxes: List[Tuple['pygame.Rect', str]] = []   # header click targets (rebuilt each draw)
         self.look_mode = False      # R32 look cursor
@@ -1418,6 +1430,11 @@ class LiveViewer:
                     max(0, min(self.sim.world.width - 1, self.cursor[0] + dx)),
                     max(0, min(self.sim.world.height - 1, self.cursor[1] + dy)))
                 self.follow = False  # steering the cursor breaks the leash
+            elif self.caster_open and key in (pygame.K_UP, pygame.K_DOWN,
+                                              pygame.K_PAGEUP, pygame.K_PAGEDOWN):
+                step = 6 if key in (pygame.K_PAGEUP, pygame.K_PAGEDOWN) else 1   # scroll the broadcast history
+                up = key in (pygame.K_UP, pygame.K_PAGEUP)                       # (0 = newest; up = into the past)
+                self.caster_scroll = max(0, self.caster_scroll + (step if up else -step))
             elif key == pygame.K_UP:
                 self.z_level = min(self.sim.world.depth - 1, self.z_level + 1)
             elif key == pygame.K_DOWN:
@@ -1446,14 +1463,23 @@ class LiveViewer:
                 self.manager_open = not self.manager_open
                 self.saga_open = False
                 self.legend_open = False
+                self.caster_open = False
             elif key == pygame.K_h:
                 self.saga_open = not self.saga_open
                 self.manager_open = False
                 self.legend_open = False
+                self.caster_open = False
             elif key == pygame.K_l:  # R34 legend
                 self.legend_open = not self.legend_open
                 self.manager_open = False
                 self.saga_open = False
+                self.caster_open = False
+            elif key == pygame.K_b:  # SPEC_STORY_LOG: B broadcast — live AI commentary
+                self.caster_open = not self.caster_open
+                self.caster_scroll = 0          # open pinned to the newest age
+                self.manager_open = False
+                self.saga_open = False
+                self.legend_open = False
             elif key == pygame.K_i:  # R32 look cursor
                 self.look_mode = not self.look_mode
                 self.manager_open = False
@@ -1723,6 +1749,8 @@ class LiveViewer:
             return
         if self.saga_open:
             self._render_saga(w * cell, max(h * cell, 400))
+        if self.caster_open:
+            self._render_caster(w * cell, max(h * cell, 400))
             return
         # NB: the legend is a toggleable SIDEBAR overlay (drawn after the map, below), not a
         # full-screen takeover — so the terrarium stays visible while it is open.
@@ -2155,6 +2183,41 @@ class LiveViewer:
             if line:
                 self._screen.blit(self._font.render(line, True, color),
                                   (hud_x, 10 + i * 18))
+        pygame.display.flip()
+
+    def _render_caster(self, area_w: int, area_h: int) -> None:
+        """SPEC_STORY_LOG: B broadcast — SCROLLABLE rolling-window AI commentary over the map area. UP/DOWN or
+        PageUp/PageDown scroll the history; the newest age is pinned to the bottom by default (no cutoff)."""
+        import textwrap
+        self._screen.fill(HUD_BG)
+        pygame.draw.rect(self._screen, (40, 36, 26), pygame.Rect(0, 0, area_w, area_h), 1)
+        wrap = max(24, (area_w - 28) // 8)
+        buf = []                                      # full scrollback (oldest->newest): header + wrapped body + spacer
+        for step, year, season, text in self.caster:
+            buf.append((f"-- THE AGE unto Year {year} · {season} · step {step} --", (150, 170, 190)))
+            for ln in textwrap.wrap(text, wrap):
+                buf.append((ln, HUD_FG))
+            buf.append(("", HUD_FG))
+        top_y, line_h = 34, 16
+        max_lines = max(1, (area_h - top_y - 22) // line_h)
+        self.caster_scroll = min(self.caster_scroll, max(0, len(buf) - max_lines))   # clamp to the top of history
+        start = max(0, len(buf) - max_lines - self.caster_scroll)
+        pos = "newest" if self.caster_scroll == 0 else f"+{self.caster_scroll} back"
+        self._screen.blit(self._font.render(f"== LIVE BROADCAST ==   (B close · UP/DN scroll · {pos})", True,
+                                            (230, 210, 140)), (14, 10))
+        if not buf:
+            self._screen.blit(self._font.render(
+                "no commentary yet — a local model chronicles each age (a span of steps)", True,
+                (150, 150, 150)), (14, top_y))
+        for i, (line, color) in enumerate(buf[start:start + max_lines]):
+            if line:
+                self._screen.blit(self._font.render(line, True, color), (14, top_y + i * line_h))
+        hud_x = area_w + 12
+        for i, (line, color) in enumerate(build_hud_entries(
+                self.sim, self.pacer.steps_per_second, self.paused, self.z_level, self.capturing,
+                self.view_mode, PHEROMONE_OVERLAYS[self.overlay_index])):
+            if line:
+                self._screen.blit(self._font.render(line, True, color), (hud_x, 10 + i * 18))
         pygame.display.flip()
 
     def _draw_look_panel(self) -> None:
