@@ -97,6 +97,15 @@ Profiled per-step cost of the new combat MUST be `<` the current `_resolve_confl
 cProfile before/after, and mouse-test the discriminator's learning in isolation before touching the game
 ([[mouse-model-testing]]). If it isn't cheaper, iterate or don't ship.
 
+**MEASURED (2026-07-19, `tools/speed_antenna.py`, 5 seeds, neural on, ~80 units):** antenna ON vs OFF is
+**compute-NEUTRAL** — mean 162 vs 173 ms/step (−6%), but the per-seed range is −45%..+17% and tracks POPULATION
+divergence (ON/OFF diverge the RNG into different-sized worlds), not the antenna. HONEST CORRECTION to the "ML
+increases efficiency" contract: the algorithmic win (O(26·U²)→O(U)) came from **I1 (the position index), which the OFF
+arm already includes** — the learned ANTENNA (I2/I2b) is layered on top and is ~free (one 8-dim dot per co-located
+pair, sometimes short-circuiting combat when it holds), NOT a further speedup. So the gate is met as "not a
+regression," but the efficiency credit belongs to I1's indexing, not the ML. A clean marginal-cost number needs
+population controlled (per-unit combat cost); the top-line is: the antenna does not make the game slower.
+
 ## Room for error + calibration (the dynamic system)
 
 The antenna is stochastic/soft: a false-negative lets a foe pass; a false-positive attacks an ally (real cost — lost

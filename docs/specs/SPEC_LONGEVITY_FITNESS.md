@@ -55,6 +55,29 @@ compare survival curves** — does feature-ON (or calibrated-vs-defective) raise
 - This is the general contract going forward: a feature that cannot show survival lift is not earning its compute
   ([[balance-objective-computational-efficiency]], [[ml-increases-efficiency-dynamic-systems]]).
 
+## Architecture: ACTOR-CRITIC, reuse not rebuild (keeper direction, 2026-07-19)
+
+Do NOT build a new net. Recast the existing PEFT-style stack as online actor-critic with eligibility traces — the
+keeper's insight that the trace idea and actor-critic are the SAME algorithm (AC(λ)).
+
+- **Spawn = ACTOR.** The existing per-unit PEFT readout adapter (SoldierLayer over the frozen Kanerva/ZCA linear+binary
+  features) becomes the policy π(a|s). **Shared PER SUBSPECIES** (soldier/worker/scout, or genetic sub-species), NOT
+  per-unit: this (a) pools every member's steps into ONE net → hundreds of updates/step, escaping the H2 update-
+  starvation that made per-unit maw-RL inert ([[frozen-fm-router-feudal-brain]]); (b) collapses 135 tiny per-unit
+  forwards into ONE batched forward (solves the neural-forward batching cost); (c) "1 degree of dynamic RL locally,
+  dispersed" — cheap.
+- **Maw = CRITIC.** The maw brain estimates V(state) = expected longevity return. **Two-timescale:** the critic evolves
+  SLOWLY (GA across generations — the frozen-within-life warm-start that already exists), the actor adapts FAST
+  (within-life, local). Heavy value-learning is genetic; the cheap local update is the actor. This is the split H2
+  demanded (within-life RL is only viable when cheap + aggregated).
+- **AC(λ) is the mechanism.** The critic's TD error `δ = r + γV(s') − V(s)` IS the advantage that trains the actor;
+  both carry eligibility traces. The within-life longevity credit (above) and actor-critic are one algorithm, not two.
+  The per-lineage decaying-cumulative-log-lifespan is the critic's CROSS-generational target / the maw's fitness.
+- **Drop the fixed 85/15 blend.** It is a magic constant ([[no-authored-threshold-constants]]) AND unnecessary under
+  actor-critic: the maw influences the actor via VALUE (the advantage signal), not a hardcoded 0.85 action mix.
+  TRADE-OFF to own: top-down hive COORDINATION must then re-emerge from the shared critic + shared per-subspecies
+  policy rather than an explicit queen-command blend. Accepted bet; verify coordination survives in the mouse/game.
+
 ## Design constraints
 
 - **No authored constants** ([[no-authored-threshold-constants]]): the within-life λ (trace decay), the within-life γ,
