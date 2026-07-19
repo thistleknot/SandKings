@@ -186,8 +186,8 @@ half-worship, whose collective will the managers translate into scent for the fa
 
 `SPACE` pause · `S` single-step (paused) · `+/-` speed · `TAB` view (top-down / slice / iso) ·
 `< >` (or `UP/DOWN`) z-level · `R` glyph/block · `P` pheromone overlay · `G` GIF capture ·
-`M` manager screen · `H` saga · `I` look-cursor (then arrows to move; **Shift+arrow jumps 10, hold to
-pan**) · `L` **legend (full key list)** · `ESC` quit.
+`M` manager screen · `B` **live broadcast** (AI caster; `UP/DN` scroll when open) · `H` saga · `I` look-cursor
+(then arrows to move; **Shift+arrow jumps 10, hold to pan**) · `L` **legend (full key list)** · `ESC` quit.
 
 **Keeper's hand:** `1` drop food · `w`/`d` irrigate / deluge · `j` sow seeds · `x`/`c` water level ·
 `a`/`z` sunlight · `5` gift tech · `2-4`/`6-8`/`0` release fauna · `u` firecracker · `9` drought ·
@@ -206,6 +206,20 @@ reading, …) you fold and unfold with a click, so the key stays readable as the
 relations and decisions, and each top soldier's own thought — the neural hive made legible:
 
 ![The mind screen — a maw's thoughts and command pipeline](docs/img/mind.png)
+
+**The live broadcast (`B`)** turns the tank into theatre. An always-on **AI caster** — a local Ollama model
+(`qwen3.5-oc:4b`) on its own thread, so the sim never pauses for it — watches a rolling window of the world and
+narrates it in real time as successive **AGES** (spans of steps): the houses' fortunes, wars and betrayals, madness
+and enlightenment, granaries and irrigation, water and weather, the signs beyond the glass — sportscaster-cadence,
+but for a war of survival. It accrues continuously and scrolls (`UP/DN`) so you can read back the whole saga of a run.
+This is distinct from the `--summarize-every` **chronicle** (a file-based saga written to `<log>.story.md`); the
+broadcast is the *live* feed.
+
+![The live broadcast — the AI caster narrates the age](docs/img/broadcast.png)
+
+*Deep in a run (Year 4): the caster reads madness twisting faith in Dreis-Mern's ranks, House Six-Vik's paper
+alliances, a maw collapsing "under the weight of its own granaries," and enlightenment making one house "a singular
+storm" — every salient thread of the turn, framed as an age.*
 
 ---
 
