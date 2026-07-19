@@ -125,6 +125,13 @@ A full survival→war→conquest→revolt loop (mapped to the Aztecs-meets-Cort�
   cloud (`§`); and because foragers now follow real **ant-colony pheromone trails** (stigmergy — the
   scent the sim always deposited but never read), an enemy can plant a **covert false trail** that lures
   your own foragers into the poison. (`SPEC_CHEMICAL_WAR`.)
+- **Kin-recognition combat — the antenna** — soldiers no longer *omnisciently* detect foes. Each carries a
+  learned **antenna** that reads a rival's pheromone **frequency band** to tell blood from stranger — a
+  Boltzmann strike policy over a heritable **genetic instinct** (hold own band, strike out-of-band),
+  refined by selection. It has **room for error**: a mis-tuned antenna mis-reads a near band and **friendly-
+  fires** on a sibling or ally — and the maw, Spartan/Aztec, **culls its own** defective member, pruning the
+  bad lineage before a mis-strike on an ally can ignite a ruinous war. Every constant is *derived*, never
+  authored (the settle threshold is the friend/foe class count itself). (`SPEC_SKIRMISH_COMBAT`.)
 
 ### 💀 Madness & extinction
 A house left highly agitated **and** keeper-hated slowly ravens toward **madness** — and, unrelieved, dies
@@ -147,6 +154,12 @@ but pay in madness — those who cannot bear the "great mind" *break* (Cthulhu) 
 (`gold Ω`) decode steadily and levy a political **tithe**. Priests offer captured tribute to the gods in
 **Aztec sacrifice** (easing madness, appeasing the keeper), and a zealous priesthood drives **holy war** on
 the infidel houses that read the glass differently. (`SPEC_REVELATION`, `SPEC_MADNESS`.)
+
+Above them, the **chief-priest managers** are the maw's **Aztec warrior-priests**: they *literally do what
+they must*, channelling the maw's will down the **`MAW → MANAGER → SWARM`** pipeline as **pheromone commands**
+the swarm obeys. The maw is their **divine mediator — the hive mind itself**: a stationary queen the soldiers
+half-worship, whose collective will the managers translate into scent for the faithful to act on. (Open the
+`M` screen to watch the command pipeline and pheromone bars.)
 
 ### 🕷️ Fauna, politics, economy, tech
 - **Fauna & domestication** — DF-invader incursions (spiders, scorpions, snakes, anteaters, birds, beetles,
