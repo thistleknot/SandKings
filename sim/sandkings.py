@@ -102,6 +102,7 @@ YEAR_LENGTH = 4 * SEASON_LENGTH
 DOLE_FACTOR = {0: 1.00, 1: 0.75, 2: 0.50, 3: 0.25}   # by season index (T17)
 DOLE_RAMP = (1.00, 0.50, 0.00)                        # per-year floor on the factor
 STORM_INTERVAL_DUST = 200    # Dust season storm cadence (T16)
+MITE_STORM_ENABLED = False   # SPEC_MITE_STORM gate; module default off (battery byte-identical); entrypoint flips baseline-on
 SPOIL_INTERVAL = 10          # Dust spoilage sweep cadence
 SPOIL_CHANCE = 0.02          # per exposed FOOD voxel per sweep
 SEED_COST = 5                # food paid at sowing (T19)
@@ -508,6 +509,19 @@ AFFORDANCE_MAP = {
 # MAW_DIRECTIVE_DIM). Absent (non-neural or pre-AF2) -> policy term neutral -> permit (trait-only).
 AFFORDANCE_CHANNEL = {'scorched_earth': 4, 'builds_granaries': 5, 'keeps_livestock': 6}
 
+# The Tongue (SPEC_TONGUE): masked-prediction language + comprehension layer. Module default False -> the sim never
+# constructs a TongueSystem, never imports torch for it, and read_reach never drifts -> battery byte-identical. The
+# entrypoint flips it on baseline-on. An ADDITIVE learned head; it never mutates the pickled SDM/GRU brain.
+TONGUE_ENABLED = False              # gate; entrypoint flips on unconditionally (baseline-on, opt-out --no-tongue)
+JLENS_ENABLED = False               # SPEC_JLENS gate; entrypoint flips baseline-on. Off ⇒ no thought-lens computed (byte-identical)
+TONGUE_READ_REACH_MAX = 8           # soft cap on the evolvable n-gram order (the fuller breathing bound is SPEC_SEMIPERMEABLE)
+TONGUE_VOLLEY = 200                 # steps per conversational volley (TG6 strobe frame)
+
+# The Breathing Net (SPEC_BREATH): evolvable capacity (brain_hidden, read_reach) as a floating, semi-permeable,
+# log-scaled quantity throttled by a HARD total-compute budget. Module default False -> mutate runs the exact
+# hard-clamp drift -> battery byte-identical. Entrypoint flips baseline-on (opt-out --no-breath).
+BREATH_ENABLED = False
+
 
 def cricket_dynamics(cricket: float, forage: float, dry: bool, flood: bool, frost: bool):
     """Pure land-swarm step (SPEC_FOOD_WEB): the terrestrial consumer-resource model. Returns
@@ -621,6 +635,9 @@ CODEX_INTERVAL = 300         # steps between codex consultations (CX4)
 AUG_MAX = 4                  # max memory-augment level (AUG2)
 AUG_CACHE_STEP = 8           # cache_len added per augment level
 MAW_RL_ENABLED = False       # 85% tier: maw real-RL directive (identity-at-neutral gate)
+COMPREHENSION_RL_ENABLED = False   # SPEC_COMPREHENSION_RL I1: Tongue comprehension + Maslow(need) gate the maw
+#   reward objective. Module default False -> the exact Δsnap reward (battery byte-identical); entrypoint flips
+#   baseline-on. Understanding unlocks the civilized objective; famine collapses it to survival (nature > nurture).
 GRAIN_SCALE = 60.0           # forecast error normaliser (CU2)
 GRAIN_MINT = 5.0             # grains for a perfect forecast
 
@@ -1290,6 +1307,7 @@ class ColonyGenome:
     brain_hidden: int = 64         # evolvable n_nodes per hidden layer (EV1)
     brain_depth: int = 1           # evolvable n_layers of the encoder (EV1)
     brain_ceiling: int = 88        # metamorphosis stage cap on width (MT4)
+    read_reach: int = 3            # SPEC_TONGUE TG1: evolvable n-gram/Markov order of the masked mind (breathing, not a cap)
 
     # Neural hive mind (Maw brain)
     brain: Optional[HiveMindBrain] = None
@@ -1299,6 +1317,15 @@ class ColonyGenome:
         """Gaussian mutation of genome parameters"""
         mutated = ColonyGenome()
         mutated.use_neural = self.use_neural
+        # SPEC_TONGUE TG1: read_reach is carried always (no RNG) and drifts ±1 ONLY when the Tongue is on, so the
+        # regression battery (gate off) consumes zero extra RNG and stays byte-identical.
+        mutated.read_reach = int(getattr(self, 'read_reach', 3))
+        if TONGUE_ENABLED:
+            mutated.read_reach = int(np.clip(mutated.read_reach + np.random.choice([-1, 0, 1]),
+                                             1, TONGUE_READ_REACH_MAX))
+            if BREATH_ENABLED:                            # SPEC_BREATH: read_reach breathes too (budget-throttled)
+                import breath
+                mutated.read_reach = breath.sample_trait('read_reach', mutated.read_reach, 1, TONGUE_READ_REACH_MAX)
 
         for attr in ['aggression', 'tunnel_preference', 'expansion_rate',
                      'defense_investment', 'fertility', 'resilience', 'patience',
@@ -1324,6 +1351,12 @@ class ColonyGenome:
         mutated.brain_ceiling = ceiling
         mutated.brain_hidden = int(np.clip(hid, BRAIN_HIDDEN_MIN,
                                            min(BRAIN_HIDDEN_MAX, ceiling)))
+        # SPEC_BREATH BR3: when on, the width BREATHES within a floating, log-scaled, budget-throttled band instead
+        # of the hard clamp above (off -> the clamp stands, byte-identical). EV4 graft absorbs the width change.
+        if BREATH_ENABLED:
+            import breath
+            mutated.brain_hidden = breath.sample_trait('brain_hidden', hid, BRAIN_HIDDEN_MIN,
+                                                       min(BRAIN_HIDDEN_MAX, ceiling))
         mutated.brain_depth = int(np.clip(dep, 1, BRAIN_DEPTH_MAX))
 
         # Neural brain mutation (slow - only when Maw survives). If the
@@ -1343,6 +1376,19 @@ class ColonyGenome:
         elif self.use_neural:
             from neuroevolution import build_brain
             mutated.brain = build_brain(mutated)
+
+        # SPEC_NEAT: when on, the readout's TOPOLOGY evolves too — the child inherits the parent's NEAT genome and
+        # grows it toward the SPEC_BREATH-budgeted size (grow only as rivals shrink), installed as the child brain's
+        # mask; the maw-RL learns the weights. Off ⇒ no topology, dense readout, ZERO extra RNG (byte-identical).
+        import neat as _neat
+        if _neat.NEAT_ENABLED and self.use_neural and getattr(mutated, 'brain', None) is not None:
+            E, M = int(mutated.brain.readout.weight.shape[0]), int(mutated.brain.readout.weight.shape[1])
+            parent_ng = getattr(self, 'neat_genome', None)
+            grow_to = None
+            if BREATH_ENABLED and parent_ng is not None:
+                import breath
+                grow_to = breath.sample_trait('neat_size', parent_ng.size(), E, M * E)
+            mutated.neat_genome = _neat.evolve_and_install(mutated.brain, parent_ng, grow_to=grow_to)
 
         return mutated
 
@@ -1428,10 +1474,12 @@ class SandKing:
 class Beast:
     """Wild fauna (T48): a DF-style invader, not a colony citizen.
 
-    Beasts live outside the voxel grid (like units), spawn as single
-    incursions from the map edge, and either die for their bounty or
-    wander off after FAUNA_RAMPAGE steps. hunt_range 0 = neutral:
-    strikes only once provoked.
+    Beasts live outside the voxel grid (like units) and MANIFEST inside the
+    sealed terrarium as single incursions (SPEC_INCURSION) — to the inhabitants
+    they simply appear, a mechanism beyond the firmament, no breach of the glass.
+    They never leave: an invader either dies for its bounty or, unslain, perishes
+    in place after FAUNA_RAMPAGE steps. hunt_range 0 = neutral: strikes only once
+    provoked.
     """
     species: str
     position: Tuple[int, int, int]
@@ -2122,6 +2170,26 @@ class SandKingsSimulation:
         """Execute one simulation step"""
         self.step_count += 1
 
+        # SPEC_TONGUE TG6: strobed conversational volleys — a chat-log frame every TONGUE_VOLLEY steps. Gate off -> skip.
+        if TONGUE_ENABLED:
+            try:
+                self._tongue().volley_tick(self)
+            except Exception:
+                pass
+
+        # SPEC_BREATH: refresh the floating (mean, sdev, total) of the capacity traits so the next respawn's mutation
+        # breathes within the current population (the shared budget is DERIVED from the trait's bounds in
+        # breath.sample_trait — no constant to set). Gate off -> skip (byte-identical).
+        if BREATH_ENABLED and self.step_count % 100 == 0:
+            try:
+                import breath
+                living = [c for c in self.colonies if c.is_alive()]
+                if living:
+                    breath.observe_population('brain_hidden', [int(getattr(c.genome, 'brain_hidden', 64)) for c in living])
+                    breath.observe_population('read_reach', [int(getattr(c.genome, 'read_reach', 3)) for c in living])
+            except Exception:
+                pass
+
         # 0. SEASON TICK (T16) - first, so boundary feedings use the new dole
         if self.step_count % SEASON_LENGTH == 0:
             name = SEASONS[self.season_index()]
@@ -2185,6 +2253,11 @@ class SandKingsSimulation:
 
         # 3c-w. DESERT WEATHER (SPEC_WEATHER W1-W3): flood, hail, frost
         self._weather_tick(season)
+
+        # 3c-m. MITE STORM (SPEC_MITE_STORM): the plague descends (Growth/Dust) and infests exposed hosts; the
+        # infestation then spreads/cures/kills every step (persists after the storm). Gated -> byte-identical off.
+        self._mite_tick(season)
+        self._mite_infest_tick()
 
         # 3c-a. ARENA TEMPERATURE (SPEC_ARENA AR3): the keeper's non-lethal
         # heat/cold - drains hoards and wilts fields, never kills
@@ -2564,7 +2637,7 @@ class SandKingsSimulation:
         if not MAW_RL_ENABLED:
             return
         try:
-            from maw_brain import ColonyMawRL, MAW_LR, patience_to_gamma
+            from maw_brain import ColonyMawRL, MAW_LR, MAW_DIRECTIVE_DIM, patience_to_gamma
             import torch
         except Exception:
             return
@@ -2625,8 +2698,26 @@ class SandKingsSimulation:
                     + (2.0 if colony.maw.alive else 0.0))          # survival
             prev = getattr(colony, '_maw_rl_prev', None)
             if prev is not None:
-                rl.observe_reward(snap - prev)   # reward for the LAST directive
+                if COMPREHENSION_RL_ENABLED:
+                    # SPEC_COMPREHENSION_RL I1: reward = Δsurvival + need_met·(floor + k)·Δobjective. Survival is
+                    # always credited; the civilized objective (food/territory/kills) is gated by comprehension k
+                    # (understanding) AND need_met (the Maslow gate). k=0/famine -> survival only (nature > nurture).
+                    survival_snap = float(len(colony.units)) + (2.0 if colony.maw.alive else 0.0)
+                    objective_snap = snap - survival_snap           # remainder = food/50 + territory/100 + kills·0.5
+                    prev_surv = getattr(colony, '_maw_rl_prev_surv', survival_snap)
+                    prev_obj = getattr(colony, '_maw_rl_prev_obj', objective_snap)
+                    k = self._tongue().comprehension(colony.colony_id) if TONGUE_ENABLED else 0.0
+                    pop = max(1, len(colony.units))                 # need_met: threshold-free soft food-security ratio
+                    need_met = colony.maw.food_stored / (colony.maw.food_stored + pop)   # ->0 famine, ->1 plenty
+                    floor = 1.0 / MAW_DIRECTIVE_DIM                 # illiterate baseline = one directive-dim's share
+                    rl.observe_reward((survival_snap - prev_surv)
+                                      + need_met * (floor + k) * (objective_snap - prev_obj))
+                else:
+                    rl.observe_reward(snap - prev)   # reward for the LAST directive (byte-identical path)
             colony._maw_rl_prev = snap
+            if COMPREHENSION_RL_ENABLED:             # bank the split prevs only when gated on (off = byte-identical)
+                colony._maw_rl_prev_surv = float(len(colony.units)) + (2.0 if colony.maw.alive else 0.0)
+                colony._maw_rl_prev_obj = snap - colony._maw_rl_prev_surv
             colony.maw_directive = rl.act(obs)   # emit this cycle's directive
             # surface the maw's learning in the drama feed (throttled to each RL update)
             if rl.updates and rl.updates != getattr(colony, '_maw_rl_logged', -1):
@@ -3950,6 +4041,30 @@ class SandKingsSimulation:
         self.gift = ((x, y, z), kind)
         self._log_event("A strange gift descends from above")
 
+    def keeper_command_war(self, colony: Colony, target: Colony) -> bool:
+        """SPEC_TONGUE TG5: the keeper COMMANDS a house to war on `target`. Compliance is never guaranteed —
+        obey = comprehension × loyalty × alignment. A house that doesn't understand the words, resents you
+        (low loyalty), or would be endangered (attacking a stronger house) refuses. Returns whether it obeyed.
+
+        Require: colony/target living Colonies. Guarantee: sets colony.war_target/at_war iff it obeyed; logs either
+        way. TONGUE off -> comprehension 0 -> the words fall as noise (it will not move)."""
+        from tongue import obeys
+        if colony is None or target is None or colony is target:
+            return False
+        comp = self._tongue().comprehension(colony.colony_id) if TONGUE_ENABLED else 0.0
+        loyalty = float(getattr(colony.genome, 'loyalty', 0.5))
+        mine, theirs = composite_power(colony), composite_power(target)
+        alignment = mine / (mine + theirs + 1e-9)        # attacking the weaker is self-aligned; the stronger is not
+        if obeys(comp, loyalty, alignment):
+            colony.at_war = True
+            colony.war_target = target.colony_id
+            self._log_event(f"House {self._house_name(colony)} heeds the keeper — war upon"
+                            f" House {self._house_name(target)}")
+            return True
+        self._log_event(f"House {self._house_name(colony)} hears the command to war"
+                        f" upon House {self._house_name(target)} — and does not move")
+        return False
+
     def keeper_open_door(self, colony: Colony):
         """BRK-C/K10: the keeper's mercy - lift the glass for one house.
         Mirrors every keeper verb: honors the PS5 bound-god gate first, so a
@@ -4197,8 +4312,12 @@ class SandKingsSimulation:
                 if max(abs(tx - px), abs(ty - py)) <= speed:
                     e['kind'] = 'blast'; e['pos'] = e['target']; e['ttl'] = BLAST_TTL   # arrived -> burst
                 else:
-                    e['pos'] = (px + int(np.sign(tx - px)) * speed,
-                                py + int(np.sign(ty - py)) * speed, pz)
+                    # Step TOWARD the target capped at the remaining distance per axis, so the shot
+                    # never overshoots its (in-bounds) target or the wall. A fixed sign*speed step used
+                    # to jump past an edge-hugging maw (e.g. px 77 -> 80 at speed 3), pushing the
+                    # projectile out of the tank. Nothing surpasses the edge — it lands inside.
+                    e['pos'] = (px + max(-speed, min(speed, tx - px)),
+                                py + max(-speed, min(speed, ty - py)), pz)
                 alive.append(e)
             else:
                 e['ttl'] -= 1
@@ -4409,8 +4528,10 @@ class SandKingsSimulation:
             if max(abs(tx - px), abs(ty - py)) <= SIEGE_TOWER_SPEED:
                 self._breach_palisade(t['target'], t['owner'])
                 continue                                                    # spent on arrival
-            t['pos'] = (px + int(np.sign(tx - px)) * SIEGE_TOWER_SPEED,
-                        py + int(np.sign(ty - py)) * SIEGE_TOWER_SPEED, pz)
+            # Cap each axis step at the remaining distance so the tower never overshoots its
+            # (in-bounds) target maw or the wall — same anti-escape rule as the launched shots.
+            t['pos'] = (px + max(-SIEGE_TOWER_SPEED, min(SIEGE_TOWER_SPEED, tx - px)),
+                        py + max(-SIEGE_TOWER_SPEED, min(SIEGE_TOWER_SPEED, ty - py)), pz)
             alive.append(t)
         self.siege_towers = alive
 
@@ -4859,6 +4980,66 @@ class SandKingsSimulation:
             self.codex = Codex()
         return self.codex
 
+    def _tongue(self) -> 'TongueSystem':
+        """SPEC_TONGUE: the lazy shared masked-mind (built once, never pickled). Only reached when TONGUE_ENABLED."""
+        if not hasattr(self, '_tongue_sys') or self._tongue_sys is None:
+            from tongue import TongueSystem
+            self._tongue_sys = TongueSystem(chat_stem='sandkings.chat')   # TG6: <run>.chat.md/.jsonl (gitignored)
+        return self._tongue_sys
+
+    def keeper_send_map(self, colony: Colony) -> float:
+        """SPEC_TONGUE TG8: show a house a rendered map of its OWN world; return how strongly it recognizes it
+        (cosine of the image embedding to its world-token centroid, [-1,1]). High = 'it saw a picture of its cage.'"""
+        if not TONGUE_ENABLED or colony is None:
+            return 0.0
+        return float(self._tongue().recognize_map(self, colony.colony_id))
+
+    def _tongue_observe(self, colony, hidden, active_words) -> None:
+        """SPEC_TONGUE TG1/TG4: one masked-prediction step over a colony's active world-tokens + its comprehension
+        meter. Non-critical (wrapped) — a tongue error must never break a sim step; it is an ADDITIVE observer.
+
+        PERF (balance objective/compute): comprehension is a slow EMA (time-constant >> #colonies), so the Tongue
+        (bag-of-words + ensemble mixture + FOL triplets — the whole ~16-backward-pass/step cost) trains ONE colony
+        per step, ROUND-ROBIN, not every colony every step. ~Nx less per-step Tongue cost, negligible trajectory
+        change. Tongue is gate-OFF in the battery ⇒ this never affects byte-identity. The J-lens hidden is still
+        stored EVERY step (cheap assignment) so the demand-driven readout stays fresh."""
+        try:
+            # SPEC_JLENS: store only — thoughts computed ON DEMAND (colony_thoughts), keeping the ~698-wide lens OUT
+            # of the per-step hot loop (pure observability). Kept every step regardless of the training round-robin.
+            if JLENS_ENABLED:
+                colony._jlens_hidden = hidden
+            n = len(self.colonies)
+            if n > 1 and (colony.colony_id % n) != (self.step_count % n):
+                return                               # not this colony's training turn this step
+            reach = int(getattr(colony.genome, 'read_reach', 3))
+            self._tongue().observe(colony.colony_id, hidden, active_words, reach=reach)
+        except Exception:
+            pass
+
+    def colony_thoughts(self, colony):
+        """SPEC_JLENS (demand-driven): a colony's unspoken thoughts + treachery, computed from its last stored
+        encoding ONLY when read (console / saga / inspection) — never eagerly per step. ([], 0.0) if unavailable."""
+        if not JLENS_ENABLED:
+            return [], 0.0
+        h = getattr(colony, '_jlens_hidden', None)
+        if h is None:
+            return [], 0.0
+        return self._tongue().lens(h)
+
+    def keeper_inject_thought(self, colony, token: str, strength: float = None) -> bool:
+        """SPEC_JLENS: the god-hand at the level of MIND — press a concept into a colony's NEXT encoding so it leans
+        that way. Stores a one-shot injection the next neural step consumes. Returns True if the token is in the
+        Tongue's vocabulary (else a no-op). Keeper-triggered only, so it never perturbs an unattended sim."""
+        if not JLENS_ENABLED:
+            return False
+        t = self._tongue()
+        if t is None or token not in getattr(t, '_id', {}):
+            return False
+        # strength=None ⇒ inject_thought scales the push to the encoding's own magnitude (identity-relative)
+        colony._inject_thought = (token, strength)
+        self._log_event(f"The keeper presses '{token}' into House {self._house_name(colony)}'s mind")
+        return True
+
     def _can_read(self, colony: Colony) -> bool:
         """CX4: awakened, or holding a raspberry-pi controller."""
         from machines import VM_FUEL
@@ -4880,6 +5061,14 @@ class SandKingsSimulation:
             words = instincts_for(probe, colony, self) if probe is not None \
                 else ["survival"]
             _passage, lesson = codex.consult(words)
+            # SPEC_TONGUE TG3: an enlightened colony also READS the retrieved WikiText passage (masked LM over the
+            # shared space) — "reads beyond the glass." Gate off / non-enlightened -> skip. Non-critical.
+            if TONGUE_ENABLED and getattr(colony, 'enlightened', False) and _passage:
+                try:
+                    import random as _rr
+                    self._tongue().read_text(str(_passage).split()[:64], _rr.Random())
+                except Exception:
+                    pass
             if lesson is None:
                 continue
             scale = ENLIGHTENED_CODEX_MULT if getattr(colony, 'enlightened', False) else 1.0  # EN5
@@ -5514,6 +5703,59 @@ class SandKingsSimulation:
                 self.world.voxels[p] = VoxelType.TILLED.value  # crop -> dead
                 self._crops().pop(p, None)
 
+    def _mite_tick(self, season: int):
+        """SPEC_MITE_STORM MS1: a locust plague descends in Growth/Dust with a probability that RISES with standing-
+        vegetation coverage (boom-bust) and settles on EXPOSED (surface) hosts as an infestation. Non-overlapping
+        with sandstorm/hail (mirror `mite_until`). Reuses STORM_DURATION. Gated → byte-identical off (zero RNG off)."""
+        if not MITE_STORM_ENABLED:
+            return
+        w = self.world
+        veg = (VoxelType.CROP.value, VoxelType.CROP_RIPE.value, VoxelType.SHRUB_RIPE.value)
+        storm_interval = STORM_INTERVAL_DUST if season == 2 else STORM_INTERVAL
+        if (season in (1, 2)
+                and self.step_count % storm_interval == 0
+                and getattr(self, 'mite_until', 0) <= self.step_count
+                and getattr(self, 'storm_until', 0) <= self.step_count
+                and getattr(self, 'hail_until', 0) <= self.step_count):
+            cover = float(np.isin(w.voxels, veg).sum()) / max(1, w.width * w.height)   # boom-bust: greener → likelier
+            if random.random() < cover:
+                self.mite_until = self.step_count + STORM_DURATION
+                self._log_event("A mite storm descends - the swarm blackens the sky!")
+        if getattr(self, 'mite_until', 0) > self.step_count:
+            for colony in self.colonies:                                  # the swarm settles on exposed hosts
+                for unit in colony.units:
+                    x, y, z = unit.position
+                    if z >= w.surface_z(x, y):
+                        unit.infested = True
+            if self.mite_until == self.step_count + 1:
+                self._log_event("The swarm moves on - but the mites remain, under the skin.")
+
+    def _mite_infest_tick(self):
+        """SPEC_MITE_STORM MS2: infestation persists as a CONTAGIOUS DoT. Adjacent to WATER → cured (the mites
+        drown); else the mites drain the host (POISON_DAMAGE) and, surviving, jump to one adjacent UNINFESTED host
+        (any colony — biological spillover). Early-returns when nobody is infested (gate-off = no-op, byte-identical)."""
+        if not MITE_STORM_ENABLED:
+            return
+        w = self.world
+        infested = [(c, u) for c in self.colonies for u in c.units if getattr(u, 'infested', False)]
+        if not infested:
+            return
+        by_pos = {tuple(u.position): (c, u) for c in self.colonies for u in c.units}
+        for c, u in infested:
+            x, y, z = u.position
+            if any(w.get_voxel(x + dx, y + dy, z) == VoxelType.WATER
+                   for dx in (-1, 0, 1) for dy in (-1, 0, 1) if (dx, dy) != (0, 0)):
+                u.infested = False                                        # drowned the mites (the cleaning regimen)
+                continue
+            if u.take_damage(POISON_DAMAGE, 0.0):                         # mites under the skin drain the host
+                c.remove_unit(u); w.set_voxel(x, y, z, VoxelType.CORPSE)
+                by_pos.pop((x, y, z), None)
+                continue
+            targets = [by_pos.get((x + dx, y + dy, z)) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if (dx, dy) != (0, 0)]
+            targets = [t for t in targets if t is not None and not getattr(t[1], 'infested', False)]
+            if targets:
+                random.choice(targets)[1].infested = True                 # contagion: one host jump per tick
+
     def _weather_tick(self, season: int):
         """W1-W3: flood surge, hail, and cold snaps. All state is plain
         ints behind getattr (old checkpoints resume clear-skied)."""
@@ -6114,51 +6356,64 @@ class SandKingsSimulation:
         if not beasts:
             return
         for beast in beasts[:]:
-            if (beast.fleeing
-                    or self.step_count - beast.spawned_at > FAUNA_RAMPAGE):
-                if self._beast_leaves(beast):
-                    continue
+            if self.step_count - beast.spawned_at > FAUNA_RAMPAGE:
+                # SPEC_INCURSION IN2: the terrarium is sealed — an unslain invader can't pass back
+                # beyond the firmament, so it exhausts itself and perishes in place, leaving a corpse.
+                # (Also frees the one-incursion gate from deadlocking on an immortal straggler.)
+                if self.world.in_bounds(*beast.position):
+                    self.world.set_voxel(*beast.position, VoxelType.CORPSE)
+                self._fauna().remove(beast)
+                if not self._fauna():
+                    self._log_event(f"The {beast.species} withers and perishes in the sands")
+                continue
+            if beast.fleeing:
+                self._beast_retreat(beast)   # evade toward open interior; never past the glass
             else:
                 self._beast_ai(beast)
             self._beast_combat(beast)
 
     def _spawn_incursion(self):
-        """Roll a species and spawn its pack at one random map edge."""
+        """SPEC_INCURSION IN1: MANIFEST a species' pack INSIDE the sealed terrarium — to the inhabitants it
+        simply appears (a mechanism beyond the firmament), no breach of the glass. The manifestation site is
+        drawn from a mix of modes — a margin inside a random wall, a corner, or an overhead drop onto an
+        interior patch — and the pack jitters around it, every cell kept strictly off the glass."""
         species = random.choices(list(FAUNA),
                                  weights=[FAUNA[s][0] for s in FAUNA])[0]
         _, hp, atk, pack, hunt, bounty = FAUNA[species]
         w, h, d = self.world.dimensions
-        edge = random.choice(['n', 's', 'e', 'w'])
+        mode = random.choice(['wall', 'corner', 'overhead'])
+        if mode == 'wall':
+            bx, by = {'n': (None, 2), 's': (None, h - 3),
+                      'w': (2, None), 'e': (w - 3, None)}[random.choice(['n', 's', 'e', 'w'])]
+        elif mode == 'corner':
+            bx, by = random.choice([(2, 2), (w - 3, 2), (2, h - 3), (w - 3, h - 3)])
+        else:                                   # overhead: lowered onto an interior patch
+            bx, by = random.randint(w // 4, 3 * w // 4), random.randint(h // 4, 3 * h // 4)
         for _ in range(random.randint(*pack)):
-            if edge == 'n':
-                x, y = random.randint(2, w - 3), 2
-            elif edge == 's':
-                x, y = random.randint(2, w - 3), h - 3
-            elif edge == 'w':
-                x, y = 2, random.randint(2, h - 3)
-            else:
-                x, y = w - 3, random.randint(2, h - 3)
+            x = bx if bx is not None else random.randint(2, w - 3)
+            y = by if by is not None else random.randint(2, h - 3)
+            x = int(np.clip(x + random.randint(-2, 2), 1, w - 2))   # jitter the pack, off the glass
+            y = int(np.clip(y + random.randint(-2, 2), 1, h - 2))
             z = min(self.world.surface_z(x, y) + 1, d - 1)
             self._fauna().append(Beast(species, (x, y, z), hp, atk, hunt,
                                        bounty, spawned_at=self.step_count))
         self._log_event(FAUNA_EVENTS[species])
 
-    def _beast_leaves(self, beast: 'Beast') -> bool:
-        """Walk to the nearest edge; True once gone (incursion over)."""
-        beast.fleeing = True
+    def _beast_retreat(self, beast: 'Beast') -> None:
+        """SPEC_INCURSION IN2: a spooked invader (a squirrel slipping a lone attacker, a bird wheeling off a
+        strike) evades — but the tank is sealed, so it flees toward open interior ground, never toward (or
+        through) the glass. It stays until slain or until it perishes at FAUNA_RAMPAGE."""
         x, y, z = beast.position
         w, h = self.world.width, self.world.height
-        if x <= 1 or y <= 1 or x >= w - 2 or y >= h - 2:
-            self._fauna().remove(beast)
-            if not self._fauna():
-                self._log_event(f"The {beast.species} incursion moves on")
-            return True
-        if min(x, w - 1 - x) <= min(y, h - 1 - y):
-            target = (0 if x < w - 1 - x else w - 1, y, z)
+        nearest = min((u for c in self.colonies for u in c.units),
+                      key=lambda u: abs(u.position[0] - x) + abs(u.position[1] - y),
+                      default=None)
+        if nearest is not None:
+            tx = int(np.clip(x + int(np.sign(x - nearest.position[0])) * 4, 2, w - 3))
+            ty = int(np.clip(y + int(np.sign(y - nearest.position[1])) * 4, 2, h - 3))
         else:
-            target = (x, 0 if y < h - 1 - y else h - 1, z)
-        self._beast_move(beast, target)
-        return False
+            tx, ty = w // 2, h // 2          # no threat in sight: drift to the open center
+        self._beast_move(beast, (tx, ty, z))
 
     def _beast_move(self, beast: 'Beast', target: Tuple[int, int, int]):
         """One move toward target: birds fly 3, snakes swim through sand."""
@@ -8973,6 +9228,16 @@ class SandKingsSimulation:
                 encs = colony.genome.brain(states)           # (B, encoding) — ONE call
             for u, e in zip(soldiers, encs):
                 enc_map[id(u)] = e
+        # SPEC_JLENS: apply a pending keeper thought-injection — steer every soldier's encoding toward the pressed
+        # token before the colony acts (the god-hand at the level of mind). One-shot (consumed here). Keeper-only,
+        # so with no press (the battery) nothing fires ⇒ byte-identical.
+        inj = getattr(colony, '_inject_thought', None)
+        if JLENS_ENABLED and inj is not None and enc_map:
+            t = self._tongue()
+            if t is not None:
+                token, strength = inj
+                enc_map = {k: t.inject_thought(e, token, strength) for k, e in enc_map.items()}
+            colony._inject_thought = None
         per_colony[colony.colony_id] = enc_map
         return enc_map
 
@@ -9794,10 +10059,6 @@ def main():
     parser.add_argument('--summary-host', default='http://localhost:11434', metavar='URL',
                         help='Ollama host (default http://localhost:11434).')
     parser.add_argument('--num-colonies', type=int, default=0, help='Number of colonies (0=random 3-5)')
-    parser.add_argument('--no-dynamic', action='store_true',
-                        help='Disable dynamic population + succession (baseline: ON — the '
-                             'colony count breathes 2..8, a dead queen triggers a Spartan '
-                             'succession drama).')
     parser.add_argument('--canon', action='store_true',
                         help="Seat the novella's four houses: Crimson (creative), "
                              "Pale (favored), Sable (wise), Amber (underdog)")
@@ -9824,93 +10085,16 @@ def main():
     parser.add_argument('--subjugation', action='store_true',
                         help='Enable the subjugation economy: at-war colonies '
                              'capture broken enemies as thralls (SPEC_SUBJUGATION)')
-    parser.add_argument('--wages', action='store_true',
-                        help='Enable the wage market: colonies hire labor, license tech, '
-                             'and trade goods at negotiated prices (SPEC_WAGES)')
     parser.add_argument('--bargain', action='store_true',
-                        help='Enable the full inter-colony bargain: each pair '
-                             'chooses annihilate / subjugate / wage by net '
-                             'extraction, driving capture and the wage market '
-                             '(SPEC_BARGAIN; supersedes --subjugation and --wages)')
-    parser.add_argument('--no-hydro', action='store_true',
-                        help='Disable water engineering (baseline: ON — the oasis springs, '
-                             'water flows and pools, colonies dig rivers/reservoirs/dikes, '
-                             'boats cross water).')
-    parser.add_argument('--no-maw-rl', action='store_true',
-                        help='Disable the 85:15 real-RL brain (baseline: ON — the maw learns a '
-                             'colony directive (85%%), the spawn learn a bounded local residual '
-                             '(15%%); needs neural).')
-    parser.add_argument('--no-guppies', action='store_true',
-                        help='Disable the oasis guppy pond (baseline: ON — algae grows, guppies '
-                             'breed, and the surplus surfaces as harvestable food; SPEC_GUPPIES).')
-    parser.add_argument('--no-guppy-predator', action='store_true',
-                        help='Disable predatory guppies (baseline: ON — an overgrown shoal snaps at exposed '
-                             'spawn near the water and surfaces as huntable beasts; SPEC_FAUNA_ECOLOGY).')
-    parser.add_argument('--no-domestication', action='store_true',
-                        help='Disable taming (baseline: ON — a unit adjacent to a wild beast may tame it, '
-                             'danger-scaled; a tamed beast stops hunting its owner; SPEC_DOMESTICATION).')
-    parser.add_argument('--no-effects', action='store_true',
-                        help='Disable launched-projectile / blast effects (baseline: ON — a catapult shot '
-                             'visibly arcs across the board and bursts, firecrackers flash; SPEC_FAUNA_ECOLOGY).')
-    parser.add_argument('--no-madness', action='store_true',
-                        help='Disable the madness accumulator (baseline: ON — a maw left highly agitated AND '
-                             'keeper-hated slowly ravens toward madness and, unrelieved, dies raving; SPEC_MADNESS).')
-    parser.add_argument('--no-poison', action='store_true',
-                        help='Disable chemical warfare (baseline: ON — a siege house lobs a poison shell that '
-                             'blooms a decaying cloud at its war target; SPEC_CHEMICAL_WAR).')
-    parser.add_argument('--no-stigmergy', action='store_true',
-                        help='Disable forager pheromone trail-following (baseline: ON — ants lay FOOD_TRAIL '
-                             'scent toward food and follow kin trails when they see none; enemies can plant '
-                             'covert FALSE trails that lure foragers into poison; SPEC_CHEMICAL_WAR CW3).')
-    parser.add_argument('--no-siege', action='store_true',
-                        help='Disable siege engines beyond the catapult (baseline: ON — a siege house looses a '
-                             'fast direct ballista bolt at its war target; SPEC_SIEGE).')
-    parser.add_argument('--no-revelation', action='store_true',
-                        help='Disable revelation (baseline: ON — signs burn in the night sky; the maws learn '
-                             'to decode them for tech, omens, and divine edicts; SPEC_REVELATION).')
-    parser.add_argument('--no-priests', action='store_true',
-                        help='Disable the priest caste (baseline: ON — mad prophets channel the signs (fast '
-                             'decode, Cthulhu-break risk) and devout soothsayers levy a tithe; SPEC_REVELATION R2).')
-    parser.add_argument('--no-crickets', action='store_true',
-                        help='Disable the cricket swarm (baseline: ON — the terrestrial food guild; '
-                             'breeds on plant matter, booms in Dust, dies in flood/frost; SPEC_FOOD_WEB).')
-    parser.add_argument('--no-snares', action='store_true',
-                        help='Disable snares (baseline: ON — spider webs and keeper string/toothpick '
-                             'weirs by the water passively catch guppies/crickets into food; SPEC_FOOD_WEB).')
-    parser.add_argument('--no-fishing', action='store_true',
-                        help='Disable fishing (baseline: ON — a worker beside water draws the shared '
-                             'shoal into food; lean in Chill; SPEC_FLORA).')
-    parser.add_argument('--no-shrubs', action='store_true',
-                        help='Disable berry shrubs (baseline: ON — perennial bushes ripen to forageable '
-                             'berries, regrow after harvest, die back in Chill; SPEC_FLORA).')
-    parser.add_argument('--no-winter-bite', action='store_true',
-                        help='Disable the winter bite (baseline: ON — the Chill bootstrap floor lifts so '
-                             'an unprepared colony truly starves; a stockpiled one survives; SPEC_WINTER).')
-    parser.add_argument('--no-hoard-planning', action='store_true',
-                        help='Disable hoard planning (baseline: ON — the maw learns to stockpile ahead of '
-                             'the Chill via a winter-crossing reward + a winter-coming state cue; SPEC_WINTER).')
-    parser.add_argument('--no-scarcity-war', action='store_true',
-                        help='Disable dog-eat-dog scarcity war (baseline: ON — the starving raid to eat '
-                             'instead of standing down, hunger raises aggression, raiding plunders food, '
-                             'and the starving eat the fallen; truces hold, kin safe; SPEC_SCARCITY_WAR).')
-    parser.add_argument('--no-suzerain', action='store_true',
-                        help='Disable the Aztec/Cortes new order (baseline: ON — a power strong enough '
-                             'imposes tributary vassalage, a Pax suppresses vassal wars, and resentment or '
-                             'the overlord\'s decline sparks revolt so war resumes; SPEC_SUZERAIN).')
-    parser.add_argument('--no-repression', action='store_true',
-                        help='Disable two-sided repression/resistance on the tribute order (baseline: ON — the '
-                             'vassal withholds and spoils tribute, the overlord pays to suppress the grudge '
-                             '(iron fist), and repression breeds a simmering memory that shortens each next '
-                             'fuse; turnover becomes emergent; SPEC_REPRESSION).')
-    parser.add_argument('--no-diffuse-resistance', action='store_true',
-                        help='Disable wage-vs-whip extraction styles (baseline: ON — an aggressive overlord '
-                             'rules by the whip (fast krypteia -> revolt, Mycenae/Sparta), a peaceable one by '
-                             'the wage (softened grudge -> durable order + a small permanent foot-drag, Minoan); '
-                             'the wage outlasts the whip; SPEC_DIFFUSE_RESISTANCE).')
-    parser.add_argument('--no-learned-basis', action='store_true',
-                        help='Use the random Kanerva codebook instead of the learned shared encoder '
-                             'basis (baseline: ON — a ZCA+codebook fit to the state manifold, ~28x '
-                             'better coverage; needs learned_basis.npz + neural).')
+                        help='Opt into the full inter-colony bargain MODE: each pair '
+                             'chooses annihilate / subjugate / wage by net extraction, driving '
+                             'capture and the wage market (SPEC_BARGAIN; a mode that supersedes '
+                             '--subjugation and changes CAPTURE_CHANCE, so it stays opt-in)')
+    # NOTE: the world features below (tongue, breath, hydro, maw-rl, guppies, crickets, siege, suzerain,
+    # repression, …) are BASELINE and NON-OPTIONAL — there is deliberately no --no-<feature> opt-out. Each is
+    # flipped on unconditionally in the entrypoint; its module gate stays default-False only so the regression
+    # battery (run_tests, which sets the gate directly) is byte-identical. Genuine infra switches remain above:
+    # --no-neural (rule-based fallback for no-PyTorch hosts) and --web/--no-web (attach/detach the console).
     args = parser.parse_args()
     
     print("="*60)
@@ -9920,10 +10104,13 @@ def main():
         print("[NEURAL] hive minds (baseline) - the hive thinks; probes learn")
     print("="*60)
     
-    # Create or resume the simulation (SPEC T13). Persistence is ON by
-    # default now: resume the last state unless --fresh, or unless it is
-    # missing/incompatible (load_checkpoint returns None in those cases).
-    if args.persist is None and not args.fresh:
+    # Create or resume the simulation (SPEC T13). Persistence is ON by default:
+    # terrarium.db is the autosave target whether we resume OR start fresh. --fresh
+    # skips the LOAD (start new) but STILL points persistence at terrarium.db so the
+    # fresh run overwrites it and becomes the game a later plain resume picks up.
+    # (Bug fixed 2026-07-17: --fresh used to leave args.persist None, so the fresh
+    # game never autosaved and the next resume dredged up the stale pre-fresh save.)
+    if args.persist is None:
         args.persist = 'terrarium.db'
     sim = None
     if args.persist and not args.fresh:
@@ -9935,8 +10122,15 @@ def main():
         sim = SandKingsSimulation(width=args.width, height=args.height,
                                  depth=args.depth, num_colonies=args.num_colonies,
                                  canon=getattr(args, 'canon', False),
-                                 dynamic_population=not getattr(args, 'no_dynamic', False))
+                                 dynamic_population=True)
     sim.harsh = args.harsh  # T17 ramp control (applies to resumed sims too)
+    # Make --fresh authoritative NOW: stamp the new world as the newest checkpoint so
+    # that even an exit before the first autosave (or interval save) supersedes the old
+    # terrarium — load_checkpoint reads the newest row, so a step-0 fresh row wins. Only
+    # for an EXPLICIT --fresh; an incompatible-resume fallback keeps the old state intact.
+    if args.fresh and args.persist:
+        save_checkpoint(sim, args.persist)
+        print(f"[>] Fresh terrarium persisted to {args.persist} - the prior save is superseded")
 
     # Story log (SPEC_STORY_LOG): attach a per-turn JSONL chronicle if requested. None-by-default -> the
     # sim.step() hook stays inert (byte-identical). Closed at run end (both --live and headless paths).
@@ -9956,14 +10150,13 @@ def main():
         print(f"[CHAIN] SUBJUGATION ENABLED - at-war colonies capture thralls "
               f"(CAPTURE_CHANCE={SUBJUGATION_LIVE_CHANCE})")
 
-    # --wages: turn the wage market ON for this run only. The module default
-    # WAGE_ENABLED stays False (regression battery byte-identical); here we bump
-    # the live global so colonies negotiate labor, tech licenses, and goods.
-    if getattr(args, 'wages', False):
-        globals()['WAGE_ENABLED'] = True
-        sim.wage_enabled = True
-        print(f"[CHAIN] WAGES ENABLED - colonies trade labor, tech, and goods "
-              f"at negotiated prices (SPEC_WAGES)")
+    # The wage economy is BASELINE — non-optional (SPEC_WAGES); colonies negotiate labor, tech licenses, and goods.
+    # Module default WAGE_ENABLED stays False so the regression battery (which sets the gate directly) is byte-
+    # identical; the entrypoint flips it on here (same pattern as fitness selection / affordances).
+    globals()['WAGE_ENABLED'] = True
+    sim.wage_enabled = True
+    print("[ECON] wage economy ON (baseline) - colonies trade labor, tech, and goods at negotiated prices "
+          "(SPEC_WAGES)")
 
     # --bargain: turn on the full bargain arc (M4: per-pair mode selection by net
     # extraction). Sets BARGAIN_ENABLED=True, enables WAGE_ENABLED and CAPTURE_CHANCE,
@@ -9977,13 +10170,11 @@ def main():
               "subjugate/wage by net extraction; wages win when force merely leaks "
               "(SPEC_BARGAIN)")
 
-    # Water engineering is BASELINE (on unless --no-hydro). The module default
-    # HYDRO_SOURCES_ENABLED stays False only so the regression battery can isolate a
-    # controlled world; the actual game flips it on here.
-    if not getattr(args, 'no_hydro', False):
-        globals()['HYDRO_SOURCES_ENABLED'] = True
-        print("[CHAIN] HYDRO - the oasis springs; water flows, pools, and irrigates; "
-              "colonies dig rivers/reservoirs and boats cross the water (SPEC_HYDRO)")
+    # Water engineering is BASELINE — non-optional. The module default HYDRO_SOURCES_ENABLED stays False only
+    # so the regression battery can isolate a controlled world; the actual game flips it on here.
+    globals()['HYDRO_SOURCES_ENABLED'] = True
+    print("[CHAIN] HYDRO - the oasis springs; water flows, pools, and irrigates; "
+          "colonies dig rivers/reservoirs and boats cross the water (SPEC_HYDRO)")
 
     # Neural hive minds are BASELINE (on unless --no-neural). Fresh colonies and
     # resumed colonies that LACK a brain get one; resumed neural sims keep their
@@ -9991,20 +10182,30 @@ def main():
     # (rule-based leaves every probe at 50%). Only the runnable game turns this on;
     # the genome default use_neural=False keeps the test battery rule-based.
     if not getattr(args, 'no_neural', False) and NEURAL_AVAILABLE:
-        # The LEARNED shared encoder basis is BASELINE (on unless --no-learned-basis). Flip it BEFORE
-        # seeding brains so fresh brains load the learned ZCA+codebook (module default False keeps the
-        # regression battery on the random codebook, byte-identical). GA is untouched (readout evolves).
+        # The LEARNED shared encoder basis is BASELINE — non-optional (falls back to the random codebook only
+        # if learned_basis.npz is absent). Flip it BEFORE seeding brains so fresh brains load the learned
+        # ZCA+codebook (module default False keeps the regression battery on the random codebook, byte-
+        # identical). GA is untouched (readout evolves).
         import neural_hive as _nh
-        if not getattr(args, 'no_learned_basis', False) and _nh._load_learned_basis() is not None:
+        if _nh._load_learned_basis() is not None:
             _nh.LEARNED_BASIS_ENABLED = True
             print("[REPR] learned shared encoder basis active - ZCA+codebook fit to the state manifold "
-                  "(28x better coverage than random; --no-learned-basis to disable)")
+                  "(28x better coverage than random)")
+        # SPEC_NEAT: the readout's TOPOLOGY evolves — baseline-on with neural. Module default neat.NEAT_ENABLED
+        # stays False so the battery is byte-identical; the game flips it on here. NOTE: this masks a resumed
+        # colony's dense readout down to its evolved sparse topology, so a --fresh start shows NEAT cleanly.
+        import neat as _neat
+        _neat.NEAT_ENABLED = True
+        print("[MIND] NEAT wakes — the maw readout is now an evolvable sparse topology (NEAT structure, RL weights); "
+              "it complexifies within the shared compute budget")
         seeded = 0
         for colony in sim.colonies:
             colony.genome.use_neural = True
             if colony.genome.brain is None:
                 colony.genome.brain = HiveMindBrain()
                 seeded += 1
+            if getattr(colony.genome, 'neat_genome', None) is None:
+                colony.genome.neat_genome = _neat.evolve_and_install(colony.genome.brain)
             for unit in colony.units:
                 if (unit.unit_type == UnitType.SOLDIER
                         and getattr(unit, 'brain_layer', None) is None):
@@ -10015,139 +10216,126 @@ def main():
     elif getattr(args, 'no_neural', False):
         print("[RULE-BASED] minds (--no-neural): instincts, no learned concepts")
 
-    # The 85:15 real-RL brain is BASELINE (on unless --no-maw-rl), and only with neural on —
-    # it needs the frozen encoder for its observation. Module default MAW_RL_ENABLED stays
-    # False so the regression battery is byte-identical; the game flips it on here.
-    if (not getattr(args, 'no_maw_rl', False) and not getattr(args, 'no_neural', False)
-            and NEURAL_AVAILABLE):
+    # The 85:15 real-RL brain is BASELINE — non-optional, but only with neural on (it needs the frozen
+    # encoder for its observation). Module default MAW_RL_ENABLED stays False so the regression battery is
+    # byte-identical; the game flips it on here.
+    if not getattr(args, 'no_neural', False) and NEURAL_AVAILABLE:
         globals()['MAW_RL_ENABLED'] = True
         print("[MAW-RL] 85:15 real-RL active - the maw directs (85%), the spawn play (15%); "
-              "both learn from survival (--no-maw-rl to disable)")
+              "both learn from survival")
+        # SPEC_COMPREHENSION_RL I1: the Tongue drives the RL — comprehension unlocks the civilized objective
+        # (gather/hold/defend), the Maslow need-gate collapses it to survival under famine (nature > nurture).
+        globals()['COMPREHENSION_RL_ENABLED'] = True
+        print("[MIND] comprehension drives the maw — understanding unlocks the civilized objective; "
+              "famine collapses it to bare survival (nature > nurture)")
 
-    # The oasis guppy pond is BASELINE (on unless --no-guppies). Module default GUPPIES_ENABLED
-    # stays False so the regression battery is byte-identical; the game flips it on here.
-    if not getattr(args, 'no_guppies', False):
-        globals()['GUPPIES_ENABLED'] = True
-        print("[GUPPIES] the oasis pond lives - algae feeds the shoal, guppies breed, and the "
-              "surplus surfaces as food to harvest (--no-guppies to disable)")
+    # The oasis guppy pond is BASELINE — non-optional. Module default GUPPIES_ENABLED stays False so the
+    # regression battery is byte-identical; the game flips it on here.
+    globals()['GUPPIES_ENABLED'] = True
+    print("[GUPPIES] the oasis pond lives - algae feeds the shoal, guppies breed, and the "
+          "surplus surfaces as food to harvest")
 
-    # Predatory guppies are BASELINE (on unless --no-guppy-predator). Module default False keeps the battery
+    # Predatory guppies are BASELINE — non-optional. Module default False keeps the battery
     # byte-identical; only bites when the shoal is overgrown (and only inside the guppy tick).
-    if not getattr(args, 'no_guppy_predator', False):
-        globals()['GUPPY_PREDATOR_ENABLED'] = True
-        print("[SHOAL] an overgrown shoal turns predatory - big guppies drag exposed spawn into the water "
-              "and surface as huntable beasts (--no-guppy-predator to disable)")
+    globals()['GUPPY_PREDATOR_ENABLED'] = True
+    print("[SHOAL] an overgrown shoal turns predatory - big guppies drag exposed spawn into the water "
+          "and surface as huntable beasts")
 
-    # Domestication is BASELINE (on unless --no-domestication). Module default False keeps the battery
+    # Domestication is BASELINE — non-optional. Module default False keeps the battery
     # byte-identical; a unit adjacent to a wild beast may tame it (danger-scaled).
-    if not getattr(args, 'no_domestication', False):
-        globals()['DOMESTICATION_ENABLED'] = True
-        print("[TAME] spawn can domesticate wild beasts - harmless ones easily, predators barely; a tamed "
-              "beast no longer hunts its owner (--no-domestication to disable)")
+    globals()['DOMESTICATION_ENABLED'] = True
+    print("[TAME] spawn can domesticate wild beasts - harmless ones easily, predators barely; a tamed "
+          "beast no longer hunts its owner")
 
-    # Launched effects are BASELINE (on unless --no-effects). Module default False keeps the battery
+    # Launched effects are BASELINE — non-optional. Module default False keeps the battery
     # byte-identical; cosmetic transient state only.
-    if not getattr(args, 'no_effects', False):
-        globals()['EFFECTS_ENABLED'] = True
-        print("[SHOT] catapult shots arc across the board and burst; firecrackers flash (--no-effects)")
-    # Madness is BASELINE (on unless --no-madness). Module default False keeps the battery byte-identical.
-    if not getattr(args, 'no_madness', False):
-        globals()['MADNESS_ENABLED'] = True
-        print("[MAD] neglected, keeper-hated maws slowly go mad and can die raving (--no-madness)")
-    # Chemical war is BASELINE (on unless --no-poison). Module default False keeps the battery byte-identical.
-    if not getattr(args, 'no_poison', False):
-        globals()['POISON_ENABLED'] = True
-        print("[TOX] siege houses lob decaying poison clouds at their war targets (--no-poison)")
-    # Stigmergy is BASELINE (on unless --no-stigmergy). Module default False keeps the battery byte-identical.
-    if not getattr(args, 'no_stigmergy', False):
-        globals()['STIGMERGY_ENABLED'] = True
-        print("[ANT] foragers lay & follow FOOD_TRAIL scent; enemies plant covert false trails (--no-stigmergy)")
-    # Siege engines are BASELINE (on unless --no-siege). Module default False keeps the battery byte-identical.
-    if not getattr(args, 'no_siege', False):
-        globals()['SIEGE_ENGINES_ENABLED'] = True
-        print("[SIEGE] siege houses loose fast ballista bolts across the board (--no-siege)")
-    # Revelation is BASELINE (on unless --no-revelation). Module default False keeps the battery byte-identical.
-    if not getattr(args, 'no_revelation', False):
-        globals()['REVELATION_ENABLED'] = True
-        print("[SKY] signs burn in the night sky; the maws learn to decode them for boons (--no-revelation)")
-    # Priesthood is BASELINE (on unless --no-priests). Module default False keeps the battery byte-identical.
-    if not getattr(args, 'no_priests', False):
-        globals()['PRIESTHOOD_ENABLED'] = True
-        print("[PRIEST] mad prophets channel the signs (Cthulhu-risk); soothsayers tithe (--no-priests)")
+    globals()['EFFECTS_ENABLED'] = True
+    print("[SHOT] catapult shots arc across the board and burst; firecrackers flash")
+    # Madness is BASELINE — non-optional. Module default False keeps the battery byte-identical.
+    globals()['MADNESS_ENABLED'] = True
+    print("[MAD] neglected, keeper-hated maws slowly go mad and can die raving")
+    # Chemical war is BASELINE — non-optional. Module default False keeps the battery byte-identical.
+    globals()['POISON_ENABLED'] = True
+    print("[TOX] siege houses lob decaying poison clouds at their war targets")
+    # Stigmergy is BASELINE — non-optional. Module default False keeps the battery byte-identical.
+    globals()['STIGMERGY_ENABLED'] = True
+    print("[ANT] foragers lay & follow FOOD_TRAIL scent; enemies plant covert false trails")
+    # Siege engines are BASELINE — non-optional. Module default False keeps the battery byte-identical.
+    globals()['SIEGE_ENGINES_ENABLED'] = True
+    print("[SIEGE] siege houses loose fast ballista bolts across the board")
+    # Revelation is BASELINE — non-optional. Module default False keeps the battery byte-identical.
+    globals()['REVELATION_ENABLED'] = True
+    print("[SKY] signs burn in the night sky; the maws learn to decode them for boons")
+    # Priesthood is BASELINE — non-optional. Module default False keeps the battery byte-identical.
+    globals()['PRIESTHOOD_ENABLED'] = True
+    print("[PRIEST] mad prophets channel the signs (Cthulhu-risk); soothsayers tithe")
 
-    # The terrestrial cricket swarm is BASELINE (on unless --no-crickets). Module default
-    # CRICKETS_ENABLED stays False so the regression battery is byte-identical; the game flips it on.
-    if not getattr(args, 'no_crickets', False):
-        globals()['CRICKETS_ENABLED'] = True
-        print("[CRICKETS] the dunes chirp - crickets breed on plant matter, boom in the dry Dust, "
-              "and surface as harvestable food (the land guild; --no-crickets to disable)")
+    # The terrestrial cricket swarm is BASELINE — non-optional. Module default CRICKETS_ENABLED stays False
+    # so the regression battery is byte-identical; the game flips it on.
+    globals()['CRICKETS_ENABLED'] = True
+    print("[CRICKETS] the dunes chirp - crickets breed on plant matter, boom in the dry Dust, "
+          "and surface as harvestable food (the land guild)")
 
-    # Snares are BASELINE (on unless --no-snares). Module default SNARES_ENABLED stays False so the
+    # Snares are BASELINE — non-optional. Module default SNARES_ENABLED stays False so the
     # regression battery is byte-identical; the game flips it on.
-    if not getattr(args, 'no_snares', False):
-        globals()['SNARES_ENABLED'] = True
-        print("[SNARES] webs and keeper string/toothpick weirs catch guppies and crickets into food "
-              "(--no-snares to disable)")
+    globals()['SNARES_ENABLED'] = True
+    print("[SNARES] webs and keeper string/toothpick weirs catch guppies and crickets into food")
 
-    # Fishing is BASELINE (on unless --no-fishing). Module default FISHING_ENABLED stays False so the
+    # Fishing is BASELINE — non-optional. Module default FISHING_ENABLED stays False so the
     # regression battery is byte-identical; the game flips it on.
-    if not getattr(args, 'no_fishing', False):
-        globals()['FISHING_ENABLED'] = True
-        print("[FISHING] workers by the water fish the shared shoal into food — reliable early, lean "
-              "under the Chill ice (--no-fishing to disable)")
+    globals()['FISHING_ENABLED'] = True
+    print("[FISHING] workers by the water fish the shared shoal into food — reliable early, lean "
+          "under the Chill ice")
 
-    # Berry shrubs are BASELINE (on unless --no-shrubs). Module default SHRUBS_ENABLED stays False so the
+    # Berry shrubs are BASELINE — non-optional. Module default SHRUBS_ENABLED stays False so the
     # regression battery is byte-identical; the game flips it on.
-    if not getattr(args, 'no_shrubs', False):
-        globals()['SHRUBS_ENABLED'] = True
-        print("[SHRUBS] berry bushes seed in the growing seasons, ripen to forageable food, regrow after "
-              "harvest, and die back in the Chill (--no-shrubs to disable)")
+    globals()['SHRUBS_ENABLED'] = True
+    print("[SHRUBS] berry bushes seed in the growing seasons, ripen to forageable food, regrow after "
+          "harvest, and die back in the Chill")
 
-    # The winter bite is BASELINE (on unless --no-winter-bite). Module default WINTER_BITE_ENABLED stays
-    # False so the regression battery is byte-identical; the game flips it on.
-    if not getattr(args, 'no_winter_bite', False):
-        globals()['WINTER_BITE_ENABLED'] = True
-        print("[WINTER] the Chill floor lifts — a colony that did not store an annual harvest starves; a "
-              "stockpiled one rides its hoard (--no-winter-bite to disable)")
+    # The winter bite is BASELINE — non-optional. Module default WINTER_BITE_ENABLED stays False so the
+    # regression battery is byte-identical; the game flips it on.
+    globals()['WINTER_BITE_ENABLED'] = True
+    print("[WINTER] the Chill floor lifts — a colony that did not store an annual harvest starves; a "
+          "stockpiled one rides its hoard")
 
-    # Hoard planning is BASELINE (on unless --no-hoard-planning). Module default HOARD_PLANNING_ENABLED
-    # stays False so the regression battery is byte-identical; the game flips it on.
-    if not getattr(args, 'no_hoard_planning', False):
-        globals()['HOARD_PLANNING_ENABLED'] = True
-        print("[HOARD] the maw learns the moon — a winter-crossing reward and a winter-coming cue teach it "
-              "to stockpile ahead of the Chill (--no-hoard-planning to disable)")
+    # Hoard planning is BASELINE — non-optional. Module default HOARD_PLANNING_ENABLED stays False so the
+    # regression battery is byte-identical; the game flips it on.
+    globals()['HOARD_PLANNING_ENABLED'] = True
+    print("[HOARD] the maw learns the moon — a winter-crossing reward and a winter-coming cue teach it "
+          "to stockpile ahead of the Chill")
 
-    # Dog-eat-dog scarcity war is BASELINE (on unless --no-scarcity-war). Module default
-    # SCARCITY_WAR_ENABLED stays False so the regression battery is byte-identical; the game flips it on.
-    if not getattr(args, 'no_scarcity_war', False):
-        globals()['SCARCITY_WAR_ENABLED'] = True
-        print("[WAR] dog-eat-dog — the starving raid to eat, hunger sharpens aggression, raiders plunder "
-              "the larder, and the starving devour the fallen; truces hold, kin safe (--no-scarcity-war)")
+    # Dog-eat-dog scarcity war is BASELINE — non-optional. Module default SCARCITY_WAR_ENABLED stays False
+    # so the regression battery is byte-identical; the game flips it on.
+    globals()['SCARCITY_WAR_ENABLED'] = True
+    print("[WAR] dog-eat-dog — the starving raid to eat, hunger sharpens aggression, raiders plunder "
+          "the larder, and the starving devour the fallen; truces hold, kin safe")
 
-    # The Aztec/Cortes new order is BASELINE (on unless --no-suzerain). Sets BOTH the module gate and the
-    # sim flag (politics.hostile reads sim.suzerain_enabled); module default False keeps the battery
-    # byte-identical.
-    if not getattr(args, 'no_suzerain', False):
-        globals()['SUZERAIN_ENABLED'] = True
-        sim.suzerain_enabled = True
-        print("[ORDER] a dominant power imposes tributary vassalage — a Pax stills the vassals' wars until "
-              "resentment or the overlord's decline sparks revolt and war resumes (--no-suzerain)")
+    # The mite storm is BASELINE — non-optional (SPEC_MITE_STORM). Module default False keeps the battery
+    # byte-identical; the game flips it on. A vegetation-driven plague that infests exposed hosts; the infestation
+    # spreads host-to-host and kills the unchecked, but water washes the mites off.
+    globals()['MITE_STORM_ENABLED'] = True
+    print("[PLAGUE] mite storms ride the green flush — the swarm gets under the skin, spreads host to host, and "
+          "kills the unclean; only water drowns them (--no... nothing: it is the world)")
 
-    # Two-sided repression/resistance is BASELINE (on unless --no-repression). Module global only (no
-    # cross-module reader); default False keeps the battery byte-identical. Needs the order to act on, so it
-    # only bites when suzerainty is also on.
-    if not getattr(args, 'no_repression', False):
-        globals()['REPRESSION_ENABLED'] = True
-        print("[FIST] the tribute order turns two-sided — vassals withhold and sabotage, the overlord pays to "
-              "repress, and the iron fist breeds resentment that shortens each next fuse (--no-repression)")
+    # The Aztec/Cortes new order is BASELINE — non-optional. Sets BOTH the module gate and the sim flag
+    # (politics.hostile reads sim.suzerain_enabled); module default False keeps the battery byte-identical.
+    globals()['SUZERAIN_ENABLED'] = True
+    sim.suzerain_enabled = True
+    print("[ORDER] a dominant power imposes tributary vassalage — a Pax stills the vassals' wars until "
+          "resentment or the overlord's decline sparks revolt and war resumes")
 
-    # Wage-vs-whip extraction styles are BASELINE (on unless --no-diffuse-resistance). Module global only;
-    # default False keeps the battery byte-identical. Shapes the Phase-5 loop, so it only bites with repression on.
-    if not getattr(args, 'no_diffuse_resistance', False):
-        globals()['DIFFUSE_RESISTANCE_ENABLED'] = True
-        print("[STYLE] the overlord's disposition sets the order — the whip (aggressive: fast revolt, Mycenae) "
-              "or the wage (peaceable: durable but foot-dragged, Minoan); the wage outlasts the whip "
-              "(--no-diffuse-resistance)")
+    # Two-sided repression/resistance is BASELINE — non-optional. Module global only (no cross-module
+    # reader); default False keeps the battery byte-identical. Bites only when suzerainty is on.
+    globals()['REPRESSION_ENABLED'] = True
+    print("[FIST] the tribute order turns two-sided — vassals withhold and sabotage, the overlord pays to "
+          "repress, and the iron fist breeds resentment that shortens each next fuse")
+
+    # Wage-vs-whip extraction styles are BASELINE — non-optional. Module global only; default False keeps
+    # the battery byte-identical. Shapes the Phase-5 loop, so it only bites with repression on.
+    globals()['DIFFUSE_RESISTANCE_ENABLED'] = True
+    print("[STYLE] the overlord's disposition sets the order — the whip (aggressive: fast revolt, Mycenae) "
+          "or the wage (peaceable: durable but foot-dragged, Minoan); the wage outlasts the whip")
 
     # Fitness-based selection is BASELINE — always on from the entrypoint, no flag. Module global only;
     # default False keeps the battery byte-identical (gate off -> the original random.choice parent pick).
@@ -10161,6 +10349,56 @@ def main():
     globals()['AFFORDANCES_ENABLED'] = True
     print("[EVO] affordances live — a house scorches, stockpiles, or herds by temperament (genome liability x "
           "policy), not by a hand-tuned rule; expression evolves")
+
+    # The Tongue is BASELINE — non-optional (SPEC_TONGUE). Module global only; default False keeps the battery byte-
+    # identical. An ADDITIVE masked mind: colonies learn their world + language by masked-token prediction;
+    # comprehension is learning-progress; the keeper can talk to them.
+    # SPEC_VOCAB_EXTEND: grow the represented vocabulary to the anchors' concept cloud (nearest neighbours in the
+    # shared geometry) BEFORE the Tongue lazily builds, so its head/embeddings/J-lens size to it. Off ⇒ 42 anchors.
+    import tongue as _tng
+    _tng.VOCAB_EXTEND_ENABLED = True
+    _tng.NEG_SAMPLING = True     # lean synergy: negative-sampling masked-prediction — better objective AND O(active+K),
+    #                              so the large vocabulary is CHEAP, not a latency tax
+    print("[MIND] the vocabulary extends — colonies think in the anchors' concept cloud (nearest neighbours in the "
+          "shared geometry), far beyond the innate seed words; the masked mind learns it by negative sampling")
+
+    globals()['TONGUE_ENABLED'] = True
+    print("[MIND] the Tongue wakes — colonies learn their world by masked-token prediction; comprehension is "
+          "how fast they still learn; read_reach (their n-gram order) evolves")
+
+    # The J-lens is BASELINE (SPEC_JLENS) — read a colony's UNSPOKEN thoughts (the tokens its mind is positioned to
+    # say) via the masked-mind head's Jacobian, and let the keeper press a concept into a house's mind. Module gate
+    # default False keeps the battery byte-identical; a pure-observer readout + a keeper-only steer.
+    globals()['JLENS_ENABLED'] = True
+    print("[MIND] the J-lens opens — a house's silent thoughts can be read (and steered); watch the saga for what "
+          "each broods on before it acts")
+
+    # The ENSEMBLE embedding mixture is BASELINE — baseline-on IFF ensemble_embed.npz is present (built offline by
+    # tools/build_ensemble_embeddings.py). Off / npz absent ⇒ the Tongue's MaskedMind keeps its random table
+    # (byte-identical). The colonies then learn language on a 6-model, universal-geometry-aligned substrate with a
+    # LEARNED blend (SPEC_ENSEMBLE_EMBED). Mirrors the learned_basis.npz pattern.
+    import ensemble_embed as _ee
+    _ens = _ee.load_ensemble()
+    if _ens is not None:
+        _ee.ENSEMBLE_EMBED_ENABLED = True
+        print(f"[MIND] ensemble embeddings active — the Tongue learns on a {len(_ens.names)}-model consensus "
+              f"substrate ({', '.join(_ens.names)}), blend learned by the masked-prediction loss")
+
+    # The FOL Tongue is BASELINE (SPEC_FOL_TONGUE) — baseline-on IFF fol_triplets.npz is present (wikitext decoded
+    # offline into subject-predicate-object triplets by tools/build_fol_triplets.py). Off / npz absent ⇒ the Tongue
+    # keeps its bag-of-words objective (byte-identical). On ⇒ colonies also learn RELATIONAL structure (who did what
+    # to whom) by masked-SLOT prediction, and speak in FOL: predicate(subject, object) [observed|inferred].
+    import fol_tongue as _fol
+    if _fol.load_store() is not None:
+        _fol.FOL_TONGUE_ENABLED = True
+        print("[MIND] the FOL Tongue opens — colonies learn their world as subject-predicate-object triplets "
+              "(masked-slot prediction) and speak in first-order logic: predicate(subject, object) [observed|inferred]")
+
+    # The net BREATHES — baseline, non-optional (SPEC_BREATH). Module global only; default False keeps the battery
+    # byte-identical. Capacity floats within a shared, log-scaled compute budget; the fit grow as rivals shrink.
+    globals()['BREATH_ENABLED'] = True
+    print("[MIND] the net breathes — neural capacity floats within a shared, log-scaled compute budget; a house "
+          "grows its brain only as rivals shrink or die")
 
     if args.live:
         # When run as a script this module is '__main__'; alias it so

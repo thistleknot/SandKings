@@ -224,6 +224,15 @@ def _political(sim, colony, key: str) -> bool:
     return False
 
 
+def _tongue_enabled() -> bool:
+    """SPEC_TONGUE: read the sim gate at runtime without a hard import cycle (sandkings is already loaded)."""
+    try:
+        import sandkings
+        return bool(getattr(sandkings, 'TONGUE_ENABLED', False))
+    except Exception:
+        return False
+
+
 def ground_truths(ctx: Dict) -> Dict[str, bool]:
     """The M1 lexicon evaluated on one unit's context."""
     fr = ctx["foraging_range"]
@@ -360,6 +369,10 @@ class HiveMindMonitor:
         """
         ctx = build_context(unit, colony, sim)
         truths = ground_truths(ctx)
+        # SPEC_TONGUE TG1/TG4: feed the ground-truth-active world-tokens to the shared masked mind (ADDITIVE). Gated
+        # so the battery (gate off) never constructs it -> byte-identical. The active anchors are already computed.
+        if _tongue_enabled():
+            sim._tongue_observe(colony, hidden, [s for s in ANCHOR_SEEDS if truths.get(s)])
         emitted: List[Tuple[float, str]] = []
         for seed in ANCHOR_SEEDS:
             # setdefault: monitors resumed from before a lexicon growth (M10)

@@ -227,6 +227,12 @@ class HiveMindBrain(nn.Module):
         # sparse readout: gather only the k active prototype columns per row.
         # readout.weight is (encoding, M); W[:, idx] -> (encoding, B, k).
         Wg = self.readout.weight[:, idx]                # advanced index -> (E, B, k)
+        # SPEC_NEAT: when a NEAT topology is installed, mask the gathered links (proto -> encoding) so only the
+        # evolved-live connections contribute; the maw-RL learns their weights. Masking AFTER the gather keeps it
+        # tight (only k columns). No mask (NEAT off) -> this branch is skipped and the readout is byte-identical.
+        mask = getattr(self, 'readout_mask', None)
+        if mask is not None:
+            Wg = Wg * mask[:, idx]                      # (E, B, k)
         enc = torch.einsum('bk,ebk->be', acts, Wg) + self.readout.bias
         enc = torch.relu(enc)                           # (B, encoding)
 
@@ -274,6 +280,23 @@ class HiveMindBrain(nn.Module):
                     alpha * soldier_layer.output.bias.data[:rows])
         self.folded_layer_count += 1
         return True
+
+    @torch.no_grad()
+    def apply_neat_genome(self, genome) -> None:
+        """SPEC_NEAT: install the colony's NEAT topology as a boolean (E, M) MASK over the dense readout — only the
+        evolved-live (proto -> encoding) links contribute; the maw-RL learns their weights. An all-ones mask reduces
+        to the dense readout (the byte-identity anchor). Registered as a buffer so it pickles/moves with the brain.
+        Gated caller (sandkings, NEAT on). Fails safe: a genome whose node counts mismatch the readout is ignored."""
+        E, M = self.readout.weight.shape
+        if int(getattr(genome, 'n_in', -1)) != M or int(getattr(genome, 'n_out', -1)) != E:
+            return
+        mask = torch.zeros(E, M)
+        for c in genome.enabled_conns():
+            mask[c.dst - M, c.src] = 1.0
+        if 'readout_mask' in self._buffers:
+            self.readout_mask = mask
+        else:
+            self.register_buffer('readout_mask', mask)
     
     def mutate(self, mutation_rate: float = 0.05):
         """Slow Maw-level mutation (only when Maw survives)"""

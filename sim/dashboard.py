@@ -975,16 +975,13 @@ def main():
                         help="seat the novella's four houses (CH1)")
     parser.add_argument("--no-dynamic", action="store_true",
                         help="disable dynamic population + succession (baseline: ON)")
-    parser.add_argument("--no-hydro", action="store_true",
-                        help="disable water engineering (baseline: ON)")
     parser.add_argument("--no-neural", action="store_true",
                         help="disable neural hive minds (baseline: ON with PyTorch)")
     args = parser.parse_args()
 
-    if not getattr(args, 'no_hydro', False):     # water engineering is baseline
-        import sandkings as _sk
-        _sk.HYDRO_SOURCES_ENABLED = True
-        print("[keeper] HYDRO - the oasis springs; water engineering is live")
+    import sandkings as _sk                       # water engineering is baseline — non-optional
+    _sk.HYDRO_SOURCES_ENABLED = True
+    print("[keeper] HYDRO - the oasis springs; water engineering is live")
 
     sim = None
     if args.persist and not args.fresh:
@@ -995,7 +992,13 @@ def main():
         sim = SandKingsSimulation(width=args.width, height=args.height,
                                   depth=args.depth, num_colonies=args.colonies,
                                   canon=args.canon,
-                                  dynamic_population=not getattr(args, 'no_dynamic', False))
+                                  dynamic_population=True)
+        # --fresh: stamp the new world as the newest checkpoint NOW so it supersedes the
+        # stale terrarium even before the first autosave (load reads the newest row).
+        if args.fresh and args.persist:
+            from sandkings import save_checkpoint
+            save_checkpoint(sim, args.persist)
+            print(f"[keeper] fresh terrarium persisted to {args.persist} - prior save superseded")
     # Neural hive minds are baseline (on unless --no-neural). Seed brains for fresh
     # + resumed-without-brains colonies so the hive thinks and concept probes learn.
     import sandkings as _sk
@@ -1012,8 +1015,9 @@ def main():
                     unit.brain_layer = SoldierLayer(); unit.brain_layer.steps_alive = 0
         print("[keeper] NEURAL hive minds active - the hive thinks; probes learn")
 
-    runner = TerrariumRunner(sim, sps=args.sps,
-                             save_path=None if args.fresh else args.persist)
+    # Autosave to terrarium.db whether fresh or resumed — --fresh overwrites it (skips the
+    # LOAD above), so the fresh game becomes what a later plain resume picks up.
+    runner = TerrariumRunner(sim, sps=args.sps, save_path=args.persist)
     app = create_app(runner)
     runner.start()
     import uvicorn

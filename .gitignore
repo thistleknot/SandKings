@@ -229,3 +229,12 @@ codebase.md
 # Story log runtime output (--log)
 *.jsonl
 *.story.md
+*.chat.md
+
+# Third-party reference checkouts harvested for ideas (NOT part of SandKings; do not commit)
+framspy/
+neopets/
+
+# third-party ALife sim (local reference only, not part of this repo)
+Framsticks55/
+Framsticks55.zip

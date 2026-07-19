@@ -39,6 +39,10 @@ if SIM not in sys.path:
     sys.path.insert(0, SIM)
 
 import sandkings  # torch imported exactly once here (via neural_hive)
+import neat        # SPEC_NEAT gate lives in its own module (not a sandkings attr)
+import ensemble_embed  # SPEC_ENSEMBLE_EMBED gate likewise lives in its own module
+import tongue           # SPEC_VOCAB_EXTEND gate lives here (off ⇒ 42-anchor vocab, byte-identical)
+import fol_tongue        # SPEC_FOL_TONGUE gate lives here (off ⇒ bag-of-words Tongue, byte-identical)
 
 # Feature gates suites may flip; reset before each suite for isolation.
 _GATE_NAMES = ("CAPTURE_CHANCE", "WAGE_ENABLED", "BARGAIN_ENABLED",
@@ -50,13 +54,20 @@ _GATE_NAMES = ("CAPTURE_CHANCE", "WAGE_ENABLED", "BARGAIN_ENABLED",
                "GUPPY_PREDATOR_ENABLED", "DOMESTICATION_ENABLED", "EFFECTS_ENABLED",
                "MADNESS_ENABLED", "POISON_ENABLED", "STIGMERGY_ENABLED",
                "SIEGE_ENGINES_ENABLED", "REVELATION_ENABLED", "PRIESTHOOD_ENABLED",
-               "AFFORDANCES_ENABLED")
+               "AFFORDANCES_ENABLED", "TONGUE_ENABLED", "BREATH_ENABLED", "JLENS_ENABLED",
+               "MITE_STORM_ENABLED", "COMPREHENSION_RL_ENABLED")
 _GATE_DEFAULTS = {n: getattr(sandkings, n) for n in _GATE_NAMES if hasattr(sandkings, n)}
 
 
 def _reset_gates():
     for name, value in _GATE_DEFAULTS.items():
         setattr(sandkings, name, value)
+    neat.NEAT_ENABLED = False        # SPEC_NEAT: off by default (byte-identical); reset registry for suite isolation
+    neat.reset_registry()
+    ensemble_embed.ENSEMBLE_EMBED_ENABLED = False   # SPEC_ENSEMBLE_EMBED: off by default (byte-identical)
+    tongue.VOCAB_EXTEND_ENABLED = False              # SPEC_VOCAB_EXTEND: off by default (42-anchor vocab)
+    tongue.NEG_SAMPLING = False                      # off ⇒ dense masked-prediction (byte-identical)
+    fol_tongue.FOL_TONGUE_ENABLED = False            # SPEC_FOL_TONGUE: off ⇒ bag-of-words Tongue (byte-identical)
 
 
 def _seed():

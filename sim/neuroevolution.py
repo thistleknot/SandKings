@@ -73,6 +73,18 @@ def crossover_genome(a, b, mutation_rate: float = 0.15):
                  'brain_depth'):
         src = a if random.random() < 0.5 else b
         setattr(child, attr, getattr(src, attr, getattr(child, attr)))
+    # SPEC_TONGUE TG1: carry read_reach from parent a (RNG-free -> battery byte-identical); mutate() drifts it only
+    # when TONGUE_ENABLED. No random draw here so the sexual path is unchanged with the gate off.
+    child.read_reach = int(getattr(a, 'read_reach', 3))
+    # SPEC_NEAT: carry a CROSSED adapter topology so the sexual child inherits BOTH bloodlines' structure;
+    # child.mutate() then grows + installs it as the readout mask. Off ⇒ no attribute set, byte-identical.
+    import neat as _neat
+    if _neat.NEAT_ENABLED:
+        a_ng, b_ng = getattr(a, 'neat_genome', None), getattr(b, 'neat_genome', None)
+        if a_ng is not None and b_ng is not None:
+            child.neat_genome = _neat.crossover(a_ng, 1.0, b_ng, 1.0)
+        elif a_ng is not None or b_ng is not None:
+            child.neat_genome = a_ng if a_ng is not None else b_ng
     # mutate() applies gene jitter AND builds/grafts the brain per its genes
     mutated = child.mutate(mutation_rate)
     if mutated.use_neural and _TORCH:

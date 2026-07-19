@@ -384,6 +384,12 @@ def unit_visible_depth(world: VoxelWorld, position: Tuple[int, int, int],
     its column between the unit and the view level.
     """
     x, y, z = position
+    # A position outside the world has no visible depth. Transient render sources — a
+    # catapult shot arcing across (or off) the board, a siege tower / beast / poison cell
+    # at the rim — can sit at or past the edge (e.g. x == width); indexing voxels there
+    # raised IndexError and killed the whole window. Off-world = not visible → None.
+    if not (0 <= x < world.width and 0 <= y < world.height and 0 <= z < world.depth):
+        return None
     if z > z_level:
         return None
     if not np.all(world.voxels[x, y, z + 1:z_level + 1] == VoxelType.AIR.value):
@@ -610,7 +616,7 @@ def build_hud_entries(sim: SandKingsSimulation, sps: float, paused: bool,
             shown = sub(message) if callable(sub) else message
             entries.append((f"[{step}] {shown}"[:38], event_tint(message)))
     for help_line in ("", "SPACE pause  S step", "+/- speed  </> or UP/DN z",
-                      "TAB view  P pheromones  R style",
+                      "TAB/shift+TAB view  P pheromones  R style",
                       "I inspect (click too)  F follow  L legend",
                       "M manager  H saga  G capture  ESC quit",
                       "GIFTS: 1food 2crick 3ant 4spidr 5tech",
@@ -1417,8 +1423,12 @@ class LiveViewer:
             elif key == pygame.K_DOWN:
                 self.z_level = max(0, self.z_level - 1)
             elif key == pygame.K_TAB:
+                # Tab cycles the view forward (TOPDOWN -> SLICE -> ISO); Shift+Tab
+                # steps backward, so the ISO sprite view (surface outlined) is one
+                # keypress away from the default TOPDOWN instead of a full loop.
                 order = (ViewMode.TOPDOWN, ViewMode.SLICE, ViewMode.ISO)
-                self.view_mode = order[(order.index(self.view_mode) + 1)
+                step = -1 if (event.mod & pygame.KMOD_SHIFT) else 1
+                self.view_mode = order[(order.index(self.view_mode) + step)
                                        % len(order)]
             elif key == pygame.K_g:
                 self.capturing = not self.capturing
