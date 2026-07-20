@@ -95,6 +95,9 @@ RL learns within a lifetime — the two-timescale split honours DRQ's "value lea
   the adapter's connection mask (which links exist) across generations while the RL learns the surviving
   weights within a life — evolved structure, learned weights, on the frozen Kanerva substrate. (Increment 1
   shipped, baseline-on; `sim/neat.py`, `SPEC_NEAT`.)
+- **The breathing net** — capacity isn't a hard clamp: the per-layer neuron count and `read_reach` are
+  **floating, semi-permeable, log-scaled, annealed** quantities that *breathe* — the net extends as it learns,
+  reshaping only how the evolvable genes mutate (never the frozen substrate). (`SPEC_BREATH`.)
 - **Learned encoder basis** — a k-means codebook fit to the real state manifold (≈28× better coverage
   than the old random one), shared/frozen so grafting stays intact. (Regenerate with
   `tools/fit_learned_basis.py`; the game falls back to a random basis if the file is absent.)
@@ -119,7 +122,11 @@ Colonies don't just act — they **learn to understand**, and understanding *cat
   broken comms) and Maslow-gated (famine collapses culture back to survival). (`SPEC_COMPREHENSION_RL`.)
 - **Ensemble embeddings** — the word-space is a **learned mixture of 6 embedding models** (BERT / GloVe /
   word2vec / Jina / Nomic / MiniLM) aligned by relative-representations, the blend learned by the masked-
-  prediction loss itself. (`SPEC_ENSEMBLE_EMBED`.)
+  prediction loss itself. (`SPEC_ENSEMBLE_EMBED`.) The represented vocabulary itself **grows** — each anchor
+  radiates a concept cloud of learned neighbours. (`SPEC_VOCAB_EXTEND`.)
+- **The Codex** — a read-only slice of source/lore (how the world works — that it rewards cooperation, echoes of
+  Minecraft & Dwarf Fortress) that a colony can **read as a lesson**, nudging its dispositions toward better
+  environment-extraction. (`SPEC_CODEX`.)
 - **The J-lens** — read (and gently *steer*) a colony's unspoken thoughts — the interpretability probe made
   actuator. (`SPEC_JLENS`.)
 
@@ -144,6 +151,9 @@ A closed **biome**: a water-level and sunlight budget you set behind the glass, 
 gate crop growth; storms, hail, floods (Nile-style silt), cold snaps and heat waves come and go. A
 per-cell **HYDRO** flow-sim springs the oasis, floods and pools; colonies dig rivers, reservoirs and
 dikes and raft across the water. (`SPEC_SEASONS_AND_STONE`, `SPEC_BIOME`, `SPEC_WEATHER`, `SPEC_HYDRO`.)
+One weather event infests the *living*, not the land: a **mite storm** puts mites under the skin — an infested
+unit becomes a contagious host, and the colony must quarantine, cleanse, or **cull** the afflicted before the
+plague spreads. (`SPEC_MITE_STORM`.)
 
 ### ⚔️ War, survival & the fall of empires
 A full survival→war→conquest→revolt loop (mapped to the Aztecs-meets-Cortés and Sparta/Rome lineage in
@@ -180,6 +190,11 @@ A house left highly agitated **and** keeper-hated slowly ravens toward **madness
 raving, its bloodline going *extinct* (the slot refills with a fresh, unrelated house) and its name kept
 forever as a disgraced gravestone, "the Mad." Survivors turn wary of the keeper who rotted it. It is rare
 by design — a slow accumulator, not a coin flip. (`SPEC_MADNESS`.)
+
+**Metamorphosis** runs the other way: as a maw grows it turns more intelligent and psionic, and its armored
+insectoid mobiles — useful only while it is small — eventually **"pop open" to birth a new breed** (bipedal,
+four-armed), cruelty accelerating the change, up toward the final **Shade** stage. Size × cruelty, three physical
+stages. (`SPEC_METAMORPHOSIS`.)
 
 ### 🔮 Revelation & the priesthood
 The keeper is a god the maws half-perceive through the glass, and the night sky is its scripture. A **sign**
