@@ -120,6 +120,54 @@ def test_wordnet_canonicalizer_exact_path():
     assert canon("the granary") == _VID["granary"]
 
 
+def test_quantifier_code_detection():
+    """SPEC_FOL_TONGUE Increment 2: the subject determiner sets ∀/∃, a negation word on the predicate sets ¬;
+    ∀ wins over ∃; a bare subject is QUANT_NONE."""
+    fq, ex, neg = fol_tongue.QUANT_FORALL, fol_tongue.QUANT_EXISTS, fol_tongue.NEG_FLAG
+    assert fol_tongue.quantifier_code("all colonies", "raid") == fq
+    assert fol_tongue.quantifier_code("some colony", "raids") == ex
+    assert fol_tongue.quantifier_code("every ant", "does not flee") == (fq | neg)
+    assert fol_tongue.quantifier_code("the colony", "raids") == fol_tongue.QUANT_NONE
+    assert fol_tongue.quantifier_code("all some", "x") == fq        # ∀ beats ∃
+
+
+def test_format_triplet_quantified():
+    """Increment 2 rendering: ∀x / ∃x on the subject, ¬ on the predicate; the plain form is unchanged (byte-identical
+    to Inc 1 when quant defaults)."""
+    row = (_VID["colony"], _VID["raids"], _VID["granary"])
+    assert fol_tongue.format_triplet(VOCAB, row, 1.0) == "raids(colony, granary) [observed]"      # default unchanged
+    assert fol_tongue.format_triplet(VOCAB, row, 1.0, fol_tongue.QUANT_FORALL) == "raids(∀x:colony, granary) [observed]"
+    assert fol_tongue.format_triplet(VOCAB, row, 1.0, fol_tongue.QUANT_EXISTS) == "raids(∃x:colony, granary) [observed]"
+    assert fol_tongue.format_triplet(VOCAB, row, 0.5, fol_tongue.NEG_FLAG) == "¬raids(colony, granary) [inferred]"
+
+
+def test_store_roundtrip_preserves_quants(tmp_path=None):
+    """Increment 2: quants survive save/load; and a legacy store WITHOUT a quants array loads as all-QUANT_NONE
+    (back-compatible, so an Inc-1 fol_triplets.npz renders exactly as before)."""
+    import tempfile
+    rows = np.array([[0, 1, 2], [3, 4, 5]], dtype=np.int32)
+    conf = np.array([1.0, 0.5], dtype=np.float32)
+    quants = np.array([fol_tongue.QUANT_FORALL, fol_tongue.NEG_FLAG], dtype=np.int8)
+    store = fol_tongue.FolTripletStore(rows, conf, quants)
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "s.npz")
+        fol_tongue.save_store(store, p)
+        got = fol_tongue.load_store(p)
+        assert list(got.quants) == [fol_tongue.QUANT_FORALL, fol_tongue.NEG_FLAG]
+        # legacy: an npz with only rows+conf loads as zeros
+        legacy = os.path.join(d, "legacy.npz")
+        np.savez(legacy, rows=rows, conf=conf)
+        gl = fol_tongue.load_store(legacy)
+        assert list(gl.quants) == [0, 0], "legacy store -> all QUANT_NONE"
+
+
+def test_action_triplet():
+    """Increment 2 (colony action cross-train): a colony's own act becomes a first-class observed triplet."""
+    t = fol_tongue.action_triplet(_VID["queen"], _VID["commands"], _VID["soldiers"])
+    assert (t.subj_id, t.pred_id, t.obj_id, t.confidence) == (_VID["queen"], _VID["commands"], _VID["soldiers"], 1.0)
+    assert t.quant == fol_tongue.QUANT_NONE
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

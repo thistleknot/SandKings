@@ -1,6 +1,14 @@
 # SPEC — The FOL Tongue: communication as subject–predicate–object triplets + logic qualifiers
 
-Status: INCREMENT 1 IMPLEMENTED, baseline-ON (gate `FOL_TONGUE_ENABLED` default False → battery byte-identical; entrypoint flips it on iff `fol_triplets.npz` is present, `sandkings.py:10568`). Increment 2 (FOL quantifiers ∀/∃/∧/∨ + colony action-triplet cross-train) pending.
+Status: INCREMENT 1 + 2 IMPLEMENTED, baseline-ON (gate `FOL_TONGUE_ENABLED` default False → battery byte-identical;
+entrypoint flips it on iff `fol_triplets.npz` is present, `sandkings.py:10568`). **Increment 2 (2026-07-20):** FOL
+quantifiers + connectives — a per-triplet packed `quant` code carries the subject's ∀/∃ (from its determiner) and a
+predicate ¬ (negation); ∧ is realised by clause-split (Inc 1) emitting conjoined clauses as separate triplets. The
+store gains a back-compatible `quants` array (a legacy Inc-1 npz loads as all-QUANT_NONE → renders identically);
+`format_triplet` renders `∀x:`/`∃x:`/`¬`; and `action_triplet()` wraps a colony's OWN executed act as a first-class
+observed triplet for cross-training the shared word-space on lived events, not just wikitext. Validated
+`tests/test_fol_tongue.py` (+4 Inc-2 tests, 11 total). Remaining wiring: feeding `action_triplet`s into the live
+training loop each turn (the helper + objective exist; the per-turn emission hook is the next small step).
 **Extends SPEC_TONGUE** (same `MaskedMind` head, same ensemble emb, same vocab, no architecture change to pickled
 nets) and **reuses SPEC_ENSEMBLE_EMBED's WordNet member** (the synset/hypernym taxonomy) as the entity-identity
 canonicalizer. The Tongue stops learning an order-free BAG of words and starts learning **who did what to whom** —

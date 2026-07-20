@@ -570,7 +570,8 @@ class TongueSystem:
             best = int(preds[int(logits[pidx].argmax())]) if len(preds) else -1
             cand = [i for i in range(len(store.rows)) if int(store.rows[i, 1]) == best] or [0]
             i = cand[0]
-            return _fol.format_triplet(self.vocab, store.rows[i], float(store.conf[i]))
+            q = int(store.quants[i]) if getattr(store, 'quants', None) is not None else _fol.QUANT_NONE
+            return _fol.format_triplet(self.vocab, store.rows[i], float(store.conf[i]), q)
         except Exception:
             return ""
 

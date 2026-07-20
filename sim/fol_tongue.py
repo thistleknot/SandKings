@@ -22,12 +22,40 @@ FOL_TONGUE_ENABLED = False          # gate; entrypoint flips baseline-on IFF fol
 FOL_ROLE_TOKENS = ("⟨SUBJ⟩", "⟨PRED⟩", "⟨OBJ⟩")   # ⟨SUBJ⟩ ⟨PRED⟩ ⟨OBJ⟩ — the 3 role markers
 FOL_TRIPLET_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fol_triplets.npz")
 
-# One decoded, vocab-mapped triplet. -1 in any slot = that span did not resolve to the vocab (dropped downstream if
-# fewer than 2 slots resolve). confidence in [0,1]: 1.0 = direct (observed), <1.0 = entailed (inferred).
-FolTriplet = namedtuple("FolTriplet", ("subj_id", "pred_id", "obj_id", "confidence"))
+# --- Increment 2: FOL quantifiers + connectives -------------------------------------------------------------------
+# A triplet's logical FORM, packed into one small int carried alongside the (subj,pred,obj) row. The subject's
+# determiner sets the QUANTIFIER (∀/∃); a negation word on the predicate sets the ¬ flag. Clause-split (Inc 1, the
+# extractor's enable_clause_split) already realises ∧ by emitting conjoined clauses as SEPARATE triplets, so ∧ needs
+# no per-row code. Alphabet is STRUCTURAL (fixed 4 forms), not a tunable.
+QUANT_NONE, QUANT_FORALL, QUANT_EXISTS = 0, 1, 2   # subject quantifier (low 2 bits)
+QUANT_MASK = 3
+NEG_FLAG = 4                                        # bit 2: predicate negated (¬)
+_FORALL_DET = {"all", "every", "each", "any"}       # ∀ surface determiners
+_EXISTS_DET = {"some", "a", "an", "one"}            # ∃ surface determiners
+_NEG_WORDS = {"not", "no", "never", "none", "n't"}  # ¬ markers on the predicate
 
-# The offline-decoded corpus the runtime loads (what fol_triplets.npz holds).
-FolTripletStore = namedtuple("FolTripletStore", ("rows", "conf"))   # rows: (N,3) int32 ; conf: (N,) float32
+
+def quantifier_code(subj_span: str, pred_span: str) -> int:
+    """Pure NL->FOL form detection: read the SUBJECT's determiner for the quantifier and the PREDICATE for negation,
+    from the RAW spans (before stopword stripping, which would eat 'all'/'some'/'not'). ∀ wins over ∃ when both
+    appear (universal is the stronger claim). Returns a packed int (low 2 bits = quantifier, bit 2 = ¬). No state."""
+    sw = str(subj_span).lower().replace("_", " ").split()
+    pw = str(pred_span).lower().replace("_", " ").split()
+    q = QUANT_FORALL if any(w in _FORALL_DET for w in sw) else (QUANT_EXISTS if any(w in _EXISTS_DET for w in sw) else QUANT_NONE)
+    if any(w in _NEG_WORDS for w in pw):
+        q |= NEG_FLAG
+    return q
+
+
+# One decoded, vocab-mapped triplet. -1 in any slot = that span did not resolve to the vocab (dropped downstream if
+# fewer than 2 slots resolve). confidence in [0,1]: 1.0 = direct (observed), <1.0 = entailed (inferred). quant =
+# packed FOL form (Increment 2; defaults to QUANT_NONE so Inc-1 call sites and stores stay valid).
+FolTriplet = namedtuple("FolTriplet", ("subj_id", "pred_id", "obj_id", "confidence", "quant"))
+FolTriplet.__new__.__defaults__ = (QUANT_NONE,)     # quant optional -> back-compatible with Inc-1 4-arg construction
+
+# The offline-decoded corpus the runtime loads (what fol_triplets.npz holds). quants optional (Inc 2).
+FolTripletStore = namedtuple("FolTripletStore", ("rows", "conf", "quants"))   # rows (N,3) i32; conf (N,) f32; quants (N,) i8
+FolTripletStore.__new__.__defaults__ = (None,)      # quants optional -> old 2-field stores still construct
 
 
 _STOP = {"the", "a", "an", "her", "his", "its", "their", "to", "of", "in", "on", "and", "or",
@@ -107,14 +135,16 @@ def decode_to_triplets(text: str, canon: Callable[[str], int], extractor=None) -
     except Exception:
         return []
     for t in extracted:
-        s = canon(getattr(t, "subject", ""))
-        p = canon(getattr(t, "relation", ""))
+        subj_raw, pred_raw = getattr(t, "subject", ""), getattr(t, "relation", "")
+        s = canon(subj_raw)
+        p = canon(pred_raw)
         o = canon(getattr(t, "object", ""))
         if p < 0:
             continue
         if (1 if s >= 0 else 0) + 1 + (1 if o >= 0 else 0) < 2:   # pred always counts; need >=2 resolvable slots
             continue
-        out.append(FolTriplet(s, p, o, float(getattr(t, "confidence", 1.0))))
+        q = quantifier_code(subj_raw, pred_raw)                   # Increment 2: ∀/∃ + ¬ from the raw spans
+        out.append(FolTriplet(s, p, o, float(getattr(t, "confidence", 1.0)), q))
     return out
 
 
@@ -123,7 +153,7 @@ def build_store(corpus, canon: Callable[[str], int], extractor=None) -> FolTripl
     entailment-off extractor across the whole corpus (fast + clean). Logs kept vs dropped (never silently truncates).
     Raises if nothing decodes (the extractor or vocab is wrong — fail loud)."""
     ex = extractor if extractor is not None else default_extractor()
-    rows, conf, dropped = [], [], 0
+    rows, conf, quants, dropped = [], [], [], 0
     for passage in corpus:
         trips = decode_to_triplets(passage, canon, ex)
         if not trips:
@@ -132,34 +162,62 @@ def build_store(corpus, canon: Callable[[str], int], extractor=None) -> FolTripl
         for t in trips:
             rows.append((t.subj_id, t.pred_id, t.obj_id))
             conf.append(t.confidence)
+            quants.append(t.quant)
     if not rows:
         raise RuntimeError("SPEC_FOL_TONGUE: no triplets decoded from the corpus — extractor or vocab mismatch")
-    print(f"[FOL] decoded {len(rows)} triplets from the corpus ({dropped} passages yielded none)")
-    return FolTripletStore(np.asarray(rows, dtype=np.int32), np.asarray(conf, dtype=np.float32))
+    n_quant = sum(1 for q in quants if q)
+    print(f"[FOL] decoded {len(rows)} triplets from the corpus ({dropped} passages yielded none; {n_quant} quantified/negated)")
+    return FolTripletStore(np.asarray(rows, dtype=np.int32), np.asarray(conf, dtype=np.float32),
+                           np.asarray(quants, dtype=np.int8))
 
 
 def save_store(store: FolTripletStore, path: str = FOL_TRIPLET_PATH) -> None:
-    np.savez(path, rows=store.rows, conf=store.conf)
+    quants = store.quants if store.quants is not None else np.zeros(len(store.rows), dtype=np.int8)
+    np.savez(path, rows=store.rows, conf=store.conf, quants=quants)
 
 
 def load_store(path: str = FOL_TRIPLET_PATH) -> Optional[FolTripletStore]:
     """Load fol_triplets.npz, or None if absent/unreadable (the gate then stays off — byte-identical). Pure I/O
-    boundary mirroring ensemble_embed.load_ensemble."""
+    boundary mirroring ensemble_embed.load_ensemble. Back-compatible: an Inc-1 store without a `quants` array loads
+    as all-QUANT_NONE (so an old npz renders exactly as before — byte-identical on the ON path too)."""
     try:
         if not os.path.exists(path):
             return None
         d = np.load(path)
-        return FolTripletStore(d["rows"].astype(np.int32), d["conf"].astype(np.float32))
+        rows = d["rows"].astype(np.int32)
+        quants = d["quants"].astype(np.int8) if "quants" in d.files else np.zeros(len(rows), dtype=np.int8)
+        return FolTripletStore(rows, d["conf"].astype(np.float32), quants)
     except Exception:
         return None
 
 
-def format_triplet(vocab: List[str], row, conf: float) -> str:
-    """Render one decoded triplet as the keeper's FOL line: `predicate(subject, object)  [observed|inferred]`.
-    Missing (-1) slots render as `?`. The tag is [observed] iff the triplet was a DIRECT parse (confidence == 1.0),
-    else [inferred] (an entailed reading) — the operating-contract epistemic split, no authored float threshold."""
+def format_triplet(vocab: List[str], row, conf: float, quant: int = QUANT_NONE) -> str:
+    """Render one decoded triplet as the keeper's FOL line, now with Increment-2 QUANTIFIERS and NEGATION:
+    `∀x. predicate(x, object)` / `∃x. predicate(...)` for a quantified subject, `¬predicate(...)` when negated,
+    and the plain `predicate(subject, object)` otherwise — then `[observed|inferred]`. Missing (-1) slots render as
+    `?`. The tag is [observed] iff a DIRECT parse (confidence == 1.0), else [inferred]. quant defaults to QUANT_NONE
+    so an Inc-1 call renders exactly as before. No authored thresholds."""
     def w(i):
         return vocab[i] if 0 <= int(i) < len(vocab) else "?"
     s, p, o = int(row[0]), int(row[1]), int(row[2])
     tag = "observed" if float(conf) >= 1.0 else "inferred"
-    return f"{w(p)}({w(s)}, {w(o)}) [{tag}]"
+    q = int(quant)
+    pred = w(p)
+    if q & NEG_FLAG:
+        pred = "¬" + pred
+    quantifier = q & QUANT_MASK
+    if quantifier == QUANT_FORALL:
+        body = f"{pred}(∀x:{w(s)}, {w(o)})"
+    elif quantifier == QUANT_EXISTS:
+        body = f"{pred}(∃x:{w(s)}, {w(o)})"
+    else:
+        body = f"{pred}({w(s)}, {w(o)})"
+    return f"{body} [{tag}]"
+
+
+def action_triplet(subj_id: int, pred_id: int, obj_id: int, quant: int = QUANT_NONE) -> FolTriplet:
+    """Increment 2 (colony action cross-train): wrap a colony's OWN executed action as a first-class FolTriplet
+    (subject=actor, predicate=action, object=target), so the same masked-slot objective that learns from wikitext
+    can also learn from what colonies actually DO — grounding the shared word-space in lived events, not just text.
+    confidence=1.0 (a directly observed act). The training loop feeds these alongside the corpus rows."""
+    return FolTriplet(int(subj_id), int(pred_id), int(obj_id), 1.0, int(quant))
