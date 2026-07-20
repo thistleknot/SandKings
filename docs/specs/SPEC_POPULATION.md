@@ -12,6 +12,16 @@ respawn spine.
 > SCAFFOLDING and the scrub contract, all behind a default-off flag.** Nothing in
 > Phase 0 changes runtime behavior.
 
+> **CURRENT STATUS (updated 2026-07-20): SHIPPED through Phase 6, baseline-ON in the live
+> game.** The document below is the Phase-0 record; the arc has since been fully built —
+> pool-breathe 2..MAX (`sandkings.py:2642`), activation/succession transitions
+> (`:8778,:8942,:9020-9133`). It is baseline-ON in a normal run because the entrypoint
+> constructs the sim with `dynamic_population=True` (`:10295`). The module master flag
+> `DYNAMIC_POPULATION` stays `False` (`:67`) and the constructor defaults to it when the arg
+> is omitted (`:2056`), so the regression battery — which constructs at the default — remains
+> byte-identical (asserted in `tests/test_population.py:52-54`). There is no `--dynamic` CLI
+> flag; opting out means constructing with `dynamic_population=False`.
+
 ---
 
 ## 0. Provenance & governing-record status

@@ -30,7 +30,7 @@ JSON, carries `step`/`colonies`/`events`, and the step numbers are monotonic. No
 ## SL2 — The optional local-LLM saga (fail-soft)
 
 When `--summarize-every M` (>0) is set, `record` buffers each logged row; every M rows it calls a local Ollama
-model (`--summary-model`, default `qwen3:4b`; `--summary-host`, default `http://localhost:11434`) with a bounded
+model (`--summary-model`, default `qwen3:2b`; `--summary-host`, default `http://localhost:11434`) with a bounded
 prompt (season arc + surviving houses' end-state + the chronicle of events) and appends the returned saga to a
 companion `<log>.story.md`, headed by the step range. The final partial buffer is summarized on `close()`.
 

@@ -10224,8 +10224,8 @@ def main():
     parser.add_argument('--summarize-every', type=int, default=0, metavar='M',
                         help='Every M logged lines, ask a local Ollama model to write a saga to <log>.story.md '
                              '(default 0 = off; fail-soft if Ollama is absent).')
-    parser.add_argument('--summary-model', default='qwen3:4b', metavar='NAME',
-                        help='Ollama model for the saga (default qwen3:4b).')
+    parser.add_argument('--summary-model', default='qwen3:2b', metavar='NAME',
+                        help='Ollama model for the saga (default qwen3:2b).')
     parser.add_argument('--summary-host', default='http://localhost:11434', metavar='URL',
                         help='Ollama host (default http://localhost:11434).')
     parser.add_argument('--num-colonies', type=int, default=0, help='Number of colonies (0=random 3-5)')

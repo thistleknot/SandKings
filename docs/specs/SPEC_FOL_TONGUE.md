@@ -1,6 +1,6 @@
 # SPEC — The FOL Tongue: communication as subject–predicate–object triplets + logic qualifiers
 
-Status: SPEC (design-before-build). Baseline-ON when built (gate default False → battery byte-identical).
+Status: INCREMENT 1 IMPLEMENTED, baseline-ON (gate `FOL_TONGUE_ENABLED` default False → battery byte-identical; entrypoint flips it on iff `fol_triplets.npz` is present, `sandkings.py:10568`). Increment 2 (FOL quantifiers ∀/∃/∧/∨ + colony action-triplet cross-train) pending.
 **Extends SPEC_TONGUE** (same `MaskedMind` head, same ensemble emb, same vocab, no architecture change to pickled
 nets) and **reuses SPEC_ENSEMBLE_EMBED's WordNet member** (the synset/hypernym taxonomy) as the entity-identity
 canonicalizer. The Tongue stops learning an order-free BAG of words and starts learning **who did what to whom** —

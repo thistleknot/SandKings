@@ -16,7 +16,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
 
-DEFAULT_MODEL = "qwen3:4b"
+DEFAULT_MODEL = "qwen3:2b"
 DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_PATH = "sandkings.jsonl"
 

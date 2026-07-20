@@ -12,8 +12,12 @@ game. The fiction is George R.R. Martin's **"Sandkings"** novella; the lineage (
 NetHack, The Sims, SimCity, Factorio, Neopets, Game of Thrones, Sutton & Barto, Axelrod/Ostrom, …) is
 mapped mechanic-by-mechanic in [INSPIRATIONS.md](INSPIRATIONS.md).
 
-Everything below is **baseline-ON** — a fresh run boots the full living system. Each subsystem has an
-**opt-out** `--no-*` flag (used to isolate a controlled world for the regression battery).
+Everything below is **baseline-ON** — a fresh run boots the full living system. The subsystems are
+non-optional by design; there is no `--no-<feature>` opt-out for each one. The regression battery
+isolates a controlled world by holding the module-level feature gates at their default (`run_tests.py`
+sets them directly), not through the CLI. The only runtime feature toggles are `--no-neural` (rule-based
+minds, for hosts without PyTorch) and `--no-web` (detach the web console); the political economy is
+opt-**in** via `--subjugation` / `--bargain`.
 
 ![The live terrarium — glyph view with the HUD](docs/img/terrarium.png)
 
@@ -30,14 +34,25 @@ poison cloud (`§`) drifts, and a gold-marked soothsayer (`Ω`) walks among the 
 python sim/sandkings.py --live --fresh
 
 #  --live      real-time pygame window (omit for a headless GIF/soak run)
-#  --fresh     ignore any saved tank and start a new world
-#  --persist   the tank lives between sessions (sqlite autosave; resumes if present)
+#  --sps N     live speed, steps/sec (default 5)
+#  --fresh     ignore any saved tank and start a new world (overwrites terrarium.db)
+#  --persist   the tank lives between sessions (sqlite autosave; always on — defaults to
+#              terrarium.db whether resuming or fresh; --fresh overwrites it)
+#  --save-every N   autosave interval in steps (default 600)
 #  --steps N   run N steps then stop (headless) / auto-exit (live)
-#  --num-colonies K, --width/--height/--depth   world shape
+#  --harsh     harsher survival ramp
+#  --canon     seed the canonical (Round B) houses
+#  --num-colonies K, --width/--height/--depth   world shape (0 = random 3-5 colonies)
+#  --tileset [NAME]   sprite-tile render (default STARTER); --cell PX  cell pixel size
+#  --web / --no-web   the Keeper's Console web dashboard (ON by default)
+#  --host H --port P  console bind address (default 127.0.0.1:8010)
+#  --no-neural            rule-based minds (fallback for hosts without PyTorch)
+#  --subjugation / --bargain   opt into the political economy (thralls / full bargain mode)
 #  --log [FILE]           write a per-turn JSONL chronicle (state + drama, every turn)
 #  --log-every N          log every N steps (default 1)
 #  --summarize-every M    every M lines, a local Ollama model writes a saga to <log>.story.md
-#  --summary-model NAME   Ollama model (default qwen3:4b); fail-soft if Ollama is absent
+#  --summary-model NAME   Ollama model (default qwen3:2b); fail-soft if Ollama is absent
+#  --summary-host URL     Ollama host (default http://localhost:11434)
 ```
 
 > Use whichever Python 3.10 interpreter has the deps installed (`torch`, `numpy`, `pygame`). On Windows
@@ -52,11 +67,13 @@ A fresh live run prints its active systems, e.g.:
 [CHAIN]   HYDRO — the oasis springs
 ```
 
-**Opt-out flags:** `--no-neural` (rule-based minds), `--no-maw-rl`, `--no-learned-basis`, `--no-hydro`,
-`--no-guppies`, `--no-crickets`, `--no-snares`. **War & faith:** `--no-siege`, `--no-poison`,
-`--no-stigmergy`, `--no-madness`, `--no-revelation`, `--no-priests`. **Fauna:** `--no-domestication`,
-`--no-guppy-predator`, `--no-effects`. **Economy:** `--bargain` (full political economy) / `--subjugation`
-/ `--wages`. **Population:** `--dynamic` (colonies breathe 2–8 with succession).
+**Feature toggles:** `--no-neural` (rule-based minds, for hosts without PyTorch) · `--no-web` (detach the
+web console). **Economy (opt-in):** `--subjugation` (capture broken enemies as thralls) · `--bargain` (the
+full political economy — each pair chooses annihilate / subjugate / wage by net extraction; the wage market
+lives inside this mode, supersedes `--subjugation`). **Everything else is baseline & non-optional** — the
+brain, food web, hydro, siege, suzerainty, madness, revelation, fauna, dynamic population (colonies breathe
+2–8 with succession) and the rest are always on; the regression battery disables them at the module-gate
+level, not the CLI.
 
 ---
 

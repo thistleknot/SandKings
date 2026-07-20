@@ -1,7 +1,7 @@
 # SPEC — The Breathing Net: evolvable capacity as a floating, semi-permeable, log-scaled, annealed quantity
 
-Status: DRAFT (new arc, "the Breath"). Baseline-ON when built (opt-out `--no-breath`); gate default off → battery
-byte-identical. Refines the EV1 evolvable-architecture genes (`brain_hidden`, `brain_depth`) and the SPEC_TONGUE
+Status: IMPLEMENTED, baseline-ON (gate `BREATH_ENABLED` default off → battery byte-identical; entrypoint flips it
+on unconditionally at `sandkings.py:10574` — there is no `--no-breath` opt-out flag). Refines the EV1 evolvable-architecture genes (`brain_hidden`, `brain_depth`) and the SPEC_TONGUE
 `read_reach` gene. Obeys the design law: it reshapes only how the *evolvable* genes MUTATE — it never edits the
 frozen Kanerva SDM / GRU (the readout Linear is already rebuilt/grafted on a width change, EV4).
 

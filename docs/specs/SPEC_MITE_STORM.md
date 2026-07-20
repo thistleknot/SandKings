@@ -1,6 +1,6 @@
 # SPEC — The Mite Storm: a contagious infestation (locust plague → disease under the skin)
 
-Status: SPEC (design-before-build). Baseline-ON when built (gate default False → battery byte-identical). Extends
+Status: INCREMENT 1 IMPLEMENTED, baseline-ON (gate `MITE_STORM_ENABLED` default False → battery byte-identical; entrypoint flips it on, `sandkings.py:10492`). Increment 2 (herbal cure / quarantine) pending. Extends
 SPEC_WEATHER (the storm trigger) and reuses the poison-DoT / water / corpse patterns. The one weather event that
 INFESTS the living, not just the land.
 
