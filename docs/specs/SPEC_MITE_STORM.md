@@ -1,6 +1,11 @@
 # SPEC — The Mite Storm: a contagious infestation (locust plague → disease under the skin)
 
-Status: INCREMENT 1 IMPLEMENTED, baseline-ON (gate `MITE_STORM_ENABLED` default False → battery byte-identical; entrypoint flips it on, `sandkings.py:10492`). Increment 2 (herbal cure / quarantine) pending. Extends
+Status: INCREMENT 1 + 2 IMPLEMENTED, baseline-ON. Inc 1 gate `MITE_STORM_ENABLED`; **Inc 2 gate `MITE_HERBAL_ENABLED`**
+(both default False → battery byte-identical; entrypoint flips on). Increment 2 (2026-07-20): **herbal cure** — an
+infested host adjacent to crops is cured at a DERIVED rate = local crop density (the remedy grows among cultivation);
+**quarantine** — the colony isolates a host with probability = its DERIVED healthy fraction (an overwhelmed house
+cannot contain → the outbreak runs), and a quarantined host cannot spread the contagion. Validated
+`tests/test_mite_inc2.py`. Extends
 SPEC_WEATHER (the storm trigger) and reuses the poison-DoT / water / corpse patterns. The one weather event that
 INFESTS the living, not just the land.
 

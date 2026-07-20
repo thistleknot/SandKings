@@ -103,6 +103,7 @@ DOLE_FACTOR = {0: 1.00, 1: 0.75, 2: 0.50, 3: 0.25}   # by season index (T17)
 DOLE_RAMP = (1.00, 0.50, 0.00)                        # per-year floor on the factor
 STORM_INTERVAL_DUST = 200    # Dust season storm cadence (T16)
 MITE_STORM_ENABLED = False   # SPEC_MITE_STORM gate; module default off (battery byte-identical); entrypoint flips baseline-on
+MITE_HERBAL_ENABLED = False  # SPEC_MITE_STORM Increment 2 gate (herbal cure + quarantine); default off (byte-identical); entrypoint flips on
 SPOIL_INTERVAL = 10          # Dust spoilage sweep cadence
 SPOIL_CHANCE = 0.02          # per exposed FOOD voxel per sweep
 SEED_COST = 5                # food paid at sowing (T19)
@@ -5792,16 +5793,39 @@ class SandKingsSimulation:
         if not infested:
             return
         by_pos = {tuple(u.position): (c, u) for c in self.colonies for u in c.units}
+        # Increment 2: a colony's ability to ISOLATE the sick scales with how much healthy labour it still has —
+        # an overwhelmed (mostly-infested) house cannot contain the outbreak. DERIVED per-colony healthy fraction,
+        # not an authored quarantine cap. Gated: computed only when the Inc-2 mechanic is on.
+        healthy_frac = {}
+        if MITE_HERBAL_ENABLED:
+            for c in self.colonies:
+                tot = len(c.units)
+                if tot:
+                    healthy_frac[id(c)] = sum(1 for u in c.units if not getattr(u, 'infested', False)) / tot
         for c, u in infested:
             x, y, z = u.position
             if any(w.get_voxel(x + dx, y + dy, z) == VoxelType.WATER
                    for dx in (-1, 0, 1) for dy in (-1, 0, 1) if (dx, dy) != (0, 0)):
-                u.infested = False                                        # drowned the mites (the cleaning regimen)
+                u.infested = False; u.quarantined = False                 # drowned the mites (the cleaning regimen)
                 continue
+            if MITE_HERBAL_ENABLED:
+                # HERBAL CURE (MS-I2): the remedy grows among the crops. Cure chance = local crop density (a DERIVED
+                # rate, not an authored constant): a house that cultivates has the herbs to treat its sick.
+                crop_n = sum(1 for dx in (-1, 0, 1) for dy in (-1, 0, 1) if (dx, dy) != (0, 0)
+                             if w.get_voxel(x + dx, y + dy, z) in (VoxelType.CROP, VoxelType.CROP_RIPE))
+                if crop_n and random.random() < crop_n / 8.0:
+                    u.infested = False; u.quarantined = False
+                    continue
+                # QUARANTINE (MS-I2): the colony isolates the host with prob = its healthy fraction; a quarantined
+                # host cannot spread the contagion below. An overwhelmed house fails to contain -> the outbreak runs.
+                if random.random() < healthy_frac.get(id(c), 0.0):
+                    u.quarantined = True
             if u.take_damage(POISON_DAMAGE, 0.0):                         # mites under the skin drain the host
                 c.remove_unit(u); w.set_voxel(x, y, z, VoxelType.CORPSE)
                 by_pos.pop((x, y, z), None)
                 continue
+            if MITE_HERBAL_ENABLED and getattr(u, 'quarantined', False):
+                continue                                                  # isolated: no host jump this tick
             targets = [by_pos.get((x + dx, y + dy, z)) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if (dx, dy) != (0, 0)]
             targets = [t for t in targets if t is not None and not getattr(t[1], 'infested', False)]
             if targets:
@@ -10490,8 +10514,10 @@ def main():
     # byte-identical; the game flips it on. A vegetation-driven plague that infests exposed hosts; the infestation
     # spreads host-to-host and kills the unchecked, but water washes the mites off.
     globals()['MITE_STORM_ENABLED'] = True
+    globals()['MITE_HERBAL_ENABLED'] = True   # SPEC_MITE_STORM Increment 2: herbal cure (crops) + quarantine (healthy-fraction)
     print("[PLAGUE] mite storms ride the green flush — the swarm gets under the skin, spreads host to host, and "
-          "kills the unclean; only water drowns them (--no... nothing: it is the world)")
+          "kills the unclean; water drowns them, herbs among the crops cure them, and a healthy house quarantines "
+          "its own (--no... nothing: it is the world)")
 
     # The Aztec/Cortes new order is BASELINE — non-optional. Sets BOTH the module gate and the sim flag
     # (politics.hostile reads sim.suzerain_enabled); module default False keeps the battery byte-identical.
