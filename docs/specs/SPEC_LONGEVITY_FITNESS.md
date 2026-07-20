@@ -121,12 +121,20 @@ keeper's insight that the trace idea and actor-critic are the SAME algorithm (AC
 > later feature falsifiable against survival before any fitness rewrite is attempted. L2/L3 are scheduled behind it and
 > must carry the two-timescale staleness guard above. This spec stays DESIGNED-NOT-BUILT until L1 lands.
 
-- **L1 (BUILD NEXT):** the feature-lift harness — measure antenna survival lift (on/off, calibrated/defective). Answers
-  "does it add value" before any fitness rewrite. Pure measurement, no game change.
-  - **Acceptance:** a `tools/` harness (extends the existing `tools/lift_antenna_survival.py`) that reports mean
-    `steps_alive` for feature-ON vs OFF and calibrated-vs-defective antenna, across ≥3 seeds (permutation battery, not
-    one run), with the effect sign + magnitude. Prior single-seed reading was +45% survival; L1 hardens it to a
-    multi-seed verdict. No `sandkings.py` change; the battery stays byte-identical.
+- **L1 (BUILD NEXT):** the feature-lift **mouse** — measure antenna survival lift (on/off, calibrated/defective) in an
+  ISOLATED accelerated harness, not the full game. Answers "does it add value" before any fitness rewrite.
+  - **Mouse-first, per [[mouse-model-testing]].** The full game is NEVER the test loop. L1 is a standalone harness
+    (sibling of `tools/mouse_antenna.py` / `tools/mouse_antenna_cull.py`) that instantiates ONLY the real antenna
+    component (the same `_antenna_*` encode/prior/decide logic) and runs units through a controlled mix of true-foe and
+    kin/ally lethal encounters. It does NOT construct `SandKingsSimulation`.
+  - **Measure a scale-INVARIANT survival quantity**, so the result translates to macro without depending on game
+    cadence: the **fraction of units still alive after a fixed number of lethal encounters**, and/or
+    **encounters-to-death**, for antenna-ON vs OFF and calibrated vs defective band. NOT full-game `steps_alive`.
+  - **Acceptance:** the mouse reports the lift's sign + magnitude across ≥3 varied conditions (seed / band-crowding /
+    foe-mix — a permutation battery, not one case), question→curve in ≤10 min. Prior single-seed full-game reading was
+    +45%; L1 replaces that with a cadence-independent mouse verdict. Zero `sandkings.py` change; byte-identical.
+  - **The existing `tools/lift_antenna_survival.py` (full-game A/B) is DEMOTED to a later, single confirmatory check**
+    — the final in-game validation AFTER the mouse verdict, never the debugging loop ([[mouse-model-testing]]).
 - **L2:** per-spawn online survival trace (eligibility trace over `steps_alive`), replacing/augmenting the raw fitness
   score with a trace-credited longevity signal; derived γ/λ.
 - **L3:** the two-tier split — the per-lineage decaying cumulative of log-lifespans `V ← γ·V + log(1+lifespan)` carried
