@@ -91,12 +91,37 @@ RL learns within a lifetime — the two-timescale split honours DRQ's "value lea
   its learning-rate set by the evolved `plasticity` gene and its discount by the `patience` gene, and
   it **dreams** through the Chill (elite self-distillation replay).
 - **15 % spawn tier** — a shared, bounded per-soldier residual ("play").
+- **NEAT-evolved topology** — the readout adapter's *connectivity* isn't fixed: a **NEAT** genome evolves
+  the adapter's connection mask (which links exist) across generations while the RL learns the surviving
+  weights within a life — evolved structure, learned weights, on the frozen Kanerva substrate. (Increment 1
+  shipped, baseline-on; `sim/neat.py`, `SPEC_NEAT`.)
 - **Learned encoder basis** — a k-means codebook fit to the real state manifold (≈28× better coverage
   than the old random one), shared/frozen so grafting stays intact. (Regenerate with
   `tools/fit_learned_basis.py`; the game falls back to a random basis if the file is absent.)
 
 The maw narrates its learning in the drama feed ("*House X beats the war-drums*") and you watch
 colonies grow distinct personalities.
+
+### 🗣️ The Tongue — language, comprehension & the culture that drives survival
+Colonies don't just act — they **learn to understand**, and understanding *catalyzes* the survival objective
+(the north star: comprehension → farm, cooperate, economize → **technology**):
+
+- **The Tongue** — each colony learns language *and* its world by **masked-token prediction** (predict the
+  hidden word/state), over a shared ensemble embedding space. An evolved **`read_reach`** gene sets how far a
+  mind reaches into the corpus. There's a **two-way keeper dialogue**: you can talk to an awakened colony.
+  (`SPEC_TONGUE`, `SPEC_DIALOGUE`.)
+- **First-order-logic meaning** — the Tongue stops learning an order-free *bag of words* and learns **who did
+  what to whom**: communication as **subject–predicate–object triplets** (role-typed masked-slot prediction),
+  entity-canonicalized through a precomputed WordNet index. Relational intent, not part-of-speech syntax.
+  (`SPEC_FOL_TONGUE`.)
+- **Comprehension drives the RL** — a colony that comprehends more transcribes knowledge to a shared **logos**
+  and (across non-hostile edges only) *shares* it — that diffusion **is** technology. Diplomacy-gated (enemies =
+  broken comms) and Maslow-gated (famine collapses culture back to survival). (`SPEC_COMPREHENSION_RL`.)
+- **Ensemble embeddings** — the word-space is a **learned mixture of 6 embedding models** (BERT / GloVe /
+  word2vec / Jina / Nomic / MiniLM) aligned by relative-representations, the blend learned by the masked-
+  prediction loss itself. (`SPEC_ENSEMBLE_EMBED`.)
+- **The J-lens** — read (and gently *steer*) a colony's unspoken thoughts — the interpretability probe made
+  actuator. (`SPEC_JLENS`.)
 
 ### 🐟 The food web — a weather-rotated RPS ecosystem
 Three harvestable **guilds** whose abundance rotates with the seasons, so no single food is ever best
@@ -189,7 +214,9 @@ half-worship, whose collective will the managers translate into scent for the fa
   three-tier labor-value spectrum (subjugation ↔ wages ↔ bargain) unifying war and peace on one economic
   continuum. (`SPEC_POLITICS`, `SPEC_BARGAIN`, `SPEC_WAGES`.)
 - **Evolution** — the GA now selects for **fitness** (a fitness-weighted tournament seeds each new
-  arrival — survival of the fittest), not a coin flip. (`SPEC_SELECTION`.)
+  arrival — survival of the fittest), not a coin flip. (`SPEC_SELECTION`.) And genomes carry heritable
+  **affordances** — a behavioral repertoire (scorched-earth, granaries, livestock) that each act as a
+  genome **liability/asset** selection can prune or spread. (`SPEC_AFFORDANCES`.)
 - **Tech & machines** — native tech (fire, farming, metallurgy) the maws earn, foreign tech the keeper
   gifts (abacus → … → a raspberry pi), a buried wreck with a QBasic-flavored register VM, spears,
   palisades, rams, fire that spreads. (`SPEC_TECH`, `SPEC_MACHINE_AGE`.)
@@ -254,7 +281,8 @@ mutates/mates/grafts these across generations; the RL warm-starts from and is tu
 - `sim/sandkings.py` — the simulation (world, colonies, food web, seasons, fauna, politics, keeper, entrypoint).
 - `sim/maw_brain.py` — the real-RL maw/spawn policies (RLOO, entropy, warm-start, dreaming, directives).
 - `sim/neural_hive.py` — the frozen encoder (ZCA + Kanerva codebook) + evolvable readout + soldier layers.
-- `sim/neuroevolution.py` — the GA (mutate/crossover/graft). `sim/live_view.py` — the pygame viewer + HUD.
+- `sim/neuroevolution.py` — the GA (mutate/crossover/graft). `sim/neat.py` — NEAT topology evolution of the readout adapter.
+- `sim/live_view.py` — the pygame viewer + HUD.
 - `tools/` — `fit_learned_basis.py` (fits `learned_basis.npz`), `measure_objective.py` (RL metrics).
 - `run_tests.py` — the single-process regression battery (`tests/test_*.py`).
 - **Design docs** — `docs/specs/SPEC_*.md` (per-subsystem specs, indexed in [SPEC_INDEX.md](docs/specs/SPEC_INDEX.md)),
