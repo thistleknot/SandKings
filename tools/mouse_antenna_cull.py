@@ -77,6 +77,8 @@ for gen in range(GENS):
             w = base_w + u['dw']; b = base_b + u['db']  # effective band = fixed self-instinct + heritable modulation
             # PHASE 1 — calibrate (safe): explore with a hot Boltzmann policy and tune the band by REINFORCE. No cull
             # here: exploratory mis-fires during learning are not fatal (a young unit is still finding its band).
+            # (No scalar reward baseline — MEASURED to worsen kin-recognition given the asymmetric restraint reward;
+            #  the correct baseline is the critic's V(s) in the L2/L3 actor-critic, not here. See _antenna_decide.)
             for _ in range(CALIB):
                 is_foe = np.random.random() < 0.5
                 base = others[np.random.randint(len(others))] if is_foe else own

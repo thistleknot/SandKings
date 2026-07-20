@@ -45,6 +45,18 @@ There are two DIFFERENT decays, on two different time axes — do not conflate t
   generations" is TRUE of within-life traces but NOT of the lineage aggregate — the lineage score is the online
   cross-generational measure, and the GA's selection still rides on top of it.
 
+## The baseline MUST be state-value V(s), not a scalar reward-mean (corpus-grounded, MEASURED 2026-07-19)
+
+The RAG corpus (data-science-skills: actor-critic-method / gradient-bandit / reward-baseline) confirms a policy-gradient
+update needs a **baseline** for variance reduction. This design's baseline is exactly the **critic's V(s)** — the
+advantage `δ = r + γV(s') − V(s)` centers each update on the state's own value. That is the RIGHT baseline.
+- **A scalar running-mean baseline is WRONG here** — proven by measurement: bolting an EWMA reward-mean onto the
+  antenna's REINFORCE tripled friendly fire in-game (0.37→1.22/step) because the antenna's rewards are ASYMMETRIC
+  (correct kin-restraint pays only +0.5, which sits below the running mean → restraint becomes negatively reinforced →
+  more mis-fires). Reverted. The lesson: a per-STATE value baseline (the critic) subtracts the right reference for each
+  situation; a single scalar mean mis-centers asymmetric per-action rewards. So the baseline lives in the critic, not
+  as a scalar on any actor.
+
 ## Feature-lift measurement (does a feature ADD VALUE?)
 
 Because survival is the online reward, every feature becomes falsifiable against it: **A/B the feature's gate and

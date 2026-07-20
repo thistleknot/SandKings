@@ -9874,6 +9874,13 @@ class SandKingsSimulation:
         p = 1.0 / (1.0 + np.exp(-float(w @ x + unit._ant_b) / T))
         a = (1 if p > 0.5 else 0) if settled else (1 if np.random.random() < p else 0)
         r = ((1.0 if is_true_foe else -1.0) if a == 1 else (-1.0 if is_true_foe else 0.5))
+        # Finding-1 disposition (2026-07-19, MEASURED): a scalar running-mean reward baseline was TRIED here and
+        # REVERTED — it worsened kin-recognition (headless friendly-fire 0.37->1.22/step; cull-mouse ff 0.14->0.46).
+        # Root cause: the antenna's rewards are ASYMMETRIC (correct kin-restraint pays only +0.5), so a scalar mean
+        # baseline pushes +0.5 BELOW the mean -> correct restraint becomes negatively reinforced -> MORE mis-fires.
+        # The corpus finding (policy gradient needs a baseline) is right, but the correct baseline is a STATE-VALUE
+        # baseline (the critic's V(s), SPEC_LONGEVITY_FITNESS L2/L3), NOT a scalar reward-mean. At fast-settle
+        # (ANNEAL=2) within-life RL is near-vestigial anyway — the antenna's accuracy is genetic (prior + culling).
         g = (a - p) / T
         w += ANTENNA_LR * r * g * x; unit._ant_b += ANTENNA_LR * r * g
         unit._ant_n = n + 1

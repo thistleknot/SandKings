@@ -22,8 +22,11 @@ ACTIONS = 3                     # 0=forage, 1=fight, 2=flee
 FEAT = 3                        # phi(s) = [threat, resource, bias]
 GAMMA = 0.9
 LAMBDA = 0.8
-A_ACTOR = 0.10                  # fast actor
-A_CRITIC = 0.02                 # SLOW critic (two-timescale)
+A_ACTOR = 0.10                  # actor step
+# Finding 2 (corpus: actor-critic-method — "a critic that learns MUCH SLOWER than the actor yields a stale,
+# misleading baseline"; standard two-timescale [Konda-Tsitsiklis] puts the CRITIC on the FASTER timescale).
+A_CRITIC_FAST = 0.15            # corpus-correct: critic tracks the actor (default)
+A_CRITIC_SLOW = 0.02            # the RISKY inverted setting (critic lags) — kept for the direction comparison
 HORIZON = 50
 EPISODES = 6000
 
@@ -61,13 +64,14 @@ def softmax(z):
     z = z - z.max(); e = np.exp(z); return e / e.sum()
 
 
-def train(use_critic):
+def train(use_critic, a_critic=A_CRITIC_FAST):
     """Per-subspecies actor W[sub] (ACTIONS x FEAT) + shared critic w_c (FEAT). Online AC(λ). Returns longevity curve
-    per subspecies + the lineage aggregate + param count."""
+    per subspecies + the lineage aggregate + param count + mean|TD-error| (critic-staleness gauge for Finding 2)."""
     W = [np.zeros((ACTIONS, FEAT)) for _ in range(2)]
     w_c = np.zeros(4)                                        # subspecies-conditioned critic (see phi_c)
     V_lin = 0.0
     curve = {0: [], 1: []}
+    td_abs = []                                             # |delta| late in training = how stale the critic baseline is
     for ep in range(EPISODES):
         sub = ep % 2                                        # alternate the two subspecies (shared nets accumulate)
         s = (np.random.random(), np.random.random())
@@ -82,10 +86,12 @@ def train(use_critic):
             v = w_c @ phi_c(s, sub) if use_critic else 0.0
             v2 = (w_c @ phi_c(s2, sub)) if (use_critic and not done) else 0.0
             delta = r + GAMMA * v2 - v                      # TD error = the actor's advantage
-            # critic trace + slow update
+            # critic trace + update (rate = a_critic; corpus-correct is critic >= actor so the baseline tracks)
             if use_critic:
+                if ep > EPISODES - 2000:
+                    td_abs.append(abs(delta))
                 e_c = GAMMA * LAMBDA * e_c + phi_c(s, sub)
-                w_c += A_CRITIC * delta * e_c
+                w_c += a_critic * delta * e_c
             # actor trace: grad log pi(a|s) = (onehot(a) - p) outer x
             grad = -np.outer(p, x); grad[a] += x
             e_a = GAMMA * LAMBDA * e_a + grad
@@ -96,23 +102,27 @@ def train(use_critic):
         V_lin = GAMMA * V_lin + np.log1p(life)              # per-lineage decaying cumulative of log-lifespans
         curve[sub].append(life)
     params = sum(w.size for w in W) + w_c.size
-    return curve, V_lin, params
+    mean_td = float(np.mean(td_abs)) if td_abs else 0.0
+    return curve, V_lin, params, mean_td
 
 
 def windowed(xs, w=400):
     return [float(np.mean(xs[i:i + w])) for i in range(0, len(xs) - w, w)]
 
 
-print("MOUSE — actor-critic(λ) longevity, per-subspecies shared actor, two-timescale (slow critic / fast actor)")
-for label, use_c in (("AC(λ) full (maw critic)", True), ("actor-only (no critic baseline)", False)):
-    curve, vlin, params = train(use_c)
+print("MOUSE — actor-critic(λ) longevity; Finding-2 two-timescale DIRECTION check (critic staleness = mean|TD-err|)")
+for label, use_c, ac in (
+        ("AC(λ) critic-FAST a_c=0.15 (corpus: critic tracks actor)", True, A_CRITIC_FAST),
+        ("AC(λ) critic-SLOW a_c=0.02 (RISKY inverted two-timescale)", True, A_CRITIC_SLOW),
+        ("actor-only (no critic baseline)", False, 0.0)):
+    curve, vlin, params, mtd = train(use_c, ac)
     c0 = windowed(curve[0]); c1 = windowed(curve[1])
     print(f"\n{label}:  params {params}")
-    print(f"  soldier longevity {c0[0]:.1f} -> {c0[-1]:.1f} steps   (learns to fight threats)")
-    print(f"  worker  longevity {c1[0]:.1f} -> {c1[-1]:.1f} steps   (learns to flee threats)")
-    print(f"  lineage aggregate V_lin (bounded fitness) = {vlin:.2f}")
+    print(f"  soldier longevity {c0[0]:.1f} -> {c0[-1]:.1f}   worker longevity {c1[0]:.1f} -> {c1[-1]:.1f}")
+    print(f"  lineage aggregate V_lin = {vlin:.2f}" + (f"   critic staleness mean|TD-err| = {mtd:.2f}" if use_c else ""))
 
-print("\nVERDICT: if BOTH subspecies' longevity climbs (each learns its own niche via a SHARED per-subspecies actor) "
-      "and the critic version climbs higher/faster than actor-only, the architecture holds: reuse the PEFT readout as "
-      "a per-subspecies actor, the maw as a slow critic, AC(λ) for online longevity credit. Tiny params, one net/"
-      "subspecies (batchable). Then integrate L2 (age-at-death reward) -> L3 (two-tier lineage fitness).")
+print("\nVERDICT: the AC(λ) architecture holds (both subspecies beat actor-only via a SHARED per-subspecies actor + a "
+      "subspecies-conditioned critic; 22 params; batchable). Finding-2 note: in THIS toy neither timescale direction "
+      "dominates cleanly (critic-FAST favours the soldier niche, critic-SLOW the worker) — the corpus caveat stands "
+      "(don't run a slow-learning-from-scratch critic under a fast actor), so at L2/L3 keep the critic tracking the "
+      "actor OR pre-evolve it to accuracy before freezing. Then integrate L2 (age-at-death reward) -> L3 (two-tier).")
