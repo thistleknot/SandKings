@@ -291,8 +291,25 @@ class HiveMindBrain(nn.Module):
         if int(getattr(genome, 'n_in', -1)) != M or int(getattr(genome, 'n_out', -1)) != E:
             return
         mask = torch.zeros(E, M)
+        # Increment 2: hidden nodes (add_node) make some links input->hidden or hidden->output. The single (E,M)
+        # mask expresses CONNECTIVITY by REACHABILITY: input i feeds output o iff a path of enabled links runs
+        # i -> ... -> o through hidden nodes. With NO hidden nodes this reduces to the direct src->dst mask (the
+        # Increment-1 byte-identity anchor). Forward adjacency over enabled links, then BFS from each input.
+        adj: dict = {}
         for c in genome.enabled_conns():
-            mask[c.dst - M, c.src] = 1.0
+            adj.setdefault(c.src, []).append(c.dst)
+        for i in range(M):
+            seen = set()
+            stack = list(adj.get(i, ()))
+            while stack:
+                nd = stack.pop()
+                if nd in seen:
+                    continue
+                seen.add(nd)
+                if M <= nd < M + E:                       # reached an output node
+                    mask[nd - M, i] = 1.0
+                else:                                     # a hidden node -> keep walking
+                    stack.extend(adj.get(nd, ()))
         if 'readout_mask' in self._buffers:
             self.readout_mask = mask
         else:

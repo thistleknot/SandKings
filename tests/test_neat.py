@@ -95,6 +95,49 @@ def test_mutate_grows_under_budget():
     assert g.size() <= 64 * 8, "never exceeds the complete graph"
 
 
+def test_add_node_splits_connection():
+    """SPEC_NEAT Increment 2: add_node splits an enabled conn src->dst into src->h->dst — disables the old link
+    (kept for alignment), creates ONE hidden node, adds TWO enabled conns; net size change is +1."""
+    if not HAVE:
+        return _skip()
+    reg = NeatInnovationRegistry()
+    g = sparse_init(8, 2, reg, fanin=2, rng=random.Random(1))
+    before = g.size()
+    assert not g.hidden_nodes()
+    assert g.add_node(reg, rng=random.Random(2))
+    assert len(g.hidden_nodes()) == 1, "exactly one hidden node created"
+    assert g.size() == before + 1, "disable 1 + add 2 enabled = net +1"
+    disabled = [c for c in g.conns if not c.enabled]
+    assert len(disabled) == 1, "the split link is disabled, not deleted"
+
+
+def test_node_innovation_stable():
+    """SPEC_NEAT Increment 2: splitting the SAME connection innovation yields the SAME hidden id (crossover-alignable
+    across the async population), and hidden ids never collide with input/output ids."""
+    if not HAVE:
+        return _skip()
+    reg = NeatInnovationRegistry()
+    assert reg.node_innovation(5) == reg.node_innovation(5), "same split -> same hidden id"
+    assert reg.node_innovation(5) != reg.node_innovation(6), "different splits -> different hidden ids"
+    assert reg.node_innovation(5) >= NeatInnovationRegistry.HIDDEN_BASE, "hidden ids above proto/encoding range"
+
+
+def test_speciate_separates_divergent():
+    """SPEC_NEAT NE4 Increment 2: speciate partitions structurally-divergent genomes into >1 species using the
+    DERIVED median compatibility threshold; identical genomes collapse to one species."""
+    if not HAVE:
+        return _skip()
+    reg = NeatInnovationRegistry()
+    base = sparse_init(16, 4, reg, fanin=3, rng=random.Random(3))
+    twins = [base, crossover(base, 1.0, base, 1.0, rng=random.Random(4))]  # structurally identical
+    assert len(neat.speciate(twins)) == 1, "identical genomes -> one species"
+    pop = [sparse_init(16, 4, reg, fanin=3, rng=random.Random(10 + k)) for k in range(8)]
+    for k in range(4):
+        for _ in range(6):
+            pop[k].add_node(reg, rng=random.Random(100 + k))  # diverge half the pop by growing bottlenecks
+    assert len(neat.speciate(pop)) >= 2, "divergent topologies -> multiple species"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

@@ -4,8 +4,16 @@ Status: **INCREMENT 1 IMPLEMENTED** (2026-07-18) — the NEAT core (`sim/neat.py
 (`neural_hive.HiveMindBrain.apply_neat_genome`), and the GA wiring (topology inherits + grows under the Breath
 budget on mutation, crosses both bloodlines on sexual reproduction, sparse-seeds fresh colonies) are built, gated
 `NEAT_ENABLED` baseline-on (with neural), byte-identical off; battery 78/0 (`tests/test_neat.py` 7,
-`tests/test_neat_adapter.py` 2). **INCREMENT 2 pending:** `add_node` (real hidden-bottleneck topology, not just
-connection selection), novelty/niching *selection* + speciation (NE4), and the diversity/complexity curve.
+`tests/test_neat_adapter.py` 2). **INCREMENT 2 CORE IMPLEMENTED** (2026-07-20): `add_node` splits an enabled
+connection into a real hidden node (src→h→dst; the split link is disabled, kept for alignment; hidden ids are
+STABLE per split-innovation via `NeatInnovationRegistry.node_innovation`), wired into `mutate_topology` at a DERIVED
+rate `P = 1/(1+size)`; `speciate()` partitions the population by structural compatibility using a DERIVED **median**
+threshold (no authored 3.0); and the phenotype composes hidden nodes into the `(E,M)` readout mask by input→output
+REACHABILITY (reduces to the Increment-1 direct mask when there are no hidden nodes → byte-identity preserved).
+Validated: `tests/test_neat.py` (+3 Inc-2 tests, 9 total) and `tools/mouse_neat_speciation.py` (hidden bottlenecks
+grow, ≥2 species resolve). **Deferred within Increment 2:** a *weighted* hidden bottleneck (the current phenotype
+routes connectivity, not a learned mid-layer weight) and speciation-PROTECTED *selection* (fitness-sharing keeping
+niches alive under the maw-RL) — the diversity curve needs that selection loop, since raw mutation converges.
 Extends EV1/EV4 (evolvable readout), SPEC_BREATH (the compute budget), the maw-RL (85:15 weight learning), and
 docs/HARVEST_ALIFE.md. Design law: the frozen Kanerva SDM / GRU are never mutated — only the adapter.
 

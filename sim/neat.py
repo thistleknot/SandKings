@@ -42,9 +42,13 @@ class NeatInnovationRegistry:
     identical (src, dst) so lineages across the live async population stay crossover-alignable without generations.
     Require: src != dst. Guarantee: identical (src, dst) always returns the same int."""
 
+    HIDDEN_BASE = 1 << 20     # hidden-node ids live above any proto/encoding id (those are < ~300) so no collision
+
     def __init__(self) -> None:
         self._table: Dict[Tuple[int, int], int] = {}
         self._counter: int = 0
+        self._node_table: Dict[int, int] = {}      # split-connection innov -> stable hidden node id (Increment 2)
+        self._node_counter: int = 0
 
     def innovation(self, src: int, dst: int) -> int:
         if src == dst:
@@ -55,6 +59,18 @@ class NeatInnovationRegistry:
             got = self._counter
             self._table[key] = got
             self._counter += 1
+        return got
+
+    def node_innovation(self, split_innov: int) -> int:
+        """SPEC_NEAT NE1 Increment 2: hand out a STABLE hidden-node id for splitting the connection whose innovation
+        is `split_innov`, so the same split across the async population yields the same hidden id (crossover-alignable
+        without generations — the connection-innovation guarantee, one level up). Guarantee: identical split_innov
+        always returns the same id."""
+        got = self._node_table.get(split_innov)
+        if got is None:
+            got = self.HIDDEN_BASE + self._node_counter
+            self._node_table[split_innov] = got
+            self._node_counter += 1
         return got
 
 
@@ -106,6 +122,27 @@ class NeatGenome:
         i = rng.randrange(len(self.conns))
         c = self.conns[i]
         self.conns[i] = replace(c, enabled=not c.enabled)
+        return True
+
+    def hidden_nodes(self) -> List[int]:
+        return [n.id for n in self.nodes.values() if n.kind == HIDDEN]
+
+    def add_node(self, registry: NeatInnovationRegistry, rng=_r) -> bool:
+        """SPEC_NEAT NE1 Increment 2: SPLIT an enabled connection src->dst with a new HIDDEN node h: disable src->dst,
+        add src->h and h->dst (both fresh innovations; the hidden id is STABLE per split via node_innovation). This is
+        the classic NEAT add-node: it grows a bottleneck the maw-RL then learns weights across, and — because the old
+        link is disabled not deleted — it is reversible and crossover-alignable. Returns False if there is no enabled
+        connection to split."""
+        live = [i for i, c in enumerate(self.conns) if c.enabled]
+        if not live:
+            return False
+        i = live[rng.randrange(len(live))]
+        c = self.conns[i]
+        h = registry.node_innovation(c.innov)
+        self.conns[i] = replace(c, enabled=False)                 # disable the split link (kept for alignment)
+        self.nodes[h] = NodeGene(h, HIDDEN)
+        self.conns.append(ConnGene(c.src, h, registry.innovation(c.src, h), True))
+        self.conns.append(ConnGene(h, c.dst, registry.innovation(h, c.dst), True))
         return True
 
 
@@ -196,8 +233,43 @@ def evolve_and_install(brain, parent_a: Optional[NeatGenome] = None, parent_b: O
 
 def mutate_topology(genome: NeatGenome, registry: NeatInnovationRegistry, n_changes: int, rng=_r) -> None:
     """SPEC_NEAT NE1 (behavioral, in-place): apply `n_changes` structural mutations. `n_changes` is DERIVED from the
-    SPEC_BREATH size delta (grow only as rivals shrink) — no authored mutation-rate constant. Each change is an
-    add-connection when growing, else a toggle. Increment 2 adds add-node."""
+    SPEC_BREATH size delta (grow only as rivals shrink) — no authored mutation-rate constant. Each change is usually
+    an add-connection (else a toggle); occasionally (Increment 2) an add-node. The add-node RATE is DERIVED, not
+    authored: P(add-node) = 1 / (1 + size) — rarer as the topology grows, so bottlenecks appear sparingly and the
+    graph doesn't explode into hidden nodes (the standard NEAT bias toward minimal structure)."""
     for _ in range(max(0, int(n_changes))):
+        size = genome.size()
+        if size > 0 and rng.random() < 1.0 / (1.0 + size):
+            if genome.add_node(registry, rng):
+                continue
         if not genome.add_connection(registry, rng):
             genome.toggle_connection(rng)
+
+
+def speciate(genomes: List[NeatGenome], threshold: Optional[float] = None) -> List[List[int]]:
+    """SPEC_NEAT NE4 Increment 2: partition genomes into species by structural compatibility. Greedy: each genome
+    joins the first species whose representative is within `threshold`, else founds a new one. The threshold is
+    DERIVED (not authored): the MEDIAN of all pairwise compatibilities (median-bifurcation), so the cut adapts to the
+    population's actual structural spread instead of a magic 3.0. Returns a list of species, each a list of indices
+    into `genomes`. An empty or singleton population is one species."""
+    n = len(genomes)
+    if n <= 1:
+        return [list(range(n))]
+    if threshold is None:
+        dists = [compatibility(genomes[i], genomes[j]) for i in range(n) for j in range(i + 1, n)]
+        srt = sorted(dists)
+        m = len(srt)
+        threshold = srt[m // 2] if m % 2 else 0.5 * (srt[m // 2 - 1] + srt[m // 2])
+    species: List[List[int]] = []
+    reps: List[int] = []
+    for i in range(n):
+        placed = False
+        for s, rep in enumerate(reps):
+            if compatibility(genomes[i], genomes[rep]) <= threshold:
+                species[s].append(i)
+                placed = True
+                break
+        if not placed:
+            reps.append(i)
+            species.append([i])
+    return species
