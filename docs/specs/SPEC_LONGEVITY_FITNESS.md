@@ -82,6 +82,20 @@ keeper's insight that the trace idea and actor-critic are the SAME algorithm (AC
   SLOWLY (GA across generations — the frozen-within-life warm-start that already exists), the actor adapts FAST
   (within-life, local). Heavy value-learning is genetic; the cheap local update is the actor. This is the split H2
   demanded (within-life RL is only viable when cheap + aggregated).
+  - **GUARD — a slow critic must be ACCURATE, not slow-LEARNING (corpus-grounded 2026-07-20).** The DS corpus
+    (`actor-critic-method`, `two-timescale`, `Nonstationary Environment Problem`) is explicit: standard two-timescale
+    actor-critic (Konda–Tsitsiklis) puts the **critic on the FASTER timescale**, because "a critic that learns much
+    slower than the actor yields a stale, misleading baseline." That directly tensions the "critic evolves SLOWLY"
+    framing above. Resolution: the maw-critic may be slow ONLY because it is a **pre-evolved, already-accurate** value
+    function (the GA warm-start is a converged V, not a from-zero learner). If instead the critic must LEARN within a
+    life, it MUST track at least as fast as the actor. **The population is multi-agent and therefore NONSTATIONARY**
+    (`Nonstationary Environment Problem`: other colonies co-adapt, so V(s) drifts) — a from-zero slow critic is stale
+    exactly when it matters most. **Ship L2/L3 with a critic-TD-error staleness monitor**; if `mean|δ|` trends up
+    (not down) the baseline is stale and the critic rate must rise. This is the measured Finding-2 lesson, now named.
+- **Shared-per-subspecies actor = A3C-style asynchronous shared updates (corpus, `Asynchronous Parameter Updates`).**
+  Pooling every subspecies member's within-life steps into ONE shared actor that each unit updates asynchronously is
+  the A3C pattern: many cheap workers → one shared policy → hundreds of updates/step, escaping the H2 update-starvation.
+  The corpus treatment is the reference for the update/synchronization contract to follow during decomposition.
 - **AC(λ) is the mechanism.** The critic's TD error `δ = r + γV(s') − V(s)` IS the advantage that trains the actor;
   both carry eligibility traces. The within-life longevity credit (above) and actor-critic are one algorithm, not two.
   The per-lineage decaying-cumulative-log-lifespan is the critic's CROSS-generational target / the maw's fitness.
@@ -102,8 +116,17 @@ keeper's insight that the trace idea and actor-critic are the SAME algorithm (AC
 
 ## Increments (each mouse-gated)
 
-- **L1:** the feature-lift harness — measure antenna survival lift (on/off, calibrated/defective). Answers "does it add
-  value" before any fitness rewrite. Pure measurement, no game change.
+> **BUILD NEXT: L1.** Per the 2026-07-20 future-directions review, L1 is the immediate next build — it is pure
+> measurement (no game change, no gate, byte-identical by construction), it is the cheapest rung, and it makes every
+> later feature falsifiable against survival before any fitness rewrite is attempted. L2/L3 are scheduled behind it and
+> must carry the two-timescale staleness guard above. This spec stays DESIGNED-NOT-BUILT until L1 lands.
+
+- **L1 (BUILD NEXT):** the feature-lift harness — measure antenna survival lift (on/off, calibrated/defective). Answers
+  "does it add value" before any fitness rewrite. Pure measurement, no game change.
+  - **Acceptance:** a `tools/` harness (extends the existing `tools/lift_antenna_survival.py`) that reports mean
+    `steps_alive` for feature-ON vs OFF and calibrated-vs-defective antenna, across ≥3 seeds (permutation battery, not
+    one run), with the effect sign + magnitude. Prior single-seed reading was +45% survival; L1 hardens it to a
+    multi-seed verdict. No `sandkings.py` change; the battery stays byte-identical.
 - **L2:** per-spawn online survival trace (eligibility trace over `steps_alive`), replacing/augmenting the raw fitness
   score with a trace-credited longevity signal; derived γ/λ.
 - **L3:** the two-tier split — the per-lineage decaying cumulative of log-lifespans `V ← γ·V + log(1+lifespan)` carried
