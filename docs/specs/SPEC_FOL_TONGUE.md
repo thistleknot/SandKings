@@ -7,8 +7,10 @@ predicate ¬ (negation); ∧ is realised by clause-split (Inc 1) emitting conjoi
 store gains a back-compatible `quants` array (a legacy Inc-1 npz loads as all-QUANT_NONE → renders identically);
 `format_triplet` renders `∀x:`/`∃x:`/`¬`; and `action_triplet()` wraps a colony's OWN executed act as a first-class
 observed triplet for cross-training the shared word-space on lived events, not just wikitext. Validated
-`tests/test_fol_tongue.py` (+4 Inc-2 tests, 11 total). Remaining wiring: feeding `action_triplet`s into the live
-training loop each turn (the helper + objective exist; the per-turn emission hook is the next small step).
+`tests/test_fol_tongue.py` (Inc-2 tests, 12 total). The **per-turn emission hook is now wired**:
+`TongueSystem.observe_action` cross-trains a colony's mind on its OWN lived act (a house on war footing =
+`self-war-enemy`, resolved against whatever anchors loaded), called each turn from `_tongue_observe` under the FOL
+gate (no-op when FOL roles are absent -> byte-identical). Increment 2 complete.
 **Extends SPEC_TONGUE** (same `MaskedMind` head, same ensemble emb, same vocab, no architecture change to pickled
 nets) and **reuses SPEC_ENSEMBLE_EMBED's WordNet member** (the synset/hypernym taxonomy) as the entity-identity
 canonicalizer. The Tongue stops learning an order-free BAG of words and starts learning **who did what to whom** —

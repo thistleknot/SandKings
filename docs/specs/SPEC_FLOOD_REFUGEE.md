@@ -6,10 +6,9 @@ FR2 the `refugee_until` state (`is_refugee`) stamped when a maw is inundated in 
 war footing; FR3 the refugee weakness-bonus in `_select_war_target`; FR4 the `frozen` surface-ice overlay in the
 cold branch + the walkable-crossing bypass in `_step_toward`. Constants DERIVED, not authored: `REFUGEE_DURATION =
 RESPAWN_DELAY // 2` (a displaced-not-destroyed colony), `REFUGEE_TARGET_MULT = 2.0` (the binary can't-retaliate
-state). Validated `tests/test_flood_refugee.py` (FR1-FR4 + gate-off). **Remaining wiring (spec-noted):** FR2's
-*surface-forage bias* — a refugee's foragers are stopped from entering NEW war footing and the state is fully
-tracked, but the "no dig-down / force surface foraging" movement retarget is the one diffuse hot-path change left
-for a follow-up (the refugee dynamic — drowned-out → defenseless → preyed-upon — is delivered without it).
+state). Validated `tests/test_flood_refugee.py` (FR1-FR4 + gate-off). FR2's **surface-forage** is now wired too: a refugee
+unit may not step below the surface (`_step_toward` rejects any descending candidate while `is_refugee`), so it is
+driven to surface-forage — no dig-down / tunnel-shelter this window. Fully complete FR1-FR4.
 
 Governing intent (user, verbatim):
 

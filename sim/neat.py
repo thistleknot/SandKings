@@ -88,6 +88,11 @@ class NeatGenome:
         for j in range(self.n_out):
             self.nodes[self.n_in + j] = NodeGene(self.n_in + j, OUTPUT)
         self.conns: List[ConnGene] = []
+        # Increment 2 weighted bottleneck: each HIDDEN node carries an evolvable GAIN (default 1.0) that scales every
+        # path through it — the mid-layer weight the plain reachability mask lacked. Learned by GA mutation (NEAT
+        # style: structure AND its weights evolve); the maw-RL still learns the output readout. Empty + all-1.0 ->
+        # the mask stays boolean -> byte-identical to Increment 1.
+        self.node_gain: Dict[int, float] = {}
 
     # ---- read-only views -------------------------------------------------
     def size(self) -> int:
@@ -141,8 +146,22 @@ class NeatGenome:
         h = registry.node_innovation(c.innov)
         self.conns[i] = replace(c, enabled=False)                 # disable the split link (kept for alignment)
         self.nodes[h] = NodeGene(h, HIDDEN)
+        self.node_gain[h] = 1.0                                   # born neutral (gain 1.0 -> identity split); GA tunes it
         self.conns.append(ConnGene(c.src, h, registry.innovation(c.src, h), True))
         self.conns.append(ConnGene(h, c.dst, registry.innovation(h, c.dst), True))
+        return True
+
+    def mutate_gain(self, rng=_r) -> bool:
+        """SPEC_NEAT Increment 2: perturb one hidden node's bottleneck GAIN (the evolvable mid-layer weight). Step
+        DERIVED from the current spread — a self-scaling jitter (|gain| * a small structural fraction), not an
+        authored sigma; clamped positive so a path never flips sign via the gain alone. Returns False if no hidden."""
+        hids = self.hidden_nodes()
+        if not hids:
+            return False
+        h = hids[rng.randrange(len(hids))]
+        g = self.node_gain.get(h, 1.0)
+        g = g * (1.0 + (rng.random() - 0.5) / self.n_out)         # self-scaling step ~ 1/n_out (structural, derived)
+        self.node_gain[h] = max(0.05, g)                          # stays positive (identity-preserving floor)
         return True
 
 
@@ -208,6 +227,14 @@ def crossover(a: NeatGenome, fit_a: float, b: NeatGenome, fit_b: float, rng=_r) 
         child.conns.append(ca if rng.random() < 0.5 else cb)
     disjoint = only_a if fit_a >= fit_b else only_b
     child.conns.extend(disjoint)
+    # Increment 2: reconstruct HIDDEN nodes + their evolvable GAINS from the inherited connections (any endpoint id
+    # >= HIDDEN_BASE is a hidden node). Gains come from whichever parent carries them (fitter parent wins ties).
+    lo, hi = (a, b) if fit_a >= fit_b else (b, a)
+    for c in child.conns:
+        for nid in (c.src, c.dst):
+            if nid >= NeatInnovationRegistry.HIDDEN_BASE and nid not in child.nodes:
+                child.nodes[nid] = NodeGene(nid, HIDDEN)
+                child.node_gain[nid] = lo.node_gain.get(nid, hi.node_gain.get(nid, 1.0))
     return child
 
 
@@ -241,6 +268,12 @@ def mutate_topology(genome: NeatGenome, registry: NeatInnovationRegistry, n_chan
         size = genome.size()
         if size > 0 and rng.random() < 1.0 / (1.0 + size):
             if genome.add_node(registry, rng):
+                continue
+        # Increment 2: with hidden nodes present, sometimes tune a bottleneck GAIN instead of adding structure —
+        # DERIVED rate = hidden fraction of the graph (more bottlenecks -> more weight-tuning), no authored rate.
+        hids = genome.hidden_nodes()
+        if hids and rng.random() < len(hids) / (1.0 + size):
+            if genome.mutate_gain(rng):
                 continue
         if not genome.add_connection(registry, rng):
             genome.toggle_connection(rng)

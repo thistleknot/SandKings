@@ -71,23 +71,24 @@ one-increment extension of an already-shipped system; constants DERIVED (no auth
 - **Delivered:** `add_node` (split a conn into a real hidden node, stable per-split hidden ids), `speciate()`
   (DERIVED median compatibility threshold), wired into `mutate_topology` at a DERIVED rate `1/(1+size)`;
   phenotype composes hidden nodes into the readout mask by reachability (byte-identical with no hidden nodes).
-  Validated `tests/test_neat.py` (+3, 9 total) + `tools/mouse_neat_speciation.py`. Deferred within Inc2 (spec-noted):
-  weighted bottleneck + speciation-protected selection. Commit `feat(NEAT Inc2 / goal 8)`.
+  Validated `tests/test_neat.py` (11 total) + `tools/mouse_neat_speciation.py`. **Tails now wired:** weighted
+  bottleneck (evolvable per-hidden `node_gain`, composed as a real-valued mask) + speciation-protected selection
+  (fitness-sharing in `_select_parent`). Increment 2 complete.
 
 ### 9. FOL Tongue Increment 2 — quantifiers + action-triplet cross-train  ✅ DONE
 - **Delivered:** per-triplet packed `quant` code — subject ∀/∃ + predicate ¬ (∧ already via Inc-1 clause-split);
   back-compatible store (`quants` array; legacy npz loads as QUANT_NONE → byte-identical); `format_triplet` renders
   `∀x:`/`∃x:`/`¬`; `action_triplet()` wraps a colony's own act as an observed triplet for cross-training. Validated
-  `tests/test_fol_tongue.py` (+4, 11 total). Remaining wiring: per-turn action-triplet emission hook. Commit
-  `feat(FOL Tongue Inc2 / goal 9)`.
+  `tests/test_fol_tongue.py` (12 total). **Tail now wired:** `observe_action` cross-trains a colony's own act
+  (self-war-enemy) each turn from `_tongue_observe`. Increment 2 complete.
 
 ### 10. FLOOD_REFUGEE (FR1–FR4)  ✅ DONE
 - **Delivered:** FR1 irrigated crops immune to heat wilt; FR2 the `refugee_until`/`is_refugee` state (maw
   inundated → refugee, enters no new war footing); FR3 refugees weighted up as war targets; FR4 the `frozen`
   surface-ice overlay + walkable-crossing bypass (moat → road in the freeze, adrift on thaw). Constants DERIVED
   (`REFUGEE_DURATION = RESPAWN_DELAY//2`, `REFUGEE_TARGET_MULT = 2.0` from the binary can't-retaliate state).
-  Validated `tests/test_flood_refugee.py` (FR1-FR4 + gate-off). Remaining wiring (spec-noted): FR2 surface-forage
-  movement retarget. Commit `feat(FLOOD_REFUGEE / goal 10)`.
+  Validated `tests/test_flood_refugee.py` (FR1-FR4 + gate-off). **Tail now wired:** FR2 surface-forage — a refugee
+  cannot descend below the surface (`_step_toward` rejects descent while `is_refugee`). FR1-FR4 complete.
 
 ### 11. MITE_STORM Increment 2 — herbal cure / quarantine  ✅ DONE
 - **Delivered:** gate `MITE_HERBAL_ENABLED`. HERBAL CURE — an infested host adjacent to crops is cured at a DERIVED

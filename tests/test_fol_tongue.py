@@ -168,6 +168,32 @@ def test_action_triplet():
     assert t.quant == fol_tongue.QUANT_NONE
 
 
+def test_observe_action_wiring():
+    """Increment 2 per-turn emission: TongueSystem.observe_action resolves candidate words to the first present,
+    masks a slot via the head when >=2 resolve, and is a no-op when FOL roles are absent (gate off)."""
+    import types
+    try:
+        from tongue import TongueSystem
+    except Exception:
+        print("SKIP (tongue import unavailable)"); return
+
+    class _StubHead:
+        def __init__(self): self.calls = []
+        def observe_triplet(self, hidden, slots, rng): self.calls.append(list(slots)); return 1.0
+
+    # roles present, all three candidates resolve -> trains, slots carry (role, filler)
+    h = _StubHead()
+    stub = types.SimpleNamespace(head=h, _fol_roles=(10, 11, 12), _id={"self": 0, "war": 1, "enemy": 2})
+    r = TongueSystem.observe_action(stub, 0, None, ["missing", "self"], ["war"], ["enemy"])
+    assert r == 1.0 and h.calls[0] == [(10, 0), (11, 1), (12, 2)], "first-present resolution + role-tagged slots"
+    # FOL off (no roles) -> no-op
+    off = types.SimpleNamespace(head=_StubHead(), _fol_roles=None, _id={})
+    assert TongueSystem.observe_action(off, 0, None, ["self"], ["war"], ["enemy"]) is None
+    # fewer than 2 slots resolve -> no training
+    thin = types.SimpleNamespace(head=_StubHead(), _fol_roles=(10, 11, 12), _id={"self": 0})
+    assert TongueSystem.observe_action(thin, 0, None, ["self"], ["zzz"], ["qqq"]) is None
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

@@ -555,6 +555,28 @@ class TongueSystem:
             if len(slots) >= 2:
                 self.head.observe_triplet(hidden, slots, rng)
 
+    def observe_action(self, colony_id: int, hidden, subj_cands, pred_cands, obj_cands) -> Optional[float]:
+        """SPEC_FOL_TONGUE Increment 2 (colony action cross-train): train the colony's mind on its OWN executed act
+        as a masked-slot triplet (actor, action, target), grounding the shared word-space in LIVED events, not just
+        wikitext. Each slot is given as a CANDIDATE word list; the first word present in the vocab wins (robust to
+        whichever anchors/GloVe this run loaded). Trains only when >=2 slots resolve. Gated: no FOL roles (FOL off)
+        -> no-op -> byte-identical."""
+        if self.head is None or self._fol_roles is None:
+            return None
+        import random as _r
+
+        def pick(cands):
+            for w in cands:
+                i = self._id.get(str(w).lower(), -1)
+                if i >= 0:
+                    return i
+            return -1
+        ids = [pick(subj_cands), pick(pred_cands), pick(obj_cands)]
+        slots = [(self._fol_roles[k], ids[k]) for k in range(3) if ids[k] >= 0]
+        if len(slots) < 2:
+            return None
+        return self.head.observe_triplet(hidden, slots, _r.Random())
+
     def fol_utterance(self, colony_id: int, hidden) -> str:
         """SPEC_FOL_TONGUE: the colony's FOL-shaped reply — the decoded fact its mind is most positioned to 'say'
         right now. Scores stored triplets by the J-lens activation of their predicate slot (the head's Jacobian on

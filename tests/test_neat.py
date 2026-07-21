@@ -138,6 +138,54 @@ def test_speciate_separates_divergent():
     assert len(neat.speciate(pop)) >= 2, "divergent topologies -> multiple species"
 
 
+def test_add_node_gain_default_and_mutate():
+    """SPEC_NEAT Increment 2 weighted bottleneck: a fresh hidden node has gain 1.0 (identity split); mutate_gain
+    perturbs it and keeps it positive; no-op when there are no hidden nodes."""
+    if not HAVE:
+        return _skip()
+    reg = NeatInnovationRegistry()
+    g = sparse_init(8, 2, reg, fanin=2, rng=random.Random(5))
+    assert g.mutate_gain(rng=random.Random(1)) is False, "no hidden nodes -> nothing to tune"
+    g.add_node(reg, rng=random.Random(2))
+    h = g.hidden_nodes()[0]
+    assert g.node_gain[h] == 1.0, "born neutral"
+    for _ in range(20):
+        g.mutate_gain(rng=random.Random(7))
+    assert g.node_gain[h] > 0.0, "gain stays positive (identity-preserving floor)"
+
+
+def test_weighted_bottleneck_mask():
+    """Increment 2: a hidden node's GAIN scales the composed (E,M) mask path (weighted bottleneck), and with no
+    hidden nodes the mask is boolean 0/1 (the Increment-1 anchor)."""
+    if not HAVE:
+        return _skip()
+    try:
+        import torch
+        from neural_hive import HiveMindBrain
+    except Exception:
+        print("SKIP (torch unavailable)"); return
+    import types
+    reg = neat.reset_registry() or neat.registry()
+
+    def brain():
+        b = types.SimpleNamespace(readout=torch.nn.Linear(6, 3, bias=False), _buffers={})
+        b.register_buffer = lambda n, v: (setattr(b, n, v), b._buffers.__setitem__(n, v))
+        return b
+
+    hid = reg.node_innovation(99)
+    g = NeatGenome(6, 3)
+    g.nodes[hid] = neat.NodeGene(hid, neat.HIDDEN)
+    g.node_gain[hid] = 2.0                                       # weighted bottleneck: scale the path by 2
+    g.conns = [neat.ConnGene(1, hid, reg.innovation(1, hid), True),
+               neat.ConnGene(hid, 8, reg.innovation(hid, 8), True)]   # in1 -> h -> out8(=M+2)
+    b = brain(); HiveMindBrain.apply_neat_genome(b, g)
+    assert abs(float(b.readout_mask[2, 1]) - 2.0) < 1e-6, "hidden gain scales the path weight"
+    # a direct genome (no hidden) stays boolean 1.0
+    g2 = sparse_init(6, 3, reg, fanin=2, rng=random.Random(3))
+    b2 = brain(); HiveMindBrain.apply_neat_genome(b2, g2)
+    assert set(float(v) for v in b2.readout_mask.flatten()) <= {0.0, 1.0}, "no hidden nodes -> boolean mask"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

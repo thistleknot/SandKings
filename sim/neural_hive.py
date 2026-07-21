@@ -291,25 +291,26 @@ class HiveMindBrain(nn.Module):
         if int(getattr(genome, 'n_in', -1)) != M or int(getattr(genome, 'n_out', -1)) != E:
             return
         mask = torch.zeros(E, M)
-        # Increment 2: hidden nodes (add_node) make some links input->hidden or hidden->output. The single (E,M)
-        # mask expresses CONNECTIVITY by REACHABILITY: input i feeds output o iff a path of enabled links runs
-        # i -> ... -> o through hidden nodes. With NO hidden nodes this reduces to the direct src->dst mask (the
-        # Increment-1 byte-identity anchor). Forward adjacency over enabled links, then BFS from each input.
+        # Increment 2: hidden nodes (add_node) make some links input->hidden or hidden->output, and each hidden node
+        # carries an evolvable GAIN (the weighted bottleneck). The single (E,M) mask expresses input i -> output o as
+        # the SUM over paths of the PRODUCT of the hidden-node gains on each path: mask[o,i] = Σ_paths Π_h gain(h).
+        # With NO hidden nodes every path is direct (product = 1) -> the mask is 0/1 -> the Increment-1 byte-identity
+        # anchor is preserved exactly. Depth-first over enabled links accumulating the running gain.
+        gains = getattr(genome, 'node_gain', {})
         adj: dict = {}
         for c in genome.enabled_conns():
             adj.setdefault(c.src, []).append(c.dst)
         for i in range(M):
-            seen = set()
-            stack = list(adj.get(i, ()))
+            stack = [(i, 1.0, frozenset())]                # (node, accumulated gain, visited-on-this-path)
             while stack:
-                nd = stack.pop()
-                if nd in seen:
-                    continue
-                seen.add(nd)
-                if M <= nd < M + E:                       # reached an output node
-                    mask[nd - M, i] = 1.0
-                else:                                     # a hidden node -> keep walking
-                    stack.extend(adj.get(nd, ()))
+                nd, g, seen = stack.pop()
+                for nxt in adj.get(nd, ()):
+                    if nxt in seen:
+                        continue                          # guard against cycles
+                    if M <= nxt < M + E:                  # reached an output node
+                        mask[nxt - M, i] += g
+                    else:                                 # a hidden node -> scale by its gain and keep walking
+                        stack.append((nxt, g * float(gains.get(nxt, 1.0)), seen | {nd}))
         if 'readout_mask' in self._buffers:
             self.readout_mask = mask
         else:

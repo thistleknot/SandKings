@@ -108,6 +108,27 @@ def test_fr4_freeze_overlay_and_crossing():
         sk.FLOOD_REFUGEE_ENABLED = False
 
 
+def test_fr2_refugee_cannot_descend():
+    """FR2 surface-forage: a refugee unit may not step below the surface (cut off from its tunnels)."""
+    sk.FLOOD_REFUGEE_ENABLED = True
+    try:
+        sim = _sim()
+        c = sim.colonies[0]
+        sim.step_count = 200
+        c.refugee_until = 200 + sk.REFUGEE_DURATION
+        u = c.units[0]
+        cx, cy = 6, 6
+        sz = sim.world.surface_z(cx, cy)
+        u.position = [cx, cy, sz]                            # standing on the surface
+        target = (cx, cy, max(0, sz - 3))                    # a target 3 below ground
+        for _ in range(5):
+            sim._step_toward(u, target, c)
+            assert u.position[2] >= sim.world.surface_z(u.position[0], u.position[1]), \
+                "a refugee never descends below the surface"
+    finally:
+        sk.FLOOD_REFUGEE_ENABLED = False
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

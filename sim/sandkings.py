@@ -5076,6 +5076,16 @@ class SandKingsSimulation:
                 return                               # not this colony's training turn this step
             reach = int(getattr(colony.genome, 'read_reach', 3))
             self._tongue().observe(colony.colony_id, hidden, active_words, reach=reach)
+            # SPEC_FOL_TONGUE Increment 2: cross-train the mind on the colony's OWN lived act this turn (not just
+            # wikitext). A house on war footing IS a subject-predicate-object event: self-wars-enemy. Emitted with
+            # candidate words so it resolves against whatever anchors loaded. Gated by FOL_TONGUE_ENABLED and no-op
+            # inside observe_action when FOL roles are absent -> byte-identical off.
+            if FOL_TONGUE_ENABLED and getattr(colony, 'at_war', False):
+                self._tongue().observe_action(
+                    colony.colony_id, hidden,
+                    ['self', 'colony', 'ant', 'queen'],
+                    ['war', 'raid', 'fight', 'attack', 'fear'],
+                    ['enemy', 'beyond', 'foe', 'other'])
         except Exception:
             pass
 
@@ -7545,6 +7555,11 @@ class SandKingsSimulation:
             new_pos = (x + step_dir[0], y + step_dir[1], z + step_dir[2])
             if not self.world.in_bounds(*new_pos):
                 continue
+            # FR2 (SPEC_FLOOD_REFUGEE): a flood refugee is cut off from its warren — it may NOT descend below the
+            # surface (no dig-down / tunnel-shelter this window), so it is driven to surface-forage. Gated ->
+            # is_refugee False when off -> the descent is unrestricted -> byte-identical.
+            if self.is_refugee(colony) and new_pos[2] < self.world.surface_z(new_pos[0], new_pos[1]):
+                continue
             voxel = self.world.get_voxel(*new_pos)
             if voxel == VoxelType.AIR:
                 unit.move(new_pos)
@@ -8895,9 +8910,22 @@ class SandKingsSimulation:
     def _select_parent(self, survivors):
         """SEL2 (SPEC_SELECTION): fitness-weighted tournament parent pick — K random contenders, the fittest
         wins. Replaces the uniform random.choice so the live GA selects for fitness. Called only under the gate;
-        the gate-off path keeps random.choice (byte-identical)."""
+        the gate-off path keeps random.choice (byte-identical).
+
+        SPEC_NEAT Increment 2 (speciation-protected selection): when NEAT is on, SHARE fitness within the contenders'
+        NEAT species — each contender's fitness is divided by its species size — so a novel-topology niche is not
+        out-competed to extinction by a large dominant species (explicit fitness sharing; the diversity-preserving
+        selection the raw tournament lacked). NEAT off -> unchanged plain tournament (byte-identical)."""
         k = min(FITNESS_TOURNAMENT_K, len(survivors))
         contenders = random.sample(survivors, k)
+        import neat as _neat
+        if _neat.NEAT_ENABLED:
+            genomes = [getattr(getattr(c, 'genome', None), 'neat_genome', None) for c in contenders]
+            if all(g is not None for g in genomes):
+                size = {j: len(grp) for grp in _neat.speciate(genomes) for j in grp}
+                best_j = max(range(len(contenders)),
+                             key=lambda j: self._colony_fitness(contenders[j]) / size.get(j, 1))
+                return contenders[best_j]
         return max(contenders, key=self._colony_fitness)
 
     def _respawn_colony(self, colony_id: int):

@@ -10,10 +10,17 @@ STABLE per split-innovation via `NeatInnovationRegistry.node_innovation`), wired
 rate `P = 1/(1+size)`; `speciate()` partitions the population by structural compatibility using a DERIVED **median**
 threshold (no authored 3.0); and the phenotype composes hidden nodes into the `(E,M)` readout mask by input→output
 REACHABILITY (reduces to the Increment-1 direct mask when there are no hidden nodes → byte-identity preserved).
-Validated: `tests/test_neat.py` (+3 Inc-2 tests, 9 total) and `tools/mouse_neat_speciation.py` (hidden bottlenecks
-grow, ≥2 species resolve). **Deferred within Increment 2:** a *weighted* hidden bottleneck (the current phenotype
-routes connectivity, not a learned mid-layer weight) and speciation-PROTECTED *selection* (fitness-sharing keeping
-niches alive under the maw-RL) — the diversity curve needs that selection loop, since raw mutation converges.
+Validated: `tests/test_neat.py` (Inc-2 tests, 11 total) and `tools/mouse_neat_speciation.py` (hidden bottlenecks
+grow, ≥2 species resolve). **Increment 2 now complete** — the two deferred pieces are wired:
+- **Weighted bottleneck:** each hidden node carries an evolvable `node_gain` (default 1.0) tuned by `mutate_gain`
+  at a DERIVED rate (hidden-fraction of the graph; self-scaling step ~1/n_out, positive-clamped). The phenotype
+  composes it as a REAL-valued mask: `mask[o,i] = Σ_paths Π_h gain(h)` — a genuine mid-layer weight, evolved
+  NEAT-style (structure AND its weights), while the maw-RL learns the output readout. No hidden nodes / all-1.0
+  gains → boolean 0/1 mask → the Increment-1 byte-identity anchor holds. `crossover` reconstructs hidden nodes +
+  gains from inherited conns.
+- **Speciation-protected selection:** `_select_parent` (SPEC_SELECTION) SHARES fitness within the contenders' NEAT
+  species (fitness ÷ species size) when NEAT is on, so a novel-topology niche isn't out-competed to extinction —
+  the diversity-preserving selection raw mutation lacked. NEAT off → plain tournament (byte-identical).
 Extends EV1/EV4 (evolvable readout), SPEC_BREATH (the compute budget), the maw-RL (85:15 weight learning), and
 docs/HARVEST_ALIFE.md. Design law: the frozen Kanerva SDM / GRU are never mutated — only the adapter.
 
