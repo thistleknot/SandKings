@@ -62,40 +62,38 @@ DONE and pushed. What remains is the SCHEDULE quadrant (items 3–5) and the SOM
 
 ---
 
-## SOMEDAY — Not important, not urgent (content increments; real, low-leverage)
+## SOMEDAY → DONE (2026-07-20: completed on request "complete 8-11")
 
-These are genuinely unbuilt named next-increments. They are deferred, not dropped: each is a
-one-increment extension of an already-shipped, baseline-on system, so none is on the critical path
-to the learning/measurement north star. Promote any of them if a concrete need surfaces.
+All four deferred increments were built — gated, byte-identical off, baseline-on, validated. Each was a
+one-increment extension of an already-shipped system; constants DERIVED (no authored magic numbers).
 
-### 8. NEAT Increment 2 — `add_node` + speciation
-- **Goal:** grow NEAT from connectivity-mask evolution (Inc 1, shipped) to structural growth:
-  `add_node` (hidden bottleneck), novelty/speciation selection, a diversity curve. Spec: `SPEC_NEAT`.
-- **Status:** Inc 1 shipped baseline-on (`sim/neat.py`); Inc 2 = comment stubs only, no `add_node`.
-- **Next action (when promoted):** mouse an `add_node` mutation + speciation on the readout adapter;
-  show topological diversity rises without collapsing fitness, before any game wiring.
+### 8. NEAT Increment 2 — `add_node` + speciation  ✅ DONE
+- **Delivered:** `add_node` (split a conn into a real hidden node, stable per-split hidden ids), `speciate()`
+  (DERIVED median compatibility threshold), wired into `mutate_topology` at a DERIVED rate `1/(1+size)`;
+  phenotype composes hidden nodes into the readout mask by reachability (byte-identical with no hidden nodes).
+  Validated `tests/test_neat.py` (+3, 9 total) + `tools/mouse_neat_speciation.py`. Deferred within Inc2 (spec-noted):
+  weighted bottleneck + speciation-protected selection. Commit `feat(NEAT Inc2 / goal 8)`.
 
-### 9. FOL Tongue Increment 2 — quantifiers + action-triplet cross-train
-- **Goal:** extend the FOL Tongue (Inc 1 triplets, shipped) with logic quantifiers/connectives
-  (∀ / ∃ / ∧ / ∨) and colony action-triplet cross-training. Spec: `SPEC_FOL_TONGUE`.
-- **Status:** Inc 1 shipped baseline-on (`sim/fol_tongue.py`); Inc 2 = no quantifier code.
-- **Next action (when promoted):** spec the quantifier slot encoding first (it is a representation
-  change, not a tuning knob); mouse the masked-slot prediction over quantified triplets.
+### 9. FOL Tongue Increment 2 — quantifiers + action-triplet cross-train  ✅ DONE
+- **Delivered:** per-triplet packed `quant` code — subject ∀/∃ + predicate ¬ (∧ already via Inc-1 clause-split);
+  back-compatible store (`quants` array; legacy npz loads as QUANT_NONE → byte-identical); `format_triplet` renders
+  `∀x:`/`∃x:`/`¬`; `action_triplet()` wraps a colony's own act as an observed triplet for cross-training. Validated
+  `tests/test_fol_tongue.py` (+4, 11 total). Remaining wiring: per-turn action-triplet emission hook. Commit
+  `feat(FOL Tongue Inc2 / goal 9)`.
 
-### 10. FLOOD_REFUGEE (FR1–FR4)
-- **Goal:** water's double edge — irrigated-crop heat immunity (FR1), the flood-refugee surface-forage
-  state (FR2), overthrow of the devastated (FR3), and ICE turning a moat into a winter-assault bridge
-  (FR4). Spec: `SPEC_FLOOD_REFUGEE` (DRAFT).
-- **Status:** DRAFT, zero code. Correctly unbuilt.
-- **Next action (when promoted):** it is a content/mechanics arc, not a learning feature — build
-  spec-first (FR1→FR4), each gated + byte-identical off. Lowest learning-leverage of the set.
+### 10. FLOOD_REFUGEE (FR1–FR4)  ✅ DONE
+- **Delivered:** FR1 irrigated crops immune to heat wilt; FR2 the `refugee_until`/`is_refugee` state (maw
+  inundated → refugee, enters no new war footing); FR3 refugees weighted up as war targets; FR4 the `frozen`
+  surface-ice overlay + walkable-crossing bypass (moat → road in the freeze, adrift on thaw). Constants DERIVED
+  (`REFUGEE_DURATION = RESPAWN_DELAY//2`, `REFUGEE_TARGET_MULT = 2.0` from the binary can't-retaliate state).
+  Validated `tests/test_flood_refugee.py` (FR1-FR4 + gate-off). Remaining wiring (spec-noted): FR2 surface-forage
+  movement retarget. Commit `feat(FLOOD_REFUGEE / goal 10)`.
 
-### 11. MITE_STORM Increment 2 — herbal cure / quarantine
-- **Goal:** extend the mite storm (Inc 1 infest/cull, shipped) with an herbal-knowledge cure and an
-  active quarantine mechanic. Spec: `SPEC_MITE_STORM`.
-- **Status:** Inc 1 shipped baseline-on (`MITE_STORM_ENABLED`, `sandkings.py:10492`); Inc 2 unbuilt.
-- **Next action (when promoted):** ties to the tech/knowledge tree (herbal cure as earned tech); spec
-  the cure→quarantine interaction, then a small in-isolation contagion-containment check.
+### 11. MITE_STORM Increment 2 — herbal cure / quarantine  ✅ DONE
+- **Delivered:** gate `MITE_HERBAL_ENABLED`. HERBAL CURE — an infested host adjacent to crops is cured at a DERIVED
+  rate = local crop density; QUARANTINE — the colony isolates a host with prob = its DERIVED healthy fraction, and a
+  quarantined host cannot spread the contagion (an overwhelmed house fails to contain). Validated
+  `tests/test_mite_inc2.py`. Commit `feat(MITE_STORM Inc2 / goal 11)`.
 
 ---
 

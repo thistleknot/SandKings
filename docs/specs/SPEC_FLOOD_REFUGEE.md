@@ -1,6 +1,17 @@
 # SPEC: Water's Double Edge — Flood, Refugees, Irrigation & Ice — FR1…FR4
 
-Status: DRAFT (spec-first; not yet implemented). Governing intent (user, verbatim):
+Status: **IMPLEMENTED (FR1-FR4), baseline-ON** (2026-07-20; gate `FLOOD_REFUGEE_ENABLED` default False → battery
+byte-identical, in `run_tests._GATE_NAMES`; entrypoint flips on). FR1 irrigated-heat-immunity in `_arena_tick`;
+FR2 the `refugee_until` state (`is_refugee`) stamped when a maw is inundated in the flood branch, suppressing new
+war footing; FR3 the refugee weakness-bonus in `_select_war_target`; FR4 the `frozen` surface-ice overlay in the
+cold branch + the walkable-crossing bypass in `_step_toward`. Constants DERIVED, not authored: `REFUGEE_DURATION =
+RESPAWN_DELAY // 2` (a displaced-not-destroyed colony), `REFUGEE_TARGET_MULT = 2.0` (the binary can't-retaliate
+state). Validated `tests/test_flood_refugee.py` (FR1-FR4 + gate-off). **Remaining wiring (spec-noted):** FR2's
+*surface-forage bias* — a refugee's foragers are stopped from entering NEW war footing and the state is fully
+tracked, but the "no dig-down / force surface foraging" movement retarget is the one diffuse hot-path change left
+for a follow-up (the refugee dynamic — drowned-out → defenseless → preyed-upon — is delivered without it).
+
+Governing intent (user, verbatim):
 
 > "the oasis/flooding … creates the initial conditions for both supplement and devastation. If harnessed
 > properly, it can give an edge, but if ignored, it can be a detriment and creates its own dynamic pressures

@@ -347,6 +347,9 @@ ARENA_TEMP_TICK = 3          # discomfort cadence
 ARENA_FOOD_DRAIN = 0.6       # hoard drained per exposed unit per tick
 ARENA_DRAIN_CAP = 6          # exposed units counted toward the drain
 ARENA_WILT_P = 0.05          # per crop per tick: ripe->crop, crop->tilled
+FLOOD_REFUGEE_ENABLED = False   # SPEC_FLOOD_REFUGEE gate (FR1-FR4); module default off (battery byte-identical); entrypoint flips baseline-on
+REFUGEE_DURATION = RESPAWN_DELAY // 2   # DERIVED: half the fallen-slot recovery window (RESPAWN_DELAY) — a drowned-out colony was DISPLACED not destroyed, so half the full-death recovery
+REFUGEE_TARGET_MULT = 2.0    # DERIVED from the binary can-retaliate state: a refugee enters NO war footing (FR2), so it is the defenseless 1-of-2 case -> twice-preferred as a target (same class-count logic as the antenna's friend/foe 2)
 
 # The hand's water & seeds (SPEC_HYDRO_HAND HH1-HH3): reuse the flood + crop
 # systems; terraforming (dams/channels, read from column height) shapes it
@@ -2517,7 +2520,9 @@ class SandKingsSimulation:
                             and colony.maw.food_stored < HUNGER_WAR_FLOOR
                             and len(colony.units) > 0)
             if current_target is None:
-                if colony.maw.food_stored > enter_at or scarcity_war:
+                # FR2: a flood refugee is reeling, not raiding — it enters no NEW war footing this window. Gated ->
+                # is_refugee False -> the condition is unchanged (byte-identical).
+                if (colony.maw.food_stored > enter_at or scarcity_war) and not self.is_refugee(colony):
                     target = self._select_war_target(colony)
                     if (BARGAIN_ENABLED and target is not None
                             and self._bargain_mode_ids(cid, target) == BARGAIN_MODE_WAGE):
@@ -3237,6 +3242,12 @@ class SandKingsSimulation:
                 and 'reservoir' in getattr(colony, 'techs', ())):
             return max(1, int(FLOOD_DAMAGE * (1.0 - HYDRO_RESERVOIR_ABSORB)))
         return FLOOD_DAMAGE
+
+    def is_refugee(self, colony) -> bool:
+        """SPEC_FLOOD_REFUGEE FR2: is this colony currently a flood refugee (maw was drowned out, still within the
+        REFUGEE_DURATION window)? getattr-guarded so old pickles resume clear; always False when the gate is off
+        (refugee_until is never stamped) -> byte-identical."""
+        return FLOOD_REFUGEE_ENABLED and getattr(colony, 'refugee_until', 0) > self.step_count
 
     def _water_adjacent(self, pos: Tuple[int, int, int]) -> bool:
         """HYDRO P5: is a WATER voxel 6-adjacent to pos (crop irrigation check)?
@@ -5749,6 +5760,12 @@ class SandKingsSimulation:
             if random.random() >= ARENA_WILT_P:
                 continue
             p = tuple(int(v) for v in pos)
+            # FR1: an IRRIGATED crop (in the oasis, or beside standing water: channel/reservoir/pond) cannot be
+            # withered by a HEAT swell — water buffers heat (not frost, so cold is unchanged). This is the channeling
+            # payoff. Gated -> off skips the exemption -> today's indiscriminate wilt (byte-identical).
+            if (FLOOD_REFUGEE_ENABLED and hot
+                    and (self.in_oasis(p[0], p[1]) or self._water_adjacent(p))):
+                continue
             if self.world.voxels[p] == VoxelType.CROP_RIPE.value:
                 self.world.voxels[p] = VoxelType.CROP.value  # ripe -> unripe
             else:
@@ -5849,6 +5866,34 @@ class SandKingsSimulation:
                     if self._exposed(unit):
                         self._weather_kill(unit, colony, 1)
 
+        # FR4 (SPEC_FLOOD_REFUGEE): during a hard freeze (a cold snap or the deep Chill) surface WATER cells FREEZE
+        # to a WALKABLE overlay `frozen` — the moat becomes a highway (Battle of the Ice). On thaw the overlay clears
+        # and a unit caught mid-lake is set adrift (rafts if it has wood, else takes flood damage). Gated + freeze-only
+        # -> off or no-freeze leaves `frozen` empty, so the movement raft gate is unchanged (byte-identical).
+        if FLOOD_REFUGEE_ENABLED:
+            freezing = getattr(self, 'cold_until', 0) > step or season == 3
+            prev_frozen = getattr(self, 'frozen', set())
+            if freezing:
+                if step % COLD_TICK == 0 or not prev_frozen:                # recompute sparingly
+                    wv = np.argwhere(self.world.voxels == VoxelType.WATER.value)
+                    dep = self.world.depth
+                    new_frozen = set()
+                    for x, y, z in wv:
+                        if z + 1 >= dep or self.world.voxels[x, y, z + 1] == VoxelType.AIR.value:
+                            new_frozen.add((int(x), int(y), int(z)))         # surface water freezes solid
+                    if new_frozen and not prev_frozen:
+                        self._log_event("The lakes freeze over — what was a moat is a road now")
+                    self.frozen = new_frozen
+            elif prev_frozen:
+                for colony in self.colonies:                                 # thaw: crossers set adrift
+                    for unit in colony.units[:]:
+                        if tuple(unit.position) in prev_frozen and not getattr(unit, 'rafted', False):
+                            if getattr(colony, 'wood', 0) >= 1:
+                                colony.wood -= 1; unit.rafted = True
+                            else:
+                                self._weather_kill(unit, colony, FLOOD_DAMAGE)
+                self.frozen = set()
+
         # W2 hail: stones from the sky spare the tunnelers
         if getattr(self, 'hail_until', 0) > step:
             if step % HAIL_TICK == 0:
@@ -5882,6 +5927,16 @@ class SandKingsSimulation:
             if step % 2 == 0 or not previous:
                 self.flood_cells = self._compute_flood_cells()
             cells = self.flood_cells
+            # FR2: a colony whose MAW MOUTH is inundated is drowned out of its warren -> REFUGEE for REFUGEE_DURATION
+            # steps after the water recedes (tunnels sealed, driven to the surface). Gated -> off never stamps it,
+            # is_refugee stays False -> byte-identical.
+            if FLOOD_REFUGEE_ENABLED:
+                for colony in self.colonies:
+                    if colony.is_alive() and tuple(colony.maw.position[:2]) in cells:
+                        if getattr(colony, 'refugee_until', 0) <= step:
+                            self._log_event(f"House {self._house_name(colony)} is drowned out — "
+                                            "its people scatter as refugees")
+                        colony.refugee_until = step + REFUGEE_DURATION
             # receding water leaves silt on the cells it releases
             for (x, y) in previous - cells:
                 z = self.world.surface_z(x, y)
@@ -7507,6 +7562,12 @@ class SandKingsSimulation:
                         unit.rafted = False
                 return True
             if voxel == VoxelType.WATER:
+                # FR4: a FROZEN water cell is solid ground — the winter opportunity. A unit crosses on foot, no raft,
+                # no wood (the barrier that used to stop it is now a highway). Gated + only during a freeze -> off or
+                # thawed: `frozen` is empty -> the raft gate below is unchanged (byte-identical).
+                if FLOOD_REFUGEE_ENABLED and tuple(new_pos) in getattr(self, 'frozen', ()):
+                    unit.move(new_pos)
+                    return True
                 # BOATS (HYDRO P7): a unit crosses standing water by raft — already
                 # afloat passes through; otherwise it boards if the house has timber
                 # (one wood per raft). Without timber it cannot cross; try another
@@ -7559,7 +7620,11 @@ class SandKingsSimulation:
             hatred = max(0.0, -d.trust(cid, c.colony_id)) / 100.0
             # D3: vengeance directs the spear across generations
             feud = 0.3 if (my_house, self._house_name(c)) in grudges else 0.0
-            return (0.45 * hatred + feud
+            # FR3: the devastated are overthrown — a flood refugee is a preferred target of opportunity (it can't
+            # retaliate). Additive weakness bonus derived from REFUGEE_TARGET_MULT; gated (is_refugee False off) ->
+            # score unchanged when no colony is a refugee -> byte-identical.
+            prey = (REFUGEE_TARGET_MULT - 1.0) if self.is_refugee(c) else 0.0
+            return (0.45 * hatred + feud + prey
                     + 0.35 * c.maw.food_stored / max_wealth
                     - 0.20 * power(c) / max_power)
         target = max(eligible, key=score).colony_id
@@ -10515,6 +10580,9 @@ def main():
     # spreads host-to-host and kills the unchecked, but water washes the mites off.
     globals()['MITE_STORM_ENABLED'] = True
     globals()['MITE_HERBAL_ENABLED'] = True   # SPEC_MITE_STORM Increment 2: herbal cure (crops) + quarantine (healthy-fraction)
+    globals()['FLOOD_REFUGEE_ENABLED'] = True # SPEC_FLOOD_REFUGEE FR1-FR4: heat-immune irrigation, flood-refugee state, overthrow of the devastated, ice bridges
+    print("[WATER] the oasis is double-edged — irrigated crops shrug off the heat, a drowned-out house turns "
+          "refugee (no war, preyed upon), and in the deep freeze the lakes become roads across the moat")
     print("[PLAGUE] mite storms ride the green flush — the swarm gets under the skin, spreads host to host, and "
           "kills the unclean; water drowns them, herbs among the crops cure them, and a healthy house quarantines "
           "its own (--no... nothing: it is the world)")
